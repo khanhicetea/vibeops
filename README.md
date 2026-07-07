@@ -1,0 +1,264 @@
+# Docker LEMP stack with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions
+
+This is the Docker version of the current Ansible LEMP model, optimized for production performance and DX while keeping the familiar structure:
+
+```text
+/home/<user>/<domain>
+```
+
+In this stack that maps to:
+
+```text
+docker-stack/home/<user>/<domain>
+```
+
+## Architecture
+
+- **Nginx** runs with `network_mode: host`
+  - no Docker TCP/UDP port publishing
+  - no bridge NAT for public HTTP/HTTPS traffic
+  - binds directly to host `:80` / `:443` TCP and `:443` UDP for HTTP/3
+- **Multiple PHP-FPM versions** run as separate Debian Trixie-based containers:
+  - `php84` from `php:8.4-fpm-trixie`
+  - `php85` from `php:8.5-fpm-trixie`
+  - OPcache is installed only when `php -m` shows it is missing, so PHP 8.5 can use its built-in Zend OPcache without reinstalling it.
+- **PHP-FPM exposes per-user Unix sockets** in versioned shared dirs:
+  - host path: `docker-stack/run/php-fpm/php84/<user>.sock`
+  - nginx path: `/run/php-fpm/php84/<user>.sock`
+  - PHP container path: `/run/php-fpm/<user>.sock`
+- **Each PHP-FPM pool is a Linux user** inside each PHP container:
+  - user home: `/home/<user>`
+  - sites: `/home/<user>/<domain>`
+  - logs: `/home/<user>/logs`
+- **PHP connects to MySQL/Redis** over the Compose backend network:
+  - MySQL host: `mysql:3306`
+  - Redis host: `redis:6379`
+- **Nginx reads site files from `/home` read-only** and talks to PHP by Unix sockets.
+- **The official NGINX ACME module is enabled** with HTTP-01.
+  - Generated vhosts always include both HTTP and HTTPS.
+  - HTTPS starts with a default self-signed cert so Nginx can boot before DNS/ACME is ready.
+  - When ready, edit the marked TLS block in the vhost to switch from self-signed to ACME.
+  - ACME state is persisted in `nginx/acme-state/`.
+
+## Layout
+
+```text
+compose.yml
+.env.example
+home/                         # /home bind mount for user sites
+run/php-fpm/php84/            # PHP 8.4 sockets
+run/php-fpm/php85/            # PHP 8.5 sockets
+nginx/conf.d/                 # generated vhosts
+nginx/acme-state/             # NGINX ACME account/cert/private-key state
+nginx/self-signed/            # default boot certificate used by generated HTTPS vhosts
+nginx/snippets/               # security/fastcgi snippets plus webroot ACME helper for external certs
+nginx/templates/              # single HTTP+HTTPS vhost templates
+php/8.4/users.d/              # generated PHP 8.4 users
+php/8.4/pool.d/               # generated PHP 8.4 pools
+php/8.5/users.d/              # generated PHP 8.5 users
+php/8.5/pool.d/               # generated PHP 8.5 pools
+scripts/create-user.sh
+scripts/create-site.sh
+scripts/create-proxy.sh
+scripts/acme.sh               # switch generated vhost between self-signed and NGINX ACME
+scripts/use-cert.sh           # switch a generated vhost to file-based certs
+scripts/issue-cert.sh         # compatibility helper explaining the ACME toggle
+scripts/renew-certs.sh        # compatibility reload helper; NGINX ACME renews automatically
+```
+
+## Quick start
+
+```bash
+cd docker-stack
+cp .env.example .env
+# edit MYSQL_ROOT_PASSWORD
+
+docker compose build php84 php85
+docker compose up -d mysql redis php84 php85 nginx
+```
+
+## Create a PHP-FPM user/pool
+
+Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`.
+
+```bash
+./scripts/create-user.sh myuser
+```
+
+Create the same user for a specific PHP version:
+
+```bash
+./scripts/create-user.sh myuser --php 8.5
+```
+
+This creates, for example:
+
+```text
+home/myuser/
+php/8.5/users.d/myuser.env
+php/8.5/pool.d/myuser.conf
+run/php-fpm/php85/myuser.sock   # appears after php85 reload/start
+```
+
+The same username reuses the same numeric UID across PHP versions.
+
+## Create a site and choose PHP version
+
+Generated sites always include both HTTP and HTTPS in one vhost file. HTTPS uses the default self-signed certificate until you switch the marked TLS block to real ACME.
+
+```bash
+ALTER_DOMAINS=www.example.com ./scripts/create-site.sh myuser example.com app --php 8.5
+```
+
+This creates:
+
+```text
+home/myuser/example.com/
+nginx/conf.d/example.com.conf
+```
+
+The generated Nginx vhost uses the selected PHP socket:
+
+```nginx
+fastcgi_pass unix:/run/php-fpm/php85/myuser.sock;
+```
+
+The optional DB argument, `app`, creates:
+
+```text
+myuser_app
+```
+
+PHP app connection values:
+
+```text
+DB_HOST=mysql
+DB_PORT=3306
+DB_DATABASE=myuser_app
+DB_USERNAME=myuser
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+## Change a site's PHP version
+
+Re-run `create-site.sh` with another `--php` version. It regenerates the Nginx vhost and reloads Nginx if running:
+
+```bash
+./scripts/create-user.sh myuser --php 8.4
+./scripts/create-site.sh myuser example.com --php 8.4
+```
+
+## TLS certificates
+
+The NGINX ACME module is loaded and configured globally:
+
+- issuer: Let's Encrypt production directory
+- challenge: HTTP-01
+- persisted state: `nginx/acme-state/` mounted at `/var/cache/nginx/acme-letsencrypt`
+
+Generated vhosts start with this active self-signed block:
+
+```nginx
+ssl_certificate /etc/nginx/self-signed/default.crt;
+ssl_certificate_key /etc/nginx/self-signed/default.key;
+
+# acme_certificate letsencrypt;
+# ssl_certificate $acme_certificate;
+# ssl_certificate_key $acme_certificate_key;
+```
+
+When DNS is ready, enable real ACME and reload Nginx automatically:
+
+```bash
+./scripts/acme.sh example.com
+```
+
+To switch back to the boot self-signed cert:
+
+```bash
+./scripts/acme.sh example.com --off
+```
+
+`nginx/acme-state/` contains private keys after first issuance; keep it backed up and private. To change issuer settings, edit `nginx/conf.d/00-nginx.conf`.
+
+If you need to use externally managed certificate files instead, place them under `certs/` using the usual Let's Encrypt layout:
+
+```text
+certs/live/example.com/fullchain.pem
+certs/live/example.com/privkey.pem
+```
+
+Then switch an existing generated vhost to file-based certs:
+
+```bash
+./scripts/use-cert.sh example.com
+```
+
+Or pass explicit paths as seen inside the Nginx container:
+
+```bash
+./scripts/use-cert.sh example.com \
+  --cert /etc/letsencrypt/live/example.com/fullchain.pem \
+  --key /etc/letsencrypt/live/example.com/privkey.pem
+```
+
+## Add another PHP version
+
+Copy an existing PHP service in `compose.yml` and change both the service suffix (`phpXX`) and PHP version directory (`8.x`) consistently:
+
+```yaml
+  phpXX:
+    <<: *php-common
+    build:
+      context: ./php
+      args:
+        PHP_VERSION: 8.x
+        TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - ./home:/home
+      - ./run/php-fpm/phpXX:/run/php-fpm
+      - ./logs/php/phpXX:/var/log/php
+      - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
+      - ./php/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+      - ./php/8.x/users.d:/usr/local/etc/php/users.d:ro
+```
+
+Then:
+
+```bash
+mkdir -p php/8.x/{pool.d,users.d} run/php-fpm/phpXX logs/php/phpXX
+docker compose build phpXX
+docker compose up -d phpXX
+./scripts/create-user.sh myuser --php 8.x
+./scripts/create-site.sh myuser example.com --php 8.x
+```
+
+## Important permission detail
+
+The official Debian-based Nginx image runs workers as GID `101`. PHP-FPM sockets are created with `SOCKET_GID=101` via `.env`, so Nginx can access them across containers. Site files are group-readable so Nginx can serve static assets directly.
+
+For very large `/home/<user>` directories you can disable automatic recursive ownership fixes:
+
+```env
+FIX_HOME_OWNERSHIP=0
+```
+
+Then manage ownership yourself.
+
+## Performance choices
+
+- Host networking for Nginx removes Docker port-map/NAT overhead.
+- Unix sockets between Nginx and PHP-FPM avoid local TCP overhead.
+- Versioned socket directories avoid conflicts between PHP versions.
+- Nginx serves static files directly from a read-only `/home` mount.
+- HTTP/3 (QUIC) is enabled on generated HTTPS vhosts.
+- Global `proxy_cache` and `fastcgi_cache` zones are declared for vhosts to opt in.
+- PHP, MySQL, Redis stay isolated on a Compose backend network.
+- MySQL/Redis are not exposed with host ports by default.
+
+## Notes
+
+- This stack targets Linux cloud servers. Docker Desktop host networking and Unix socket bind mounts can behave differently.
+- Make sure host firewalls/security groups allow UDP/443 if you want HTTP/3 to be reachable.
+- Keep existing Ansible for host bootstrap/security/Docker install; avoid installing host Nginx/PHP/MySQL/Redis for new servers.

@@ -1,0 +1,108 @@
+x-php-common: &php-common
+  build:
+    context: ./php
+  restart: unless-stopped
+  environment:
+    TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
+    SOCKET_GID: ${SOCKET_GID:-101}
+    FIX_HOME_OWNERSHIP: ${FIX_HOME_OWNERSHIP:-1}
+  depends_on:
+    - mysql
+    - redis
+  networks:
+    - backend
+
+services:
+  nginx:
+    image: nginx:1.30-trixie
+    restart: unless-stopped
+    # Host network: nginx binds directly to host :80 and :443 TCP/UDP with no Docker port mapping/NAT.
+    # Intended for Linux cloud servers. Docker Desktop host networking behaves differently.
+    network_mode: host
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - ./nginx/self-signed:/etc/nginx/self-signed:ro
+      - ./home:/home:ro
+      - ./run/php-fpm:/run/php-fpm
+      - ./nginx/acme-state:/var/cache/nginx/acme-letsencrypt
+      - ./acme-challenge:/usr/share/nginx/acme-challenge:ro
+      - ./certs:/etc/letsencrypt:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - php84
+      - php85
+
+  php84:
+    <<: *php-common
+    build:
+      context: ./php
+      args:
+        PHP_VERSION: ${PHP84_VERSION:-8.4}
+        TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - ./home:/home
+      - ./run/php-fpm/php84:/run/php-fpm
+      - ./logs/php/php84:/var/log/php
+      - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
+      - ./php/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+      - ./php/8.4/users.d:/usr/local/etc/php/users.d:ro
+
+  php85:
+    <<: *php-common
+    build:
+      context: ./php
+      args:
+        PHP_VERSION: ${PHP85_VERSION:-8.5}
+        TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - ./home:/home
+      - ./run/php-fpm/php85:/run/php-fpm
+      - ./logs/php/php85:/var/log/php
+      - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
+      - ./php/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+      - ./php/8.5/users.d:/usr/local/etc/php/users.d:ro
+
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: ["--defaults-extra-file=/etc/mysql/conf.d/z-custom.cnf"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/conf.d/z-custom.cnf:/etc/mysql/conf.d/z-custom.cnf:ro
+      - ./backups/mysql:/backups
+    networks:
+      - backend
+
+  redis:
+    build:
+      context: ./redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+
+  # Optional toolbox matching your old nodejs_install role.
+  node:
+    image: node:20-trixie-slim
+    profiles: ["node"]
+    working_dir: /home
+    command: ["sh", "-lc", "sleep infinity"]
+    volumes:
+      - ./home:/home
+    networks:
+      - backend
+
+networks:
+  backend:
+
+volumes:
+  mysql-data:
+  redis-data:

@@ -1,0 +1,70 @@
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    listen 443 quic;
+    listen [::]:443 quic;
+    http2 on;
+
+    server_name __SERVER_NAMES__;
+
+    # Default boot certificate. This keeps HTTPS config valid before DNS/ACME is ready.
+    # When the domain is ready for real ACME, comment these two lines and uncomment
+    # the NGINX ACME block below, then reload nginx.
+    # BEGIN TLS_CERTIFICATE
+    ssl_certificate /etc/nginx/self-signed/default.crt;
+    ssl_certificate_key /etc/nginx/self-signed/default.key;
+
+    # acme_certificate letsencrypt;
+    # ssl_certificate $acme_certificate;
+    # ssl_certificate_key $acme_certificate_key;
+    # END TLS_CERTIFICATE
+
+    set $site_user __USERNAME__;
+    set $base /home/__USERNAME__/__MAIN_DOMAIN__;
+    root $base;
+
+    include /etc/nginx/snippets/security.conf;
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+    # Enable HSTS only after the real certificate is active and verified.
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    include /etc/nginx/snippets/general.conf;
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php-fpm/__PHP_SERVICE__/__USERNAME__.sock;
+        include /etc/nginx/snippets/php_fastcgi.conf;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAMES__;
+
+    set $site_user __USERNAME__;
+    set $base /home/__USERNAME__/__MAIN_DOMAIN__;
+    root $base;
+
+    include /etc/nginx/snippets/security.conf;
+
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+        # After the real certificate is active, you may replace the line above with:
+        # return 301 https://__MAIN_DOMAIN__$request_uri;
+    }
+
+    include /etc/nginx/snippets/general.conf;
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php-fpm/__PHP_SERVICE__/__USERNAME__.sock;
+        include /etc/nginx/snippets/php_fastcgi.conf;
+    }
+}

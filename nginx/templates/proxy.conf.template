@@ -1,0 +1,46 @@
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    listen 443 quic;
+    listen [::]:443 quic;
+    http2 on;
+
+    server_name __SERVER_NAMES__;
+
+    # Default boot certificate. This keeps HTTPS config valid before DNS/ACME is ready.
+    # When the domain is ready for real ACME, comment these two lines and uncomment
+    # the NGINX ACME block below, then reload nginx.
+    # BEGIN TLS_CERTIFICATE
+    ssl_certificate /etc/nginx/self-signed/default.crt;
+    ssl_certificate_key /etc/nginx/self-signed/default.key;
+
+    # acme_certificate letsencrypt;
+    # ssl_certificate $acme_certificate;
+    # ssl_certificate_key $acme_certificate_key;
+    # END TLS_CERTIFICATE
+
+    include /etc/nginx/snippets/security.conf;
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+    # Enable HSTS only after the real certificate is active and verified.
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    location / {
+        proxy_pass __UPSTREAM__;
+        include /etc/nginx/snippets/proxy_ssl.conf;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAMES__;
+
+    include /etc/nginx/snippets/security.conf;
+
+    location / {
+        proxy_pass __UPSTREAM__;
+        include /etc/nginx/snippets/proxy_ssl.conf;
+        # After the real certificate is active, you may replace the proxy lines above with:
+        # return 301 https://__MAIN_DOMAIN__$request_uri;
+    }
+}

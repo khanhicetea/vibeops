@@ -1,0 +1,65 @@
+#!/usr/bin/env sh
+set -eu
+
+SOCKET_GROUP_NAME="${SOCKET_GROUP_NAME:-nginxsock}"
+SOCKET_GID="${SOCKET_GID:-101}"
+FIX_HOME_OWNERSHIP="${FIX_HOME_OWNERSHIP:-1}"
+
+ensure_socket_group() {
+  if getent group "$SOCKET_GROUP_NAME" >/dev/null 2>&1; then
+    current_gid="$(getent group "$SOCKET_GROUP_NAME" | cut -d: -f3)"
+    if [ "$current_gid" != "$SOCKET_GID" ]; then
+      groupmod -o -g "$SOCKET_GID" "$SOCKET_GROUP_NAME"
+    fi
+  else
+    # Duplicate GID is intentional if another base-image group already owns SOCKET_GID.
+    # Cross-container socket access is numeric; official Debian nginx workers use gid 101 by default.
+    groupadd -o -g "$SOCKET_GID" "$SOCKET_GROUP_NAME"
+  fi
+}
+
+sync_one() {
+  file="$1"
+  USERNAME="$(awk -F= '$1 == "USERNAME" { print $2; exit }' "$file")"
+  USER_ID="$(awk -F= '$1 == "UID" { print $2; exit }' "$file")"
+
+  if [ -z "${USERNAME:-}" ] || [ -z "${USER_ID:-}" ]; then
+    echo "Invalid user file $file: USERNAME and UID are required" >&2
+    exit 1
+  fi
+
+  home_dir="/home/$USERNAME"
+
+  if ! id "$USERNAME" >/dev/null 2>&1; then
+    useradd -u "$USER_ID" -g "$SOCKET_GROUP_NAME" -d "$home_dir" -s /bin/sh -M "$USERNAME"
+  else
+    usermod -a -G "$SOCKET_GROUP_NAME" "$USERNAME" >/dev/null 2>&1 || true
+  fi
+
+  mkdir -p "$home_dir" "$home_dir/logs" /run/php-fpm /var/log/php
+  chown "$USERNAME:$SOCKET_GROUP_NAME" "$home_dir" "$home_dir/logs" || true
+  chmod 0750 "$home_dir" || true
+  chmod 0770 "$home_dir/logs" || true
+
+  if [ "$FIX_HOME_OWNERSHIP" = "1" ]; then
+    chown -R "$USERNAME:$SOCKET_GROUP_NAME" "$home_dir" || true
+    find "$home_dir" -type d -exec chmod g+rx {} + 2>/dev/null || true
+    find "$home_dir" -type f -exec chmod g+r {} + 2>/dev/null || true
+  fi
+}
+
+ensure_socket_group
+mkdir -p /run/php-fpm
+chown root:"$SOCKET_GROUP_NAME" /run/php-fpm
+chmod 0770 /run/php-fpm
+
+if [ "$#" -gt 0 ]; then
+  for username in "$@"; do
+    sync_one "/usr/local/etc/php/users.d/$username.env"
+  done
+else
+  for file in /usr/local/etc/php/users.d/*.env; do
+    [ -e "$file" ] || continue
+    sync_one "$file"
+  done
+fi
