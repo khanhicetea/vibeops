@@ -283,22 +283,23 @@ def rebuild_supercronic_crontab(php_version: str) -> Path:
     return combined
 
 
-def cron_reload(service: str, username: str) -> None:
+def cron_reload(service: str, usernames: Iterable[str] = ()) -> None:
     if service_running(service):
         script = r'''
 set -eu
-php-user-sync "$1"
+php-user-sync "$@"
 cmdline="$(tr '\000' ' ' < /proc/1/cmdline || true)"
 case "$cmdline" in
   *supercronic*) kill -USR2 1 ;;
   *) echo "Supercronic is not running as PID 1 ($cmdline)" >&2; exit 42 ;;
 esac
 '''
-        cp = run(["docker", "compose", "exec", "-T", service, "sh", "-lc", script, "--", username], check=False)
+        cp = run(["docker", "compose", "exec", "-T", service, "sh", "-lc", script, "--", *usernames], check=False)
         if cp.returncode == 0:
             info(f"Reloaded {service} cron with SIGUSR2")
         elif cp.returncode == 42:
-            info(f"{service} is running but Supercronic is idle; restart it once to load this cron job.")
+            run(["docker", "compose", "restart", service])
+            info(f"Restarted idle {service} to start Supercronic")
         else:
             die(f"Failed to reload {service} cron (exit {cp.returncode})")
     else:
@@ -625,7 +626,14 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
     })
     upsert_timestamp(cron)
     save_db(db)
-    cron_reload(php_service, username)
+    cron_reload(php_service, [username])
+
+
+def cmd_cron_reload(args: argparse.Namespace) -> None:
+    php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
+    combined_crontab = rebuild_supercronic_crontab(php_version)
+    info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
+    cron_reload(php_cron_service_for(php_version))
 
 
 def replace_tls_block(conf_path: Path, replacement: str) -> None:
@@ -866,6 +874,9 @@ def build_parser() -> argparse.ArgumentParser:
     cron_create.add_argument("--php", default=default_php_version(), help="PHP version")
     cron_create.add_argument("--workdir", "-w", help="Container workdir")
     cron_create.set_defaults(func=cmd_cron_create)
+    cron_reload_cmd = cron_sub.add_parser("reload", help="Rebuild merged crontab and reload Supercronic")
+    cron_reload_cmd.add_argument("--php", default=default_php_version(), help="PHP version")
+    cron_reload_cmd.set_defaults(func=cmd_cron_reload)
 
     app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app user")
     app_exec.add_argument("username")
