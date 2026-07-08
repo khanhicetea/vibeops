@@ -32,4 +32,4 @@ if [ "$has_jobs" = "0" ]; then
 fi
 
 echo "Starting supercronic with jobs from $CRON_DIR"
-exec supercronic -passthrough-logs "$COMBINED"
+exec /usr/local/bin/supercronic -passthrough-logs "$COMBINED"

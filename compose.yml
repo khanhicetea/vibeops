@@ -3,6 +3,7 @@ name: vibeops
 x-php-common: &php-common
   build:
     context: ./php
+  entrypoint: ["docker-php-entrypoint"]
   environment:
     TZ: ${TZ:-Asia/Ho_Chi_Minh}
     SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
@@ -37,6 +38,9 @@ x-php84-volumes: &php84-volumes
   - ./php/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./php/8.4/users.d:/usr/local/etc/php/users.d:ro
   - ./php/8.4/cron.d:/usr/local/etc/php/cron.d:ro
+  - ./php/php-user-sync:/usr/local/bin/php-user-sync:ro
+  - ./php/php-cron-as:/usr/local/bin/php-cron-as:ro
+  - ./php/php-supercronic:/usr/local/bin/php-supercronic:ro
 
 x-php85-volumes: &php85-volumes
   - ./home:/home
@@ -46,6 +50,9 @@ x-php85-volumes: &php85-volumes
   - ./php/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./php/8.5/users.d:/usr/local/etc/php/users.d:ro
   - ./php/8.5/cron.d:/usr/local/etc/php/cron.d:ro
+  - ./php/php-user-sync:/usr/local/bin/php-user-sync:ro
+  - ./php/php-cron-as:/usr/local/bin/php-cron-as:ro
+  - ./php/php-supercronic:/usr/local/bin/php-supercronic:ro
 
 services:
   nginx:
