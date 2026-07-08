@@ -1,6 +1,6 @@
 ---
 name: vibeops
-description: Understand and operate this repository's VibeOps: host-network Nginx, multi-version PHP-FPM over Unix sockets, MySQL, Redis, ACME TLS, site/user/proxy creation, deployment checks, and troubleshooting. Use when deploying apps, adding domains, changing PHP versions, editing compose/nginx/php config, or diagnosing production issues in this stack.
+description: Understand and operate this repository's VibeOps, host-network Nginx, multi-version PHP-FPM over Unix sockets, MySQL, Redis, ACME TLS, site/user/proxy creation, deployment checks, and troubleshooting. Use when deploying apps, adding domains, changing PHP versions, editing compose/nginx/php config, or diagnosing production issues in this stack.
 ---
 
 # VibeOps Skill

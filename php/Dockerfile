@@ -40,8 +40,11 @@ RUN set -eux; \
     cp /usr/share/zoneinfo/${TZ} /etc/localtime; \
     echo ${TZ} > /etc/timezone; \
     mkdir -p /run/php-fpm /usr/local/etc/php/users.d /usr/local/etc/php-fpm.d/pools /var/log/php; \
-    rm -f /usr/local/etc/php-fpm.d/www.conf; \
-    printf 'include=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-pools.conf; \
+    for f in /usr/local/etc/php-fpm.d/*.conf; do \
+      [ -e "$f" ] || continue; \
+      if grep -q '^\[www\]' "$f"; then rm -f "$f"; fi; \
+    done; \
+    printf '[global]\nerror_log = /proc/self/fd/2\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
     php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"; \
     php -r "if (hash_file('sha384', 'composer-setup.php') !== trim(file_get_contents('https://composer.github.io/installer.sig'))) { unlink('composer-setup.php'); exit(1); }"; \
     php composer-setup.php --install-dir=/usr/local/bin --filename=composer; \

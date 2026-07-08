@@ -62,11 +62,18 @@ sync_one() {
 
 ensure_socket_group
 # VibeOps uses generated per-user pools from php-fpm.d/pools/*.conf.
-# Disable the official image's default [www] pool if it exists; some PHP image
-# versions ship it without root-safe user/group directives, which breaks
-# `php-fpm -tt` and service startup when the master process runs as root.
-if [ -f /usr/local/etc/php-fpm.d/www.conf ]; then
-  mv /usr/local/etc/php-fpm.d/www.conf /usr/local/etc/php-fpm.d/www.conf.disabled
+# Disable all official image default [www] fragments; some PHP image versions
+# split [www] across www.conf/docker.conf, which breaks `php-fpm -tt` after the
+# main www.conf is removed because the remaining [www] pool lacks user/group.
+for f in /usr/local/etc/php-fpm.d/*.conf; do
+  [ -e "$f" ] || continue
+  if grep -q '^\[www\]' "$f"; then
+    mv "$f" "$f.disabled"
+  fi
+done
+rm -f /usr/local/etc/php-fpm.d/zz-pools.conf
+if [ ! -f /usr/local/etc/php-fpm.d/zz-vibeops.conf ]; then
+  printf '[global]\nerror_log = /proc/self/fd/2\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf
 fi
 mkdir -p /run/php-fpm
 chown root:"$SOCKET_GROUP_NAME" /run/php-fpm

@@ -164,7 +164,7 @@ echo "Pool: vibeops/php/$PHP_VERSION/pool.d/$USERNAME.conf"
 echo "Socket: vibeops/run/php-fpm/$PHP_SERVICE/$USERNAME.sock"
 
 if command -v docker >/dev/null 2>&1 && docker compose ps --services --filter status=running 2>/dev/null | grep -qx "$PHP_SERVICE"; then
-  docker compose exec -T "$PHP_SERVICE" sh -lc 'if [ -f /usr/local/etc/php-fpm.d/www.conf ]; then mv /usr/local/etc/php-fpm.d/www.conf /usr/local/etc/php-fpm.d/www.conf.disabled; fi' || true
+  docker compose exec -T "$PHP_SERVICE" sh -lc 'for f in /usr/local/etc/php-fpm.d/*.conf; do [ -e "$f" ] || continue; if grep -q "^\[www\]" "$f"; then mv "$f" "$f.disabled"; fi; done; rm -f /usr/local/etc/php-fpm.d/zz-pools.conf; if [ ! -f /usr/local/etc/php-fpm.d/zz-vibeops.conf ]; then printf "[global]\nerror_log = /proc/self/fd/2\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n" > /usr/local/etc/php-fpm.d/zz-vibeops.conf; fi' || true
   docker compose exec -T "$PHP_SERVICE" php-user-sync "$USERNAME"
   docker compose exec -T "$PHP_SERVICE" php-fpm -tt
   docker compose exec -T "$PHP_SERVICE" sh -lc 'if command -v s6-svc >/dev/null 2>&1 && [ -e /run/service/php-fpm ]; then s6-svc -2 /run/service/php-fpm; else kill -USR2 1; fi'

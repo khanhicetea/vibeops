@@ -227,13 +227,19 @@ def nginx_reload(no_reload: bool = False) -> None:
 
 
 def php_disable_default_pool(service: str) -> None:
-    # Official PHP images ship a default [www] pool. VibeOps uses only generated
-    # per-user pools, so remove the default pool at runtime too (covers existing
-    # containers built before the Dockerfile cleanup, and PHP images whose
-    # default pool is not root-safe).
+    # Official PHP images ship [www] fragments in more than one file (for
+    # example www.conf and sometimes docker.conf). VibeOps uses only generated
+    # per-user pools, so disable any default [www] fragments at runtime too.
     run([
         "docker", "compose", "exec", "-T", service, "sh", "-lc",
-        "if [ -f /usr/local/etc/php-fpm.d/www.conf ]; then mv /usr/local/etc/php-fpm.d/www.conf /usr/local/etc/php-fpm.d/www.conf.disabled; fi",
+        "for f in /usr/local/etc/php-fpm.d/*.conf; do "
+        "[ -e \"$f\" ] || continue; "
+        "if grep -q '^\\[www\\]' \"$f\"; then mv \"$f\" \"$f.disabled\"; fi; "
+        "done; "
+        "rm -f /usr/local/etc/php-fpm.d/zz-pools.conf; "
+        "if [ ! -f /usr/local/etc/php-fpm.d/zz-vibeops.conf ]; then "
+        "printf '[global]\\nerror_log = /proc/self/fd/2\\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; "
+        "fi",
     ], check=False)
 
 
