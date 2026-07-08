@@ -1,6 +1,8 @@
-# Docker LEMP stack with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions
+# VibeOps — vibe-coding ops stack
 
-This is the Docker version of the current Ansible LEMP model, optimized for production performance and DX while keeping the familiar structure:
+VibeOps is a Docker-based LEMP operations stack for vibe-coding workflows, with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions, MySQL, Redis, cron, and ACME-ready TLS.
+
+It is optimized for production performance and DX while keeping the familiar structure:
 
 ```text
 /home/<user>/<domain>
@@ -9,7 +11,7 @@ This is the Docker version of the current Ansible LEMP model, optimized for prod
 In this stack that maps to:
 
 ```text
-docker-stack/home/<user>/<domain>
+vibeops/home/<user>/<domain>
 ```
 
 ## Architecture
@@ -23,7 +25,7 @@ docker-stack/home/<user>/<domain>
   - `php85` from `php:8.5-fpm-trixie`
   - OPcache is installed only when `php -m` shows it is missing, so PHP 8.5 can use its built-in Zend OPcache without reinstalling it.
 - **PHP-FPM exposes per-user Unix sockets** in versioned shared dirs:
-  - host path: `docker-stack/run/php-fpm/php84/<user>.sock`
+  - host path: `vibeops/run/php-fpm/php84/<user>.sock`
   - nginx path: `/run/php-fpm/php84/<user>.sock`
   - PHP container path: `/run/php-fpm/<user>.sock`
 - **Each PHP-FPM pool is a Linux user** inside each PHP container:
@@ -76,7 +78,7 @@ scripts/renew-certs.sh        # compatibility reload helper; NGINX ACME renews a
 ## Quick start
 
 ```bash
-cd docker-stack
+cd vibeops
 cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD
 

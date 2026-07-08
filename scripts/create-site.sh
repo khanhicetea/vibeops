@@ -103,9 +103,9 @@ for key in ("USERNAME", "MAIN_DOMAIN", "SERVER_NAMES", "PHP_SERVICE"):
 open(dst, "w").write(text)
 PY
 
-echo "Created HTTP+HTTPS vhost with default self-signed cert: docker-stack/$CONF_PATH"
+echo "Created HTTP+HTTPS vhost with default self-signed cert: vibeops/$CONF_PATH"
 echo "To enable real NGINX ACME later, edit $CONF_PATH and switch the marked TLS block."
-echo "Document root: docker-stack/$SITE_ROOT"
+echo "Document root: vibeops/$SITE_ROOT"
 echo "PHP-FPM: $PHP_VERSION via /run/php-fpm/$PHP_SERVICE/$USERNAME.sock"
 
 if command -v docker >/dev/null 2>&1 && docker compose ps --services --filter status=running 2>/dev/null | grep -qx "$PHP_SERVICE"; then

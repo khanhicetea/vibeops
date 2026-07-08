@@ -1,3 +1,5 @@
+name: vibeops
+
 x-php-common: &php-common
   build:
     context: ./php

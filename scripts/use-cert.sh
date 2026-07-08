@@ -55,7 +55,7 @@ done
 [[ "$MAIN_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid domain: $MAIN_DOMAIN" >&2; exit 1; }
 
 CONF_PATH="nginx/conf.d/$MAIN_DOMAIN.conf"
-[[ -f "$CONF_PATH" ]] || { echo "Missing vhost: docker-stack/$CONF_PATH" >&2; exit 1; }
+[[ -f "$CONF_PATH" ]] || { echo "Missing vhost: vibeops/$CONF_PATH" >&2; exit 1; }
 
 CERT_PATH="${CERT_PATH:-/etc/letsencrypt/live/$MAIN_DOMAIN/fullchain.pem}"
 CERT_KEY_PATH="${CERT_KEY_PATH:-/etc/letsencrypt/live/$MAIN_DOMAIN/privkey.pem}"
@@ -85,11 +85,11 @@ PY
 
 if [[ "$CERT_PATH" == /etc/letsencrypt/* ]]; then
   host_cert="certs/${CERT_PATH#/etc/letsencrypt/}"
-  [[ -f "$host_cert" ]] || echo "Warning: expected host file docker-stack/$host_cert was not found." >&2
+  [[ -f "$host_cert" ]] || echo "Warning: expected host file vibeops/$host_cert was not found." >&2
 fi
 if [[ "$CERT_KEY_PATH" == /etc/letsencrypt/* ]]; then
   host_key="certs/${CERT_KEY_PATH#/etc/letsencrypt/}"
-  [[ -f "$host_key" ]] || echo "Warning: expected host file docker-stack/$host_key was not found." >&2
+  [[ -f "$host_key" ]] || echo "Warning: expected host file vibeops/$host_key was not found." >&2
 fi
 
 echo "Switched $MAIN_DOMAIN to certificate files:"

@@ -30,7 +30,7 @@ ok() { printf 'OK: %s\n' "$*"; }
 
 ROOT="$(find_stack_root || true)"
 if [[ -z "${ROOT:-}" ]]; then
-  echo "Could not find docker-stack root (compose.yml + scripts/ + nginx/)." >&2
+  echo "Could not find vibeops root (compose.yml + scripts/ + nginx/)." >&2
   exit 1
 fi
 cd "$ROOT"
@@ -68,11 +68,11 @@ fi
 
 say "Docker Compose config"
 if command -v docker >/dev/null 2>&1; then
-  if docker compose config >/tmp/docker-stack.compose.check.yml 2>/tmp/docker-stack.compose.check.err; then
+  if docker compose config >/tmp/vibeops.compose.check.yml 2>/tmp/vibeops.compose.check.err; then
     ok "docker compose config is valid"
   else
     warn "docker compose config failed:"
-    cat /tmp/docker-stack.compose.check.err >&2
+    cat /tmp/vibeops.compose.check.err >&2
   fi
 
   say "Docker Compose services"
@@ -110,4 +110,4 @@ else
 fi
 
 say "Summary"
-echo "Use README.md and .pi/skills/docker-lemp-stack/references/deploy-runbook.md for exact deployment workflows."
+echo "Use README.md and .pi/skills/vibeops/references/deploy-runbook.md for exact deployment workflows."

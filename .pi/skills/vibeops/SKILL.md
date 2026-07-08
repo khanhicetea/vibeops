@@ -1,11 +1,11 @@
 ---
-name: docker-lemp-stack
-description: Understand and operate this repository's Docker LEMP stack: host-network Nginx, multi-version PHP-FPM over Unix sockets, MySQL, Redis, ACME TLS, site/user/proxy creation, deployment checks, and troubleshooting. Use when deploying apps, adding domains, changing PHP versions, editing compose/nginx/php config, or diagnosing production issues in this stack.
+name: vibeops
+description: Understand and operate this repository's VibeOps: host-network Nginx, multi-version PHP-FPM over Unix sockets, MySQL, Redis, ACME TLS, site/user/proxy creation, deployment checks, and troubleshooting. Use when deploying apps, adding domains, changing PHP versions, editing compose/nginx/php config, or diagnosing production issues in this stack.
 ---
 
-# Docker LEMP Stack Skill
+# VibeOps Skill
 
-Use this skill when working in this `docker-stack` repository or helping a developer deploy an app onto it.
+Use this skill when working in this `vibeops` repository or helping a developer deploy an app onto it.
 
 ## First steps
 
@@ -21,7 +21,7 @@ Use this skill when working in this `docker-stack` repository or helping a devel
 4. Use the quick runbook in `references/deploy-runbook.md` for deployment commands and troubleshooting.
 5. Optionally run `scripts/deploy-check.sh` from this skill directory for a fast local readiness report:
    ```bash
-   .pi/skills/docker-lemp-stack/scripts/deploy-check.sh
+   .pi/skills/vibeops/scripts/deploy-check.sh
    ```
 
 ## Stack mental model

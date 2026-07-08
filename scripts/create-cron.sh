@@ -114,7 +114,7 @@ EOF
 
 chmod 0644 "$CRON_PATH" || true
 
-echo "Created cron job: docker-stack/$CRON_PATH"
+echo "Created cron job: vibeops/$CRON_PATH"
 echo "Runs as: $USERNAME"
 echo "Workdir: $WORKDIR"
 echo "Command: $COMMAND"

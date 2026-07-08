@@ -1,4 +1,4 @@
-# Docker LEMP Stack Deploy Runbook
+# VibeOps Deploy Runbook
 
 This runbook is written for agents and developers operating this repository.
 
@@ -34,7 +34,7 @@ pwd
 [ -f compose.yml ] && [ -f scripts/create-site.sh ] && echo "stack root OK"
 [ -f .env ] || cp .env.example .env
 # Edit .env: MYSQL_ROOT_PASSWORD must not be the placeholder.
-docker compose config >/tmp/docker-stack.compose.checked.yml
+docker compose config >/tmp/vibeops.compose.checked.yml
 docker compose ps
 ```
 

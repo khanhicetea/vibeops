@@ -159,9 +159,9 @@ chmod 0750 "home/$USERNAME" || true
 chmod 0770 "home/$USERNAME/logs" || true
 
 echo "Created PHP $PHP_VERSION user config: $USERNAME uid=$USER_UID"
-echo "Home: docker-stack/home/$USERNAME"
-echo "Pool: docker-stack/php/$PHP_VERSION/pool.d/$USERNAME.conf"
-echo "Socket: docker-stack/run/php-fpm/$PHP_SERVICE/$USERNAME.sock"
+echo "Home: vibeops/home/$USERNAME"
+echo "Pool: vibeops/php/$PHP_VERSION/pool.d/$USERNAME.conf"
+echo "Socket: vibeops/run/php-fpm/$PHP_SERVICE/$USERNAME.sock"
 
 if command -v docker >/dev/null 2>&1 && docker compose ps --services --filter status=running 2>/dev/null | grep -qx "$PHP_SERVICE"; then
   docker compose exec -T "$PHP_SERVICE" php-user-sync "$USERNAME"
@@ -193,7 +193,7 @@ GRANT ALL PRIVILEGES ON \`${USERNAME}\_%\`.* TO '${USERNAME}'@'%';
 FLUSH PRIVILEGES;
 SQL
     echo "MySQL account: $USERNAME / $MYSQL_USER_PASSWORD"
-    echo "Saved: docker-stack/home/$USERNAME/.credentials/mysql.env"
+    echo "Saved: vibeops/home/$USERNAME/.credentials/mysql.env"
   else
     echo "Skipped MySQL user creation; start mysql and rerun, or set CREATE_MYSQL_USER=0."
   fi

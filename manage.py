@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Pure-Python management CLI for this Docker LEMP stack.
+"""Pure-Python management CLI for VibeOps.
 
-No third-party dependencies are required. The CLI keeps lightweight metadata in
-./stack.json while still generating the same filesystem artifacts consumed by
-Docker, PHP-FPM, supercronic, and nginx.
+VibeOps is a vibe-coding ops stack. No third-party dependencies are required.
+The CLI keeps lightweight metadata in ./stack.json while still generating the
+same filesystem artifacts consumed by Docker, PHP-FPM, supercronic, and nginx.
 """
 from __future__ import annotations
 
@@ -166,7 +166,7 @@ def render_template_text(text: str, values: dict[str, Any]) -> str:
 
 def template_text(path: Path, values: dict[str, Any]) -> str:
     if not path.exists():
-        die(f"Missing template: docker-stack/{rel(path)}")
+        die(f"Missing template: vibeops/{rel(path)}")
     return render_template_text(path.read_text(), values)
 
 
@@ -317,7 +317,7 @@ def create_mysql_user(username: str, password: str | None) -> tuple[bool, str | 
     })
     run(["docker", "compose", "exec", "-T", "mysql", "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
     info(f"MySQL account: {username} / {password}")
-    info(f"Saved: docker-stack/{rel(cred_path)}")
+    info(f"Saved: vibeops/{rel(cred_path)}")
     return True, rel(cred_path)
 
 
@@ -357,9 +357,9 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
         warn(f"could not chmod home/{username}")
 
     info(f"Created PHP {php_version} user config: {username} uid={user_uid}")
-    info(f"Home: docker-stack/home/{username}")
-    info(f"Pool: docker-stack/php/{php_version}/pool.d/{username}.conf")
-    info(f"Socket: docker-stack/run/php-fpm/{php_service}/{username}.sock")
+    info(f"Home: vibeops/home/{username}")
+    info(f"Pool: vibeops/php/{php_version}/pool.d/{username}.conf")
+    info(f"Socket: vibeops/run/php-fpm/{php_service}/{username}.sock")
 
     php_reload(php_service, username, no_reload=args.no_reload)
 
@@ -443,8 +443,8 @@ def cmd_site_create(args: argparse.Namespace) -> None:
         "PHP_SERVICE": php_service,
     })
 
-    info(f"Created HTTP+HTTPS PHP vhost with default self-signed cert: docker-stack/{rel(conf_path)}")
-    info(f"Document root: docker-stack/{rel(site_root)}")
+    info(f"Created HTTP+HTTPS PHP vhost with default self-signed cert: vibeops/{rel(conf_path)}")
+    info(f"Document root: vibeops/{rel(site_root)}")
     info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service}/{username}.sock")
 
     if service_running(php_service):
@@ -499,7 +499,7 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
         "SERVER_NAMES": server_names,
         "UPSTREAM": upstream,
     })
-    info(f"Created HTTP+HTTPS proxy vhost with default self-signed cert: docker-stack/{rel(conf_path)}")
+    info(f"Created HTTP+HTTPS proxy vhost with default self-signed cert: vibeops/{rel(conf_path)}")
 
     site = db["sites"].setdefault(main_domain, {})
     site.update({
@@ -549,7 +549,7 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         "QUOTED_COMMAND": shlex.quote(command),
     }, 0o644)
 
-    info(f"Created cron job: docker-stack/{rel(cron_path)}")
+    info(f"Created cron job: vibeops/{rel(cron_path)}")
     info(f"Runs as: {username}")
     info(f"Workdir: {workdir}")
     info(f"Command: {command}")
@@ -585,7 +585,7 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
     conf_path = ROOT / "nginx" / "conf.d" / f"{main_domain}.conf"
     if not conf_path.exists():
-        die(f"Missing vhost: docker-stack/{rel(conf_path)}")
+        die(f"Missing vhost: vibeops/{rel(conf_path)}")
     if args.off:
         replacement = template_text(ROOT / "nginx" / "templates" / "tls-self-signed.conf.template", {})
         mode = "self-signed"
@@ -606,7 +606,7 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
     conf_path = ROOT / "nginx" / "conf.d" / f"{main_domain}.conf"
     if not conf_path.exists():
-        die(f"Missing vhost: docker-stack/{rel(conf_path)}")
+        die(f"Missing vhost: vibeops/{rel(conf_path)}")
     cert_path = args.cert or f"/etc/letsencrypt/live/{main_domain}/fullchain.pem"
     key_path = args.key or f"/etc/letsencrypt/live/{main_domain}/privkey.pem"
     replacement = template_text(ROOT / "nginx" / "templates" / "tls-files.conf.template", {
@@ -619,7 +619,7 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
         if container_path.startswith("/etc/letsencrypt/"):
             host_path = ROOT / "certs" / container_path.removeprefix("/etc/letsencrypt/")
             if not host_path.exists():
-                warn(f"expected host {label} file docker-stack/{rel(host_path)} was not found")
+                warn(f"expected host {label} file vibeops/{rel(host_path)} was not found")
 
     site = db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
     site["tls"] = {"mode": "files", "cert": cert_path, "key": key_path}
@@ -674,7 +674,7 @@ def cmd_list(args: argparse.Namespace) -> None:
     if kind == "users":
         users = db.get("users", {})
         if not users:
-            info("No users in stack.json. Create one with: ./stack.py user create <username>")
+            info("No users in stack.json. Create one with: ./manage.py user create <username>")
             return
         for name, user in sorted(users.items()):
             versions = ",".join(user.get("php_versions", [])) if isinstance(user, dict) else ""
@@ -683,7 +683,7 @@ def cmd_list(args: argparse.Namespace) -> None:
     elif kind == "sites":
         sites = db.get("sites", {})
         if not sites:
-            info("No sites in stack.json. Create one with: ./stack.py site create <user> <domain>")
+            info("No sites in stack.json. Create one with: ./manage.py site create <user> <domain>")
             return
         for domain, site in sorted(sites.items()):
             if not isinstance(site, dict):
@@ -695,7 +695,7 @@ def cmd_list(args: argparse.Namespace) -> None:
     elif kind == "crons":
         crons = db.get("crons", {})
         if not crons:
-            info("No crons in stack.json. Create one with: ./stack.py cron create <user> <domain> <name> '<schedule>' '<command>'")
+            info("No crons in stack.json. Create one with: ./manage.py cron create <user> <domain> <name> '<schedule>' '<command>'")
             return
         for key, cron in sorted(crons.items()):
             if not isinstance(cron, dict):
@@ -714,13 +714,13 @@ def cmd_state(args: argparse.Namespace) -> None:
         if DB_PATH.exists() and not args.force:
             die(f"{rel(DB_PATH)} already exists; use --force to overwrite")
         save_db({"schema": SCHEMA_VERSION, "users": {}, "sites": {}, "crons": {}})
-        info(f"Initialized docker-stack/{rel(DB_PATH)}")
+        info(f"Initialized vibeops/{rel(DB_PATH)}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="stack.py",
-        description="Pure-Python management CLI for the Docker LEMP stack.",
+        prog="manage.py",
+        description="Pure-Python management CLI for VibeOps, the vibe-coding ops stack.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.set_defaults(func=None)

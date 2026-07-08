@@ -55,7 +55,7 @@ done
 [[ "$MAIN_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid domain: $MAIN_DOMAIN" >&2; exit 1; }
 
 CONF_PATH="nginx/conf.d/$MAIN_DOMAIN.conf"
-[[ -f "$CONF_PATH" ]] || { echo "Missing vhost: docker-stack/$CONF_PATH" >&2; exit 1; }
+[[ -f "$CONF_PATH" ]] || { echo "Missing vhost: vibeops/$CONF_PATH" >&2; exit 1; }
 
 export MODE
 python3 - "$CONF_PATH" <<'PY'
@@ -100,9 +100,9 @@ open(path, "w").write(text2)
 PY
 
 if [[ "$MODE" == "on" ]]; then
-  echo "Enabled NGINX ACME for $MAIN_DOMAIN in docker-stack/$CONF_PATH"
+  echo "Enabled NGINX ACME for $MAIN_DOMAIN in vibeops/$CONF_PATH"
 else
-  echo "Switched $MAIN_DOMAIN back to the default self-signed certificate in docker-stack/$CONF_PATH"
+  echo "Switched $MAIN_DOMAIN back to the default self-signed certificate in vibeops/$CONF_PATH"
 fi
 
 if [[ "$RELOAD" == "1" ]]; then
