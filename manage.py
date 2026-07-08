@@ -669,6 +669,28 @@ def replace_tls_block(conf_path: Path, replacement: str) -> None:
     write_text(conf_path, text2)
 
 
+def set_https_redirect(conf_path: Path, enabled: bool) -> None:
+    """Toggle the generated HTTP vhost redirect flag."""
+    text = conf_path.read_text()
+    value = "1" if enabled else "0"
+
+    if "set $enable_https_redirect" in text:
+        text2, count = re.subn(r"set \$enable_https_redirect [01];", f"set $enable_https_redirect {value};", text, count=1)
+    else:
+        listen_pos = text.find("listen 80;")
+        server_name_pos = text.find("server_name ", listen_pos)
+        insert_pos = text.find(";", server_name_pos) + 1 if server_name_pos >= 0 else 0
+        if listen_pos < 0 or server_name_pos < 0 or insert_pos <= 0:
+            warn(f"Could not find generated HTTP server in {rel(conf_path)}; skipped HTTPS redirect toggle")
+            return
+        text2 = text[:insert_pos] + f"\n\n    set $enable_https_redirect {value};" + text[insert_pos:]
+        count = 1
+
+    if count:
+        write_text(conf_path, text2)
+        info(("Enabled" if enabled else "Disabled") + f" HTTP to HTTPS redirect in vibeops/{rel(conf_path)}")
+
+
 def cmd_tls_acme(args: argparse.Namespace) -> None:
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
@@ -682,8 +704,9 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
         replacement = template_text(NGINX_TEMPLATE_DIR / "tls-acme.conf.template", {})
         mode = "acme"
     replace_tls_block(conf_path, replacement)
+    set_https_redirect(conf_path, mode == "acme" and not args.no_redirect_https)
     site = db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
-    site["tls"] = {"mode": mode}
+    site["tls"] = {"mode": mode, "redirect_https": mode == "acme" and not args.no_redirect_https}
     upsert_timestamp(site)
     save_db(db)
     info(("Enabled NGINX ACME for" if mode == "acme" else "Switched to self-signed certificate for") + f" {main_domain}")
@@ -990,10 +1013,11 @@ def wizard_tls_acme() -> None:
     domains = sorted(db.get("sites", {}).keys())
     domain = prompt_choice("Domain", domains) if domains else prompt_text("Domain")
     off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
+    no_redirect_https = False if off else not prompt_confirm("Redirect HTTP to HTTPS after ACME?", True)
     no_reload = not prompt_confirm("Reload nginx if running?", True)
-    print_plan([(f"switch {domain} to self-signed" if off else f"enable ACME for {domain}"), "reload nginx: " + ("no" if no_reload else "yes")])
+    print_plan([(f"switch {domain} to self-signed" if off else f"enable ACME for {domain}"), "redirect HTTP to HTTPS: " + ("no" if no_redirect_https else "yes"), "reload nginx: " + ("no" if no_reload else "yes")])
     if prompt_confirm("Continue?", True):
-        cmd_tls_acme(argparse.Namespace(domain=domain, off=off, no_reload=no_reload))
+        cmd_tls_acme(argparse.Namespace(domain=domain, off=off, no_redirect_https=no_redirect_https, no_reload=no_reload))
 
 
 def wizard_cron() -> None:
@@ -1138,6 +1162,7 @@ def build_parser() -> argparse.ArgumentParser:
     tls_acme = tls_sub.add_parser("acme", help="Enable nginx ACME for a vhost, or switch back to self-signed")
     tls_acme.add_argument("domain")
     tls_acme.add_argument("--off", "--self-signed", action="store_true", help="Switch back to the default self-signed cert")
+    tls_acme.add_argument("--no-redirect-https", action="store_true", help="Do not rewrite the HTTP vhost to redirect to HTTPS after enabling ACME")
     tls_acme.add_argument("--no-reload", action="store_true", help="Do not reload nginx")
     tls_acme.set_defaults(func=cmd_tls_acme)
     tls_cert = tls_sub.add_parser("cert", help="Use explicit certificate files for a vhost")

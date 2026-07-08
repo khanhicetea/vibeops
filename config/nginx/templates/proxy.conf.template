@@ -35,12 +35,18 @@ server {
     listen [::]:80;
     server_name __SERVER_NAMES__;
 
+    set $enable_https_redirect 0;
+
     include /etc/nginx/snippets/security.conf;
 
+    include /etc/nginx/snippets/acme.conf;
+
     location / {
+        if ($enable_https_redirect) {
+            return 301 https://$host$request_uri;
+        }
+
         proxy_pass __UPSTREAM__;
         include /etc/nginx/snippets/proxy_ssl.conf;
-        # After the real certificate is active, you may replace the proxy lines above with:
-        # return 301 https://__MAIN_DOMAIN__$request_uri;
     }
 }

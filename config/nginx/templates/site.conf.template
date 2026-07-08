@@ -49,16 +49,21 @@ server {
 
     set $site_user __USERNAME__;
     set $base /home/__USERNAME__/__MAIN_DOMAIN__;
+    set $enable_https_redirect 0;
     root $base;
 
     include /etc/nginx/snippets/security.conf;
 
     index index.php index.html;
 
+    include /etc/nginx/snippets/acme.conf;
+
     location / {
+        if ($enable_https_redirect) {
+            return 301 https://$host$request_uri;
+        }
+
         try_files $uri $uri/ /index.php$is_args$args;
-        # After the real certificate is active, you may replace the line above with:
-        # return 301 https://__MAIN_DOMAIN__$request_uri;
     }
 
     include /etc/nginx/snippets/general.conf;
