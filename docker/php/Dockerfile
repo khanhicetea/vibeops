@@ -21,6 +21,11 @@ RUN set -eux; \
       unzip \
       xz-utils \
       $PHPIZE_DEPS \
+      libfreetype6 \
+      libicu76 \
+      libjpeg62-turbo \
+      libpng16-16 \
+      libzip5 \
       libfreetype6-dev \
       libicu-dev \
       libjpeg62-turbo-dev \
@@ -41,13 +46,13 @@ RUN set -eux; \
       [ -e "$f" ] || continue; \
       if grep -q '^\[www\]' "$f"; then rm -f "$f"; fi; \
     done; \
-    printf '[global]\nerror_log = /proc/self/fd/2\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
+    printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = 32\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
     php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"; \
     php -r "if (hash_file('sha384', 'composer-setup.php') !== trim(file_get_contents('https://composer.github.io/installer.sig'))) { unlink('composer-setup.php'); exit(1); }"; \
     php composer-setup.php --install-dir=/usr/local/bin --filename=composer; \
     rm composer-setup.php; \
     apt-mark auto '.*' > /dev/null; \
-    apt-mark manual $savedAptMark bash ca-certificates curl git gosu openssh-client openssl passwd tzdata unzip xz-utils; \
+    apt-mark manual $savedAptMark bash ca-certificates curl git gosu openssh-client openssl passwd tzdata unzip xz-utils libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
     ldd "$(php -r 'echo ini_get("extension_dir");')"/*.so \
       | awk '/=>/ { print $3 } /^\// { print $1 }' \
       | xargs -r -I '{}' sh -c 'dpkg-query -S "$1" 2>/dev/null | cut -d: -f1' sh '{}' \

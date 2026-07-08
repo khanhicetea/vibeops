@@ -72,9 +72,7 @@ for f in /usr/local/etc/php-fpm.d/*.conf; do
   fi
 done
 rm -f /usr/local/etc/php-fpm.d/zz-pools.conf
-if [ ! -f /usr/local/etc/php-fpm.d/zz-vibeops.conf ]; then
-  printf '[global]\nerror_log = /proc/self/fd/2\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf
-fi
+printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = 32\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf
 mkdir -p /run/php-fpm
 chown root:"$SOCKET_GROUP_NAME" /run/php-fpm
 chmod 0770 /run/php-fpm

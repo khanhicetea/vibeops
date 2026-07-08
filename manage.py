@@ -270,9 +270,7 @@ def php_disable_default_pool(service: str) -> None:
         "if grep -q '^\\[www\\]' \"$f\"; then mv \"$f\" \"$f.disabled\"; fi; "
         "done; "
         "rm -f /usr/local/etc/php-fpm.d/zz-pools.conf; "
-        "if [ ! -f /usr/local/etc/php-fpm.d/zz-vibeops.conf ]; then "
-        "printf '[global]\\nerror_log = /proc/self/fd/2\\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; "
-        "fi",
+        "printf '[global]\\nerror_log = /proc/self/fd/2\\nprocess.max = 32\\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; ",
     ], check=False)
 
 
@@ -415,9 +413,9 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
     mkdir(PHP_SOCKET_DIR / php_service)
     mkdir(PHP_LOG_DIR / php_service)
 
-    health_path = php_version_config_dir(php_version) / "pool.d" / "zz-health.conf"
-    if not health_path.exists():
-        write_template(health_path, PHP_TEMPLATE_DIR / "health.conf.template", {
+    fallback_path = php_version_config_dir(php_version) / "pool.d" / "zz-fallback.conf"
+    if not fallback_path.exists():
+        write_template(fallback_path, PHP_TEMPLATE_DIR / "fallback.conf.template", {
             "SOCKET_GROUP_NAME": socket_group_name,
         })
 
