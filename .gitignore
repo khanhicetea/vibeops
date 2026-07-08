@@ -62,7 +62,7 @@ stack.json
 /config/php/versions/*/users.d/*
 !/config/php/versions/*/users.d/.gitkeep
 /config/php/versions/*/pool.d/*.conf
-!/config/php/versions/*/pool.d/zz-health.conf
+!/config/php/versions/*/pool.d/zz-fallback.conf
 !/config/php/versions/*/pool.d/.gitkeep
 
 # Dumps/cache/runtime files
