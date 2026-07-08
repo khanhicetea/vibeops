@@ -23,6 +23,19 @@ from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "stack.json"
+CONFIG_DIR = ROOT / "config"
+RUNTIME_DIR = ROOT / "runtime"
+HOME_DIR = RUNTIME_DIR / "home"
+PHP_CONFIG_DIR = CONFIG_DIR / "php"
+PHP_VERSIONS_DIR = PHP_CONFIG_DIR / "versions"
+PHP_TEMPLATE_DIR = PHP_CONFIG_DIR / "templates"
+MYSQL_TEMPLATE_DIR = CONFIG_DIR / "mysql" / "templates"
+NGINX_TEMPLATE_DIR = CONFIG_DIR / "nginx" / "templates"
+NGINX_VHOST_DIR = RUNTIME_DIR / "nginx" / "vhosts"
+CERTS_DIR = RUNTIME_DIR / "certs"
+PHP_SOCKET_DIR = RUNTIME_DIR / "run" / "php-fpm"
+PHP_LOG_DIR = RUNTIME_DIR / "logs" / "php"
+CRON_RUNTIME_DIR = RUNTIME_DIR / "cron"
 SCHEMA_VERSION = 1
 
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -104,6 +117,18 @@ def php_cron_service_for(version: str) -> str:
 
 def php_cli_service_for(version: str) -> str:
     return php_service_for(version) + "-cli"
+
+
+def php_version_config_dir(version: str) -> Path:
+    return PHP_VERSIONS_DIR / version
+
+
+def cron_dir_for(version: str) -> Path:
+    return CRON_RUNTIME_DIR / php_service_for(version)
+
+
+def cron_jobs_dir_for(version: str) -> Path:
+    return cron_dir_for(version) / "jobs"
 
 
 def load_db() -> dict[str, Any]:
@@ -267,7 +292,7 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
 
 
 def rebuild_supercronic_crontab(php_version: str) -> Path:
-    cron_dir = ROOT / "php" / php_version / "cron.d"
+    cron_dir = cron_dir_for(php_version)
     mkdir(cron_dir)
     combined = cron_dir / ".supercronic.cron"
     lines = [
@@ -275,7 +300,7 @@ def rebuild_supercronic_crontab(php_version: str) -> Path:
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "",
     ]
-    for cron_file in sorted(cron_dir.glob("*.cron")):
+    for cron_file in sorted(cron_jobs_dir_for(php_version).glob("*.cron")):
         lines.append(f"# /usr/local/etc/php/cron.d/{cron_file.name}")
         lines.append(cron_file.read_text().rstrip("\n"))
         lines.append("")
@@ -324,7 +349,7 @@ def allocate_uid(username: str, explicit_uid: int | None, db: dict[str, Any]) ->
     if isinstance(existing, int):
         return existing
 
-    for path in sorted((ROOT / "php").glob(f"*/users.d/{username}.env")):
+    for path in sorted(PHP_VERSIONS_DIR.glob(f"*/users.d/{username}.env")):
         uid = read_uid_from_env(path)
         if uid is not None:
             return uid
@@ -334,7 +359,7 @@ def allocate_uid(username: str, explicit_uid: int | None, db: dict[str, Any]) ->
         uid = user.get("uid") if isinstance(user, dict) else None
         if isinstance(uid, int):
             max_uid = max(max_uid, uid)
-    for path in (ROOT / "php").glob("*/users.d/*.env"):
+    for path in PHP_VERSIONS_DIR.glob("*/users.d/*.env"):
         uid = read_uid_from_env(path)
         if uid is not None:
             max_uid = max(max_uid, uid)
@@ -357,15 +382,15 @@ def create_mysql_user(username: str, password: str | None) -> tuple[bool, str | 
         return False, None
 
     password = password or env.get("MYSQL_USER_PASSWORD") or generate_password()
-    cred_dir = ROOT / "home" / username / ".credentials"
+    cred_dir = HOME_DIR / username / ".credentials"
     cred_path = cred_dir / "mysql.env"
     mkdir(cred_dir, 0o700)
-    write_template(cred_path, ROOT / "mysql" / "templates" / "user-credentials.env.template", {
+    write_template(cred_path, MYSQL_TEMPLATE_DIR / "user-credentials.env.template", {
         "USERNAME": username,
         "MYSQL_PASSWORD": password,
     }, 0o600)
 
-    sql = template_text(ROOT / "mysql" / "templates" / "create-user.sql.template", {
+    sql = template_text(MYSQL_TEMPLATE_DIR / "create-user.sql.template", {
         "USERNAME": username,
         "MYSQL_PASSWORD_SQL": mysql_string_literal(password),
     })
@@ -383,37 +408,37 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
     php_service = php_service_for(php_version)
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
 
-    mkdir(ROOT / "home" / username / "logs", 0o770)
-    mkdir(ROOT / "php" / php_version / "users.d")
-    mkdir(ROOT / "php" / php_version / "pool.d")
-    mkdir(ROOT / "php" / php_version / "cron.d")
-    mkdir(ROOT / "run" / "php-fpm" / php_service)
-    mkdir(ROOT / "logs" / "php" / php_service)
+    mkdir(HOME_DIR / username / "logs", 0o770)
+    mkdir(php_version_config_dir(php_version) / "users.d")
+    mkdir(php_version_config_dir(php_version) / "pool.d")
+    mkdir(cron_dir_for(php_version))
+    mkdir(PHP_SOCKET_DIR / php_service)
+    mkdir(PHP_LOG_DIR / php_service)
 
-    health_path = ROOT / "php" / php_version / "pool.d" / "zz-health.conf"
+    health_path = php_version_config_dir(php_version) / "pool.d" / "zz-health.conf"
     if not health_path.exists():
-        write_template(health_path, ROOT / "php" / "templates" / "health.conf.template", {
+        write_template(health_path, PHP_TEMPLATE_DIR / "health.conf.template", {
             "SOCKET_GROUP_NAME": socket_group_name,
         })
 
-    write_template(ROOT / "php" / php_version / "users.d" / f"{username}.env", ROOT / "php" / "templates" / "user.env.template", {
+    write_template(php_version_config_dir(php_version) / "users.d" / f"{username}.env", PHP_TEMPLATE_DIR / "user.env.template", {
         "USERNAME": username,
         "UID": user_uid,
     })
-    write_template(ROOT / "php" / php_version / "pool.d" / f"{username}.conf", ROOT / "php" / "templates" / "pool.conf.template", {
+    write_template(php_version_config_dir(php_version) / "pool.d" / f"{username}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
         "USERNAME": username,
         "SOCKET_GROUP_NAME": socket_group_name,
         "PHP_VERSION": php_version,
     })
     try:
-        (ROOT / "home" / username).chmod(0o750)
+        (HOME_DIR / username).chmod(0o750)
     except PermissionError:
         warn(f"could not chmod home/{username}")
 
     info(f"Created PHP {php_version} user config: {username} uid={user_uid}")
-    info(f"Home: vibeops/home/{username}")
-    info(f"Pool: vibeops/php/{php_version}/pool.d/{username}.conf")
-    info(f"Socket: vibeops/run/php-fpm/{php_service}/{username}.sock")
+    info(f"Home: vibeops/{rel(HOME_DIR / username)}")
+    info(f"Pool: vibeops/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{username}.conf')}")
+    info(f"Socket: vibeops/{rel(PHP_SOCKET_DIR / php_service / f'{username}.sock')}")
 
     php_reload(php_service, username, no_reload=args.no_reload)
 
@@ -424,7 +449,7 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
 
     user = db["users"].setdefault(username, {})
     user["uid"] = user_uid
-    user.setdefault("home", f"home/{username}")
+    user.setdefault("home", rel(HOME_DIR / username))
     versions = set(user.get("php_versions", []))
     versions.add(php_version)
     user["php_versions"] = sorted(versions)
@@ -438,7 +463,7 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
 
 
 def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False) -> None:
-    if (ROOT / "php" / php_version / "users.d" / f"{username}.env").exists():
+    if (php_version_config_dir(php_version) / "users.d" / f"{username}.env").exists():
         return
     info(f"PHP {php_version} user {username} does not exist; creating it first.")
     ns = argparse.Namespace(username=username, uid=None, php=php_version, no_mysql=False, mysql_password=None, no_reload=no_reload)
@@ -477,20 +502,20 @@ def cmd_site_create(args: argparse.Namespace) -> None:
 
     ensure_user(username, php_version, db, no_reload=args.no_reload)
 
-    site_root = ROOT / "home" / username / main_domain
+    site_root = HOME_DIR / username / main_domain
     mkdir(site_root)
-    mkdir(ROOT / "home" / username / "logs")
+    mkdir(HOME_DIR / username / "logs")
 
     index_path = site_root / "index.php"
     if not args.no_index and not index_path.exists():
-        write_template(index_path, ROOT / "php" / "templates" / "index.php.template", {
+        write_template(index_path, PHP_TEMPLATE_DIR / "index.php.template", {
             "MAIN_DOMAIN": main_domain,
             "PHP_VERSION": php_version,
         })
 
     server_names = " ".join([main_domain] + aliases)
-    conf_path = ROOT / "nginx" / "conf.d" / f"{main_domain}.conf"
-    render_template(ROOT / "nginx" / "templates" / "site.conf.template", conf_path, {
+    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
+    render_template(NGINX_TEMPLATE_DIR / "site.conf.template", conf_path, {
         "USERNAME": username,
         "MAIN_DOMAIN": main_domain,
         "SERVER_NAMES": server_names,
@@ -511,7 +536,7 @@ def cmd_site_create(args: argparse.Namespace) -> None:
         env = stack_env()
         root_password = env.get("MYSQL_ROOT_PASSWORD")
         if (ROOT / ".env").exists() and service_running("mysql") and root_password:
-            sql = template_text(ROOT / "mysql" / "templates" / "create-database.sql.template", {
+            sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
                 "DB_FULL_NAME": db_full_name,
                 "USERNAME": username,
             })
@@ -548,8 +573,8 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
         die("upstream is required")
     aliases = normalize_aliases(args.alias, args.aliases)
     server_names = " ".join([main_domain] + aliases)
-    conf_path = ROOT / "nginx" / "conf.d" / f"{main_domain}.conf"
-    render_template(ROOT / "nginx" / "templates" / "proxy.conf.template", conf_path, {
+    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
+    render_template(NGINX_TEMPLATE_DIR / "proxy.conf.template", conf_path, {
         "MAIN_DOMAIN": main_domain,
         "SERVER_NAMES": server_names,
         "UPSTREAM": upstream,
@@ -589,11 +614,11 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
     workdir = args.workdir or f"{app_home}/{domain}"
 
     ensure_user(username, php_version, db)
-    mkdir(ROOT / "php" / php_version / "cron.d")
-    mkdir(ROOT / "home" / username / domain)
+    mkdir(cron_jobs_dir_for(php_version))
+    mkdir(HOME_DIR / username / domain)
 
-    cron_path = ROOT / "php" / php_version / "cron.d" / f"{username}-{safe_domain_part(domain)}-{job_name}.cron"
-    write_template(cron_path, ROOT / "php" / "templates" / "cron.cron.template", {
+    cron_path = cron_jobs_dir_for(php_version) / f"{username}-{safe_domain_part(domain)}-{job_name}.cron"
+    write_template(cron_path, PHP_TEMPLATE_DIR / "cron.cron.template", {
         "USERNAME": username,
         "DOMAIN": domain,
         "PHP_VERSION": php_version,
@@ -647,14 +672,14 @@ def replace_tls_block(conf_path: Path, replacement: str) -> None:
 def cmd_tls_acme(args: argparse.Namespace) -> None:
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
-    conf_path = ROOT / "nginx" / "conf.d" / f"{main_domain}.conf"
+    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
     if not conf_path.exists():
         die(f"Missing vhost: vibeops/{rel(conf_path)}")
     if args.off:
-        replacement = template_text(ROOT / "nginx" / "templates" / "tls-self-signed.conf.template", {})
+        replacement = template_text(NGINX_TEMPLATE_DIR / "tls-self-signed.conf.template", {})
         mode = "self-signed"
     else:
-        replacement = template_text(ROOT / "nginx" / "templates" / "tls-acme.conf.template", {})
+        replacement = template_text(NGINX_TEMPLATE_DIR / "tls-acme.conf.template", {})
         mode = "acme"
     replace_tls_block(conf_path, replacement)
     site = db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
@@ -668,12 +693,12 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
 def cmd_tls_cert(args: argparse.Namespace) -> None:
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
-    conf_path = ROOT / "nginx" / "conf.d" / f"{main_domain}.conf"
+    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
     if not conf_path.exists():
         die(f"Missing vhost: vibeops/{rel(conf_path)}")
     cert_path = args.cert or f"/etc/letsencrypt/live/{main_domain}/fullchain.pem"
     key_path = args.key or f"/etc/letsencrypt/live/{main_domain}/privkey.pem"
-    replacement = template_text(ROOT / "nginx" / "templates" / "tls-files.conf.template", {
+    replacement = template_text(NGINX_TEMPLATE_DIR / "tls-files.conf.template", {
         "CERT_PATH": cert_path,
         "CERT_KEY_PATH": key_path,
     })
@@ -681,7 +706,7 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
 
     for container_path, label in [(cert_path, "cert"), (key_path, "key")]:
         if container_path.startswith("/etc/letsencrypt/"):
-            host_path = ROOT / "certs" / container_path.removeprefix("/etc/letsencrypt/")
+            host_path = CERTS_DIR / container_path.removeprefix("/etc/letsencrypt/")
             if not host_path.exists():
                 warn(f"expected host {label} file vibeops/{rel(host_path)} was not found")
 

@@ -11,7 +11,7 @@ It is optimized for production performance and DX while keeping the familiar str
 In this stack that maps to:
 
 ```text
-vibeops/home/<user>/<domain>
+vibeops/runtime/home/<user>/<domain>
 ```
 
 ## Architecture
@@ -25,7 +25,7 @@ vibeops/home/<user>/<domain>
   - `php85` from `php:8.5-fpm-trixie`
   - OPcache is installed only when `php -m` shows it is missing, so PHP 8.5 can use its built-in Zend OPcache without reinstalling it.
 - **PHP-FPM exposes per-user Unix sockets** in versioned shared dirs:
-  - host path: `vibeops/run/php-fpm/php84/<user>.sock`
+  - host path: `vibeops/runtime/run/php-fpm/php84/<user>.sock`
   - nginx path: `/run/php-fpm/php84/<user>.sock`
   - PHP container path: `/run/php-fpm/<user>.sock`
 - **Each PHP-FPM pool is a Linux user** inside each PHP container:
@@ -45,28 +45,32 @@ vibeops/home/<user>/<domain>
   - Generated vhosts always include both HTTP and HTTPS.
   - HTTPS starts with a default self-signed cert so Nginx can boot before DNS/ACME is ready.
   - When ready, edit the marked TLS block in the vhost to switch from self-signed to ACME.
-  - ACME state is persisted in `nginx/acme-state/`.
+  - ACME state is persisted in `runtime/nginx-acme-state/`.
 
 ## Layout
 
 ```text
 compose.yml
 .env.example
-home/                         # /home bind mount for user sites
-run/php-fpm/php84/            # PHP 8.4 sockets
-run/php-fpm/php85/            # PHP 8.5 sockets
-nginx/conf.d/                 # generated vhosts
-nginx/acme-state/             # NGINX ACME account/cert/private-key state
-nginx/self-signed/            # default boot certificate used by generated HTTPS vhosts
-nginx/snippets/               # security/fastcgi snippets plus webroot ACME helper for external certs
-nginx/templates/              # single HTTP+HTTPS vhost templates
-php/8.4/users.d/              # generated PHP 8.4 users
-php/8.4/pool.d/               # generated PHP 8.4 pools
-php/8.4/cron.d/               # generated PHP 8.4 supercronic jobs
-php/8.5/users.d/              # generated PHP 8.5 users
-php/8.5/pool.d/               # generated PHP 8.5 pools
-php/8.5/cron.d/               # generated PHP 8.5 supercronic jobs
-manage.py                      # create users/sites/crons and run app commands
+manage.py                     # create users/sites/crons and run app commands
+docs/architecture.md          # current file-layout/architecture notes
+
+docker/                       # Docker build contexts and image helper binaries
+config/                       # committed stack config and templates
+  nginx/                      # Nginx global config, snippets, templates, self-signed cert
+  php/                        # PHP common config, versioned users/pools, templates
+  mysql/                      # MySQL config and SQL templates
+runtime/                      # mutable/generated/live data
+  home/                       # /home bind mount for user sites
+  run/php-fpm/php84/          # PHP 8.4 sockets
+  run/php-fpm/php85/          # PHP 8.5 sockets
+  nginx/vhosts/               # generated vhosts
+  nginx-acme-state/           # NGINX ACME account/cert/private-key state
+  cron/php84/jobs/            # generated PHP 8.4 cron jobs
+  cron/php85/jobs/            # generated PHP 8.5 cron jobs
+  logs/                       # nginx/php logs
+  certs/                      # externally managed cert files
+  backups/                    # backups/dumps
 ```
 
 ## Quick start
@@ -85,22 +89,22 @@ docker compose up -d mysql redis php84 php85 php84-cron php85-cron nginx
 Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`.
 
 ```bash
-./scripts/create-user.sh myuser
+./manage.py user create myuser
 ```
 
 Create the same user for a specific PHP version:
 
 ```bash
-./scripts/create-user.sh myuser --php 8.5
+./manage.py user create myuser --php 8.5
 ```
 
 This creates, for example:
 
 ```text
-home/myuser/
-php/8.5/users.d/myuser.env
-php/8.5/pool.d/myuser.conf
-run/php-fpm/php85/myuser.sock   # appears after php85 reload/start
+runtime/home/myuser/
+config/php/versions/8.5/users.d/myuser.env
+config/php/versions/8.5/pool.d/myuser.conf
+runtime/run/php-fpm/php85/myuser.sock   # appears after php85 reload/start
 ```
 
 The same username reuses the same numeric UID across PHP versions.
@@ -110,14 +114,14 @@ The same username reuses the same numeric UID across PHP versions.
 Generated sites always include both HTTP and HTTPS in one vhost file. HTTPS uses the default self-signed certificate until you switch the marked TLS block to real ACME.
 
 ```bash
-ALTER_DOMAINS=www.example.com ./scripts/create-site.sh myuser example.com app --php 8.5
+./manage.py site create myuser example.com app --php 8.5 --alias www.example.com
 ```
 
 This creates:
 
 ```text
-home/myuser/example.com/
-nginx/conf.d/example.com.conf
+runtime/home/myuser/example.com/
+runtime/nginx/vhosts/example.com.conf
 ```
 
 The generated Nginx vhost uses the selected PHP socket:
@@ -156,7 +160,7 @@ Run app commands in an ephemeral matching PHP CLI container as the same Linux us
 ./manage.py exec myuser example.com --php 8.5 -- php artisan migrate
 ```
 
-Use `SITE_INDEX=0` for existing projects so the directory is empty before `git clone ... .`. This keeps Git, Composer, PHP-FPM, and generated files on the same UID/GID. SSH deploy keys can live in `home/myuser/.ssh/` with normal SSH permissions.
+Use `SITE_INDEX=0` for existing projects so the directory is empty before `git clone ... .`. This keeps Git, Composer, PHP-FPM, and generated files on the same UID/GID. SSH deploy keys can live in `runtime/home/myuser/.ssh/` with normal SSH permissions.
 
 ## Cron jobs
 
@@ -169,18 +173,19 @@ Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs p
 This writes:
 
 ```text
-php/8.5/cron.d/myuser-example.com-schedule.cron
+runtime/cron/php85/jobs/myuser-example.com-schedule.cron
+runtime/cron/php85/.supercronic.cron
 ```
 
-The job runs in the `php85-cron` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `*.cron` files into `php/8.5/cron.d/.supercronic.cron` and reloads Supercronic with `SIGUSR2`; if the cron container was idle before the first job, `manage.py` restarts it once to start Supercronic. Do not scale a cron service to multiple replicas, or jobs will run more than once.
+The job runs in the `php85-cron` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `jobs/*.cron` files into `runtime/cron/php85/.supercronic.cron` and reloads Supercronic with `SIGUSR2`; if the cron container was idle before the first job, `manage.py` restarts it once to start Supercronic. Do not scale a cron service to multiple replicas, or jobs will run more than once.
 
 ## Change a site's PHP version
 
-Re-run `create-site.sh` with another `--php` version. It regenerates the Nginx vhost and reloads Nginx if running:
+Re-run `manage.py site create` with another `--php` version. It regenerates the Nginx vhost and reloads Nginx if running:
 
 ```bash
-./scripts/create-user.sh myuser --php 8.4
-./scripts/create-site.sh myuser example.com --php 8.4
+./manage.py user create myuser --php 8.4
+./manage.py site create myuser example.com --php 8.4
 ```
 
 ## TLS certificates
@@ -189,7 +194,7 @@ The NGINX ACME module is loaded and configured globally:
 
 - issuer: Let's Encrypt production directory
 - challenge: HTTP-01
-- persisted state: `nginx/acme-state/` mounted at `/var/cache/nginx/acme-letsencrypt`
+- persisted state: `runtime/nginx-acme-state/` mounted at `/var/cache/nginx/acme-letsencrypt`
 
 Generated vhosts start with this active self-signed block:
 
@@ -205,34 +210,34 @@ ssl_certificate_key /etc/nginx/self-signed/default.key;
 When DNS is ready, enable real ACME and reload Nginx automatically:
 
 ```bash
-./scripts/acme.sh example.com
+./manage.py tls acme example.com
 ```
 
 To switch back to the boot self-signed cert:
 
 ```bash
-./scripts/acme.sh example.com --off
+./manage.py tls acme example.com --off
 ```
 
-`nginx/acme-state/` contains private keys after first issuance; keep it backed up and private. To change issuer settings, edit `nginx/conf.d/00-nginx.conf`.
+`runtime/nginx-acme-state/` contains private keys after first issuance; keep it backed up and private. To change issuer settings, edit `config/nginx/global/00-nginx.conf`.
 
-If you need to use externally managed certificate files instead, place them under `certs/` using the usual Let's Encrypt layout:
+If you need to use externally managed certificate files instead, place them under `runtime/certs/` using the usual Let's Encrypt layout:
 
 ```text
-certs/live/example.com/fullchain.pem
-certs/live/example.com/privkey.pem
+runtime/certs/live/example.com/fullchain.pem
+runtime/certs/live/example.com/privkey.pem
 ```
 
 Then switch an existing generated vhost to file-based certs:
 
 ```bash
-./scripts/use-cert.sh example.com
+./manage.py tls cert example.com
 ```
 
 Or pass explicit paths as seen inside the Nginx container:
 
 ```bash
-./scripts/use-cert.sh example.com \
+./manage.py tls cert example.com \
   --cert /etc/letsencrypt/live/example.com/fullchain.pem \
   --key /etc/letsencrypt/live/example.com/privkey.pem
 ```
@@ -245,28 +250,28 @@ Copy an existing PHP service in `compose.yml` and change both the service suffix
   phpXX:
     <<: *php-common
     build:
-      context: ./php
+      context: ./docker/php
       args:
         PHP_VERSION: 8.x
         TZ: ${TZ:-Asia/Ho_Chi_Minh}
     volumes:
-      - ./home:/home
-      - ./run/php-fpm/phpXX:/run/php-fpm
-      - ./logs/php/phpXX:/var/log/php
-      - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
-      - ./php/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
-      - ./php/8.x/users.d:/usr/local/etc/php/users.d:ro
-      - ./php/8.x/cron.d:/usr/local/etc/php/cron.d:ro
+      - ./runtime/home:/home
+      - ./runtime/run/php-fpm/phpXX:/run/php-fpm
+      - ./runtime/logs/php/phpXX:/var/log/php
+      - ./config/php/common/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
+      - ./config/php/versions/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+      - ./config/php/versions/8.x/users.d:/usr/local/etc/php/users.d:ro
+      - ./runtime/cron/phpXX:/usr/local/etc/php/cron.d:ro
 ```
 
 Then:
 
 ```bash
-mkdir -p php/8.x/{pool.d,users.d,cron.d} run/php-fpm/phpXX logs/php/phpXX
+mkdir -p config/php/versions/8.x/{pool.d,users.d} runtime/cron/phpXX/jobs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
 docker compose build phpXX
 docker compose up -d phpXX
-./scripts/create-user.sh myuser --php 8.x
-./scripts/create-site.sh myuser example.com --php 8.x
+./manage.py user create myuser --php 8.x
+./manage.py site create myuser example.com --php 8.x
 ```
 
 ## Important permission detail

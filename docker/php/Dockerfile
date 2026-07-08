@@ -67,9 +67,9 @@ RUN set -eux; \
       "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${supercronic_arch}"; \
     chmod +x /usr/local/bin/supercronic
 
-COPY php-user-sync /usr/local/bin/php-user-sync
-COPY php-cron-as /usr/local/bin/php-cron-as
-COPY php-supercronic /usr/local/bin/php-supercronic
+COPY bin/php-user-sync /usr/local/bin/php-user-sync
+COPY bin/php-cron-as /usr/local/bin/php-cron-as
+COPY bin/php-supercronic /usr/local/bin/php-supercronic
 RUN chmod +x \
       /usr/local/bin/php-user-sync \
       /usr/local/bin/php-cron-as \

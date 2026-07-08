@@ -1,5 +1,5 @@
 # VibeOps local/runtime/user data
-# Keep repository source/config templates tracked; ignore generated tenant data.
+# Keep source config/templates tracked; ignore generated tenant/runtime data.
 
 # Local secrets/config
 .env
@@ -7,58 +7,69 @@
 !.env.example
 stack.json
 
-# User sites, credentials, and per-user logs
-/home/*
-!/home/.gitkeep
+# Runtime mutable state
+/runtime/home/*
+!/runtime/home/.gitkeep
 
-# Runtime logs
-/logs/*
-!/logs/.gitkeep
-!/logs/php/
-!/logs/php/php84/
-!/logs/php/php84/.gitkeep
-!/logs/php/php85/
-!/logs/php/php85/.gitkeep
+/runtime/logs/*
+!/runtime/logs/.gitkeep
+!/runtime/logs/nginx/
+/runtime/logs/nginx/*
+!/runtime/logs/nginx/.gitkeep
+!/runtime/logs/php/
+!/runtime/logs/php/php84/
+!/runtime/logs/php/php84/.gitkeep
+!/runtime/logs/php/php85/
+!/runtime/logs/php/php85/.gitkeep
 
-# Backups and dumps
-/backups/*
-!/backups/.gitkeep
+/runtime/backups/*
+!/runtime/backups/.gitkeep
+!/runtime/backups/mysql/
+/runtime/backups/mysql/*
+!/runtime/backups/mysql/.gitkeep
+
+/runtime/acme-challenge/*
+!/runtime/acme-challenge/.gitkeep
+/runtime/certs/*
+!/runtime/certs/.gitignore
+!/runtime/certs/.gitkeep
+/runtime/nginx-acme-state/*
+!/runtime/nginx-acme-state/.gitignore
+!/runtime/nginx-acme-state/.gitkeep
+
+/runtime/nginx/vhosts/*
+!/runtime/nginx/vhosts/.gitkeep
+
+/runtime/cron/*
+!/runtime/cron/php84/
+!/runtime/cron/php84/jobs/
+!/runtime/cron/php84/jobs/.gitkeep
+!/runtime/cron/php85/
+!/runtime/cron/php85/jobs/
+!/runtime/cron/php85/jobs/.gitkeep
+/runtime/cron/php*/jobs/*.cron
+/runtime/cron/php*/.supercronic.cron
+
+/runtime/run/*
+!/runtime/run/.gitkeep
+!/runtime/run/php-fpm/
+!/runtime/run/php-fpm/php84/
+!/runtime/run/php-fpm/php84/.gitkeep
+!/runtime/run/php-fpm/php85/
+!/runtime/run/php-fpm/php85/.gitkeep
+
+# Generated PHP users and pools
+/config/php/versions/*/users.d/*
+!/config/php/versions/*/users.d/.gitkeep
+/config/php/versions/*/pool.d/*.conf
+!/config/php/versions/*/pool.d/zz-health.conf
+!/config/php/versions/*/pool.d/.gitkeep
+
+# Dumps/cache/runtime files
 *.sql
 *.sql.gz
 *.dump
 *.bak
-
-# ACME challenges/state and live certificates
-/acme-challenge/*
-!/acme-challenge/.gitkeep
-/certs/*
-!/certs/.gitignore
-!/certs/.gitkeep
-/nginx/acme-state/*
-!/nginx/acme-state/.gitignore
-!/nginx/acme-state/.gitkeep
-
-# Generated Nginx vhosts (keep base source configs)
-/nginx/conf.d/*.conf
-!/nginx/conf.d/00-nginx.conf
-!/nginx/conf.d/01-default.conf
-
-# Generated PHP users, pools, and cron jobs
-/php/*/users.d/*
-!/php/*/users.d/.gitkeep
-/php/*/pool.d/*.conf
-!/php/*/pool.d/zz-health.conf
-/php/*/cron.d/*
-!/php/*/cron.d/.gitkeep
-
-# Runtime sockets/PIDs/cache
-/run/*
-!/run/.gitkeep
-!/run/php-fpm/
-!/run/php-fpm/php84/
-!/run/php-fpm/php84/.gitkeep
-!/run/php-fpm/php85/
-!/run/php-fpm/php85/.gitkeep
 *.sock
 *.pid
 
