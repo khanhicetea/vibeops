@@ -43,8 +43,20 @@ sync_one() {
 
   if [ "$FIX_HOME_OWNERSHIP" = "1" ]; then
     chown -R "$USERNAME:$SOCKET_GROUP_NAME" "$home_dir" || true
-    find "$home_dir" -type d -exec chmod g+rx {} + 2>/dev/null || true
-    find "$home_dir" -type f -exec chmod g+r {} + 2>/dev/null || true
+    find "$home_dir" \( -path "$home_dir/.ssh" -o -path "$home_dir/.credentials" \) -prune -o -type d -exec chmod g+rx {} + 2>/dev/null || true
+    find "$home_dir" \( -path "$home_dir/.ssh" -o -path "$home_dir/.credentials" \) -prune -o -type f -exec chmod g+r {} + 2>/dev/null || true
+
+    if [ -d "$home_dir/.ssh" ]; then
+      chmod 0700 "$home_dir/.ssh" || true
+      find "$home_dir/.ssh" -type d -exec chmod 0700 {} + 2>/dev/null || true
+      find "$home_dir/.ssh" -type f -exec chmod 0600 {} + 2>/dev/null || true
+    fi
+
+    if [ -d "$home_dir/.credentials" ]; then
+      chmod 0700 "$home_dir/.credentials" || true
+      find "$home_dir/.credentials" -type d -exec chmod 0700 {} + 2>/dev/null || true
+      find "$home_dir/.credentials" -type f -exec chmod 0600 {} + 2>/dev/null || true
+    fi
   fi
 }
 

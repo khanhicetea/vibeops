@@ -7,6 +7,7 @@ x-php-common: &php-common
     SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
     SOCKET_GID: ${SOCKET_GID:-101}
     FIX_HOME_OWNERSHIP: ${FIX_HOME_OWNERSHIP:-1}
+    ENABLE_CRON: ${ENABLE_CRON:-1}
   depends_on:
     - mysql
     - redis
@@ -49,6 +50,7 @@ services:
       - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
       - ./php/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
       - ./php/8.4/users.d:/usr/local/etc/php/users.d:ro
+      - ./php/8.4/cron.d:/usr/local/etc/php/cron.d:ro
 
   php85:
     <<: *php-common
@@ -64,6 +66,7 @@ services:
       - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
       - ./php/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
       - ./php/8.5/users.d:/usr/local/etc/php/users.d:ro
+      - ./php/8.5/cron.d:/usr/local/etc/php/cron.d:ro
 
   mysql:
     image: mysql:8.4

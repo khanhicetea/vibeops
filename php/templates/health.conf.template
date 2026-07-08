@@ -1,0 +1,10 @@
+[health]
+user = www-data
+group = __SOCKET_GROUP_NAME__
+listen = /run/php-fpm/health.sock
+listen.owner = www-data
+listen.group = __SOCKET_GROUP_NAME__
+listen.mode = 0660
+pm = static
+pm.max_children = 1
+clear_env = no

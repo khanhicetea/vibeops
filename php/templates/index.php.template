@@ -1,0 +1,2 @@
+<?php
+echo "OK: __MAIN_DOMAIN__ on PHP __PHP_VERSION__\n";

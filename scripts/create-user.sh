@@ -102,6 +102,7 @@ mkdir -p \
   "home/$USERNAME/logs" \
   "php/$PHP_VERSION/users.d" \
   "php/$PHP_VERSION/pool.d" \
+  "php/$PHP_VERSION/cron.d" \
   "run/php-fpm/$PHP_SERVICE" \
   "logs/php/$PHP_SERVICE"
 
@@ -165,7 +166,7 @@ echo "Socket: docker-stack/run/php-fpm/$PHP_SERVICE/$USERNAME.sock"
 if command -v docker >/dev/null 2>&1 && docker compose ps --services --filter status=running 2>/dev/null | grep -qx "$PHP_SERVICE"; then
   docker compose exec -T "$PHP_SERVICE" php-user-sync "$USERNAME"
   docker compose exec -T "$PHP_SERVICE" php-fpm -tt
-  docker compose exec -T "$PHP_SERVICE" sh -lc 'kill -USR2 1'
+  docker compose exec -T "$PHP_SERVICE" sh -lc 'if command -v s6-svc >/dev/null 2>&1 && [ -e /run/service/php-fpm ]; then s6-svc -2 /run/service/php-fpm; else kill -USR2 1; fi'
   echo "Reloaded $PHP_SERVICE"
 else
   echo "$PHP_SERVICE is not running; run/restart it to create the Linux user inside that PHP container."

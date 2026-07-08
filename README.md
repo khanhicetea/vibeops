@@ -30,6 +30,9 @@ docker-stack/home/<user>/<domain>
   - user home: `/home/<user>`
   - sites: `/home/<user>/<domain>`
   - logs: `/home/<user>/logs`
+- **PHP containers use s6 init** to run both PHP-FPM and supercronic:
+  - deploy commands, Composer, cron, and PHP-FPM all use the same PHP image/version
+  - cron jobs run as the same Linux user and from the same app path as PHP-FPM
 - **PHP connects to MySQL/Redis** over the Compose backend network:
   - MySQL host: `mysql:3306`
   - Redis host: `redis:6379`
@@ -55,10 +58,14 @@ nginx/snippets/               # security/fastcgi snippets plus webroot ACME help
 nginx/templates/              # single HTTP+HTTPS vhost templates
 php/8.4/users.d/              # generated PHP 8.4 users
 php/8.4/pool.d/               # generated PHP 8.4 pools
+php/8.4/cron.d/               # generated PHP 8.4 supercronic jobs
 php/8.5/users.d/              # generated PHP 8.5 users
 php/8.5/pool.d/               # generated PHP 8.5 pools
+php/8.5/cron.d/               # generated PHP 8.5 supercronic jobs
 scripts/create-user.sh
 scripts/create-site.sh
+scripts/app-exec.sh           # run git/composer/artisan as the app user in the PHP container
+scripts/create-cron.sh        # create per-app supercronic jobs
 scripts/create-proxy.sh
 scripts/acme.sh               # switch generated vhost between self-signed and NGINX ACME
 scripts/use-cert.sh           # switch a generated vhost to file-based certs
@@ -139,6 +146,35 @@ DB_USERNAME=myuser
 REDIS_HOST=redis
 REDIS_PORT=6379
 ```
+
+## Deploy app code and run Composer
+
+Run app commands inside the matching PHP container as the same Linux user used by PHP-FPM:
+
+```bash
+SITE_INDEX=0 ./scripts/create-site.sh myuser example.com --php 8.5
+./scripts/app-exec.sh myuser example.com --php 8.5 -- git clone git@github.com:org/project.git .
+./scripts/app-exec.sh myuser example.com --php 8.5 -- composer install
+./scripts/app-exec.sh myuser example.com --php 8.5 -- php artisan migrate
+```
+
+Use `SITE_INDEX=0` for existing projects so the directory is empty before `git clone ... .`. This keeps Git, Composer, PHP-FPM, and generated files on the same UID/GID. SSH deploy keys can live in `home/myuser/.ssh/` with normal SSH permissions.
+
+## Cron jobs
+
+PHP containers run `php-fpm` and `supercronic` under s6. Create cron jobs per PHP version:
+
+```bash
+./scripts/create-cron.sh myuser example.com schedule --php 8.5 -- '* * * * *' 'php artisan schedule:run'
+```
+
+This writes:
+
+```text
+php/8.5/cron.d/myuser-example.com-schedule.cron
+```
+
+The job runs in the `php85` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. Set `ENABLE_CRON=0` if you do not want PHP containers to run cron. Do not scale a PHP service to multiple replicas while cron is enabled, or jobs will run more than once.
 
 ## Change a site's PHP version
 
@@ -222,12 +258,13 @@ Copy an existing PHP service in `compose.yml` and change both the service suffix
       - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
       - ./php/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
       - ./php/8.x/users.d:/usr/local/etc/php/users.d:ro
+      - ./php/8.x/cron.d:/usr/local/etc/php/cron.d:ro
 ```
 
 Then:
 
 ```bash
-mkdir -p php/8.x/{pool.d,users.d} run/php-fpm/phpXX logs/php/phpXX
+mkdir -p php/8.x/{pool.d,users.d,cron.d} run/php-fpm/phpXX logs/php/phpXX
 docker compose build phpXX
 docker compose up -d phpXX
 ./scripts/create-user.sh myuser --php 8.x

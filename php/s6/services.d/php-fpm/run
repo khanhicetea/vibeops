@@ -1,0 +1,5 @@
+#!/command/with-contenv sh
+set -eu
+exec 2>&1
+
+exec docker-php-entrypoint php-fpm -F

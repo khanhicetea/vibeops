@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "$#" -lt 3 ]; then
+  echo "Usage: php-cron-as <user> <workdir> <command> [args...]" >&2
+  exit 2
+fi
+
+APP_USER="$1"
+APP_WORKDIR="$2"
+shift 2
+
+APP_HOME="/home/$APP_USER"
+APP_COMPOSER_HOME="$APP_HOME/.composer"
+
+if ! id "$APP_USER" >/dev/null 2>&1; then
+  echo "Unknown app user: $APP_USER" >&2
+  exit 1
+fi
+
+if [ ! -d "$APP_WORKDIR" ]; then
+  echo "Workdir does not exist: $APP_WORKDIR" >&2
+  exit 1
+fi
+
+mkdir -p "$APP_COMPOSER_HOME" 2>/dev/null || true
+chown "$APP_USER" "$APP_COMPOSER_HOME" 2>/dev/null || true
+
+cd "$APP_WORKDIR"
+exec gosu "$APP_USER" env \
+  HOME="$APP_HOME" \
+  USER="$APP_USER" \
+  LOGNAME="$APP_USER" \
+  COMPOSER_HOME="$APP_COMPOSER_HOME" \
+  "$@"
