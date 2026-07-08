@@ -32,9 +32,11 @@ vibeops/home/<user>/<domain>
   - user home: `/home/<user>`
   - sites: `/home/<user>/<domain>`
   - logs: `/home/<user>/logs`
-- **PHP containers use s6 init** to run both PHP-FPM and supercronic:
-  - deploy commands, Composer, cron, and PHP-FPM all use the same PHP image/version
-  - cron jobs run as the same Linux user and from the same app path as PHP-FPM
+- **PHP runtime is split by role** while sharing the same PHP image/version:
+  - `php84` / `php85` run PHP-FPM only and expose sockets
+  - `php84-cron` / `php85-cron` run supercronic only
+  - `php84-cli` / `php85-cli` are ephemeral deploy/shell services
+  - deploy commands, Composer, cron, and PHP-FPM still use the same PHP binary/extensions
 - **PHP connects to MySQL/Redis** over the Compose backend network:
   - MySQL host: `mysql:3306`
   - Redis host: `redis:6379`
@@ -64,15 +66,7 @@ php/8.4/cron.d/               # generated PHP 8.4 supercronic jobs
 php/8.5/users.d/              # generated PHP 8.5 users
 php/8.5/pool.d/               # generated PHP 8.5 pools
 php/8.5/cron.d/               # generated PHP 8.5 supercronic jobs
-scripts/create-user.sh
-scripts/create-site.sh
-scripts/app-exec.sh           # run git/composer/artisan as the app user in the PHP container
-scripts/create-cron.sh        # create per-app supercronic jobs
-scripts/create-proxy.sh
-scripts/acme.sh               # switch generated vhost between self-signed and NGINX ACME
-scripts/use-cert.sh           # switch a generated vhost to file-based certs
-scripts/issue-cert.sh         # compatibility helper explaining the ACME toggle
-scripts/renew-certs.sh        # compatibility reload helper; NGINX ACME renews automatically
+manage.py                      # create users/sites/crons and run app commands
 ```
 
 ## Quick start
@@ -82,8 +76,8 @@ cd vibeops
 cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD
 
-docker compose build php84 php85
-docker compose up -d mysql redis php84 php85 nginx
+docker compose build php84 php85 php84-cron php85-cron
+docker compose up -d mysql redis php84 php85 php84-cron php85-cron nginx
 ```
 
 ## Create a PHP-FPM user/pool
@@ -151,23 +145,25 @@ REDIS_PORT=6379
 
 ## Deploy app code and run Composer
 
-Run app commands inside the matching PHP container as the same Linux user used by PHP-FPM:
+Run app commands in an ephemeral matching PHP CLI container as the same Linux user used by PHP-FPM:
 
 ```bash
-SITE_INDEX=0 ./scripts/create-site.sh myuser example.com --php 8.5
-./scripts/app-exec.sh myuser example.com --php 8.5 -- git clone git@github.com:org/project.git .
-./scripts/app-exec.sh myuser example.com --php 8.5 -- composer install
-./scripts/app-exec.sh myuser example.com --php 8.5 -- php artisan migrate
+./manage.py shell
+# or explicitly:
+./manage.py shell myuser example.com --php 8.5
+./manage.py exec myuser example.com --php 8.5 -- git clone git@github.com:org/project.git .
+./manage.py exec myuser example.com --php 8.5 -- composer install
+./manage.py exec myuser example.com --php 8.5 -- php artisan migrate
 ```
 
 Use `SITE_INDEX=0` for existing projects so the directory is empty before `git clone ... .`. This keeps Git, Composer, PHP-FPM, and generated files on the same UID/GID. SSH deploy keys can live in `home/myuser/.ssh/` with normal SSH permissions.
 
 ## Cron jobs
 
-PHP containers run `php-fpm` and `supercronic` under s6. Create cron jobs per PHP version:
+Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs per PHP version:
 
 ```bash
-./scripts/create-cron.sh myuser example.com schedule --php 8.5 -- '* * * * *' 'php artisan schedule:run'
+./manage.py cron create myuser example.com schedule '* * * * *' 'php artisan schedule:run' --php 8.5
 ```
 
 This writes:
@@ -176,7 +172,7 @@ This writes:
 php/8.5/cron.d/myuser-example.com-schedule.cron
 ```
 
-The job runs in the `php85` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. Set `ENABLE_CRON=0` if you do not want PHP containers to run cron. Do not scale a PHP service to multiple replicas while cron is enabled, or jobs will run more than once.
+The job runs in the `php85-cron` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. Do not scale a cron service to multiple replicas, or jobs will run more than once.
 
 ## Change a site's PHP version
 

@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+set -eu
+
+CRON_DIR="${PHP_CRON_DIR:-/usr/local/etc/php/cron.d}"
+COMBINED="/tmp/supercronic.cron"
+
+mkdir -p "$CRON_DIR"
+
+has_jobs=0
+{
+  echo 'SHELL=/bin/sh'
+  echo 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  echo ''
+  for file in "$CRON_DIR"/*.cron; do
+    [ -e "$file" ] || continue
+    has_jobs=1
+    echo "# $file"
+    cat "$file"
+    echo ''
+  done
+} > "$COMBINED"
+
+if [ "$has_jobs" = "0" ]; then
+  echo "No cron files found in $CRON_DIR; cron service is idle. Restart this container after adding cron files."
+  exec sleep infinity
+fi
+
+echo "Starting supercronic with jobs from $CRON_DIR"
+exec supercronic -passthrough-logs "$COMBINED"

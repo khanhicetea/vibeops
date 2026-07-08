@@ -3,18 +3,49 @@ name: vibeops
 x-php-common: &php-common
   build:
     context: ./php
-  restart: unless-stopped
   environment:
     TZ: ${TZ:-Asia/Ho_Chi_Minh}
     SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
     SOCKET_GID: ${SOCKET_GID:-101}
     FIX_HOME_OWNERSHIP: ${FIX_HOME_OWNERSHIP:-1}
-    ENABLE_CRON: ${ENABLE_CRON:-1}
   depends_on:
     - mysql
     - redis
   networks:
     - backend
+
+x-php84-image: &php84-image vibeops-php84:${PHP84_VERSION:-8.4}
+x-php85-image: &php85-image vibeops-php85:${PHP85_VERSION:-8.5}
+
+x-php84-build: &php84-build
+  context: ./php
+  args:
+    PHP_VERSION: ${PHP84_VERSION:-8.4}
+    TZ: ${TZ:-Asia/Ho_Chi_Minh}
+
+x-php85-build: &php85-build
+  context: ./php
+  args:
+    PHP_VERSION: ${PHP85_VERSION:-8.5}
+    TZ: ${TZ:-Asia/Ho_Chi_Minh}
+
+x-php84-volumes: &php84-volumes
+  - ./home:/home
+  - ./run/php-fpm/php84:/run/php-fpm
+  - ./logs/php/php84:/var/log/php
+  - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
+  - ./php/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+  - ./php/8.4/users.d:/usr/local/etc/php/users.d:ro
+  - ./php/8.4/cron.d:/usr/local/etc/php/cron.d:ro
+
+x-php85-volumes: &php85-volumes
+  - ./home:/home
+  - ./run/php-fpm/php85:/run/php-fpm
+  - ./logs/php/php85:/var/log/php
+  - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
+  - ./php/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+  - ./php/8.5/users.d:/usr/local/etc/php/users.d:ro
+  - ./php/8.5/cron.d:/usr/local/etc/php/cron.d:ro
 
 services:
   nginx:
@@ -38,37 +69,58 @@ services:
       - php84
       - php85
 
+  # PHP-FPM services: web runtime only. They expose per-user Unix sockets.
   php84:
     <<: *php-common
-    build:
-      context: ./php
-      args:
-        PHP_VERSION: ${PHP84_VERSION:-8.4}
-        TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - ./home:/home
-      - ./run/php-fpm/php84:/run/php-fpm
-      - ./logs/php/php84:/var/log/php
-      - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
-      - ./php/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
-      - ./php/8.4/users.d:/usr/local/etc/php/users.d:ro
-      - ./php/8.4/cron.d:/usr/local/etc/php/cron.d:ro
+    image: *php84-image
+    restart: unless-stopped
+    build: *php84-build
+    command: ["sh", "-lc", "php-user-sync && exec php-fpm -F"]
+    volumes: *php84-volumes
 
   php85:
     <<: *php-common
-    build:
-      context: ./php
-      args:
-        PHP_VERSION: ${PHP85_VERSION:-8.5}
-        TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - ./home:/home
-      - ./run/php-fpm/php85:/run/php-fpm
-      - ./logs/php/php85:/var/log/php
-      - ./php/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
-      - ./php/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
-      - ./php/8.5/users.d:/usr/local/etc/php/users.d:ro
-      - ./php/8.5/cron.d:/usr/local/etc/php/cron.d:ro
+    image: *php85-image
+    restart: unless-stopped
+    build: *php85-build
+    command: ["sh", "-lc", "php-user-sync && exec php-fpm -F"]
+    volumes: *php85-volumes
+
+  # Cron services: scheduler only. Restart after adding/changing cron files.
+  php84-cron:
+    <<: *php-common
+    image: *php84-image
+    restart: unless-stopped
+    build: *php84-build
+    command: ["sh", "-lc", "php-user-sync && exec php-supercronic"]
+    volumes: *php84-volumes
+
+  php85-cron:
+    <<: *php-common
+    image: *php85-image
+    restart: unless-stopped
+    build: *php85-build
+    command: ["sh", "-lc", "php-user-sync && exec php-supercronic"]
+    volumes: *php85-volumes
+
+  # Ephemeral CLI/shell services for deploy work. Use docker compose run --rm php85-cli ...
+  php84-cli:
+    <<: *php-common
+    image: *php84-image
+    profiles: ["cli"]
+    build: *php84-build
+    entrypoint: ["sh", "-lc", "php-user-sync && exec \"$@\"", "--"]
+    command: ["bash"]
+    volumes: *php84-volumes
+
+  php85-cli:
+    <<: *php-common
+    image: *php85-image
+    profiles: ["cli"]
+    build: *php85-build
+    entrypoint: ["sh", "-lc", "php-user-sync && exec \"$@\"", "--"]
+    command: ["bash"]
+    volumes: *php85-volumes
 
   mysql:
     image: mysql:8.4

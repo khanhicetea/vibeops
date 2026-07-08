@@ -2,11 +2,8 @@ ARG PHP_VERSION=8.4
 FROM php:${PHP_VERSION}-fpm-trixie
 
 ARG TZ=Asia/Ho_Chi_Minh
-ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG SUPERCRONIC_VERSION=0.2.33
 ENV TZ=${TZ}
-ENV S6_KEEP_ENV=1
-ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 
 RUN set -eux; \
     savedAptMark="$(apt-mark showmanual)"; \
@@ -62,28 +59,21 @@ RUN set -eux; \
 RUN set -eux; \
     deb_arch="$(dpkg --print-architecture)"; \
     case "$deb_arch" in \
-      amd64) s6_arch="x86_64"; supercronic_arch="amd64" ;; \
-      arm64) s6_arch="aarch64"; supercronic_arch="arm64" ;; \
-      *) echo "Unsupported architecture for s6/supercronic: $deb_arch" >&2; exit 1 ;; \
+      amd64) supercronic_arch="amd64" ;; \
+      arm64) supercronic_arch="arm64" ;; \
+      *) echo "Unsupported architecture for supercronic: $deb_arch" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" \
-      | tar -C / -Jxpf -; \
-    curl -fsSL "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${s6_arch}.tar.xz" \
-      | tar -C / -Jxpf -; \
     curl -fsSL -o /usr/local/bin/supercronic \
       "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${supercronic_arch}"; \
     chmod +x /usr/local/bin/supercronic
 
 COPY php-user-sync /usr/local/bin/php-user-sync
 COPY php-cron-as /usr/local/bin/php-cron-as
-COPY s6/ /etc/
+COPY php-supercronic /usr/local/bin/php-supercronic
 RUN chmod +x \
       /usr/local/bin/php-user-sync \
       /usr/local/bin/php-cron-as \
-      /etc/cont-init.d/10-php-user-sync \
-      /etc/services.d/php-fpm/run \
-      /etc/services.d/cron/run
+      /usr/local/bin/php-supercronic
 
 WORKDIR /home
-ENTRYPOINT ["/init"]
-CMD []
+CMD ["php-fpm"]

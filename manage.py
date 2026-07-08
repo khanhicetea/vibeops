@@ -98,6 +98,14 @@ def php_service_for(version: str) -> str:
     return "php" + version.replace(".", "")
 
 
+def php_cron_service_for(version: str) -> str:
+    return php_service_for(version) + "-cron"
+
+
+def php_cli_service_for(version: str) -> str:
+    return php_service_for(version) + "-cli"
+
+
 def load_db() -> dict[str, Any]:
     if not DB_PATH.exists():
         return {
@@ -251,7 +259,7 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
             run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"])
             run([
                 "docker", "compose", "exec", "-T", service, "sh", "-lc",
-                "if command -v s6-svc >/dev/null 2>&1 && [ -e /run/service/php-fpm ]; then s6-svc -2 /run/service/php-fpm; else kill -USR2 1; fi",
+                "kill -USR2 1",
             ])
             info(f"Reloaded {service}")
     else:
@@ -260,13 +268,9 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
 
 def cron_reload(service: str, username: str) -> None:
     if service_running(service):
-        php_disable_default_pool(service)
-        run(["docker", "compose", "exec", "-T", service, "php-user-sync", username])
-        run([
-            "docker", "compose", "exec", "-T", service, "sh", "-lc",
-            "if command -v s6-svc >/dev/null 2>&1 && [ -e /run/service/cron ]; then s6-svc -t /run/service/cron; fi",
-        ], check=False)
-        info(f"Asked {service} cron service to reload. If the job does not appear, restart it: docker compose restart {service}")
+        run(["docker", "compose", "exec", "-T", service, "php-user-sync", username], check=False)
+        run(["docker", "compose", "restart", service])
+        info(f"Restarted {service} to load cron changes")
     else:
         info(f"{service} is not running; start/restart it to load this cron job.")
 
@@ -549,7 +553,7 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
     command = args.command
     if not schedule or not command:
         die("schedule and command are required")
-    php_service = php_service_for(php_version)
+    php_service = php_cron_service_for(php_version)
     app_home = f"/home/{username}"
     workdir = args.workdir or f"{app_home}/{domain}"
 
@@ -651,11 +655,56 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
     nginx_reload(args.no_reload)
 
 
+def select_php_site_from_db() -> tuple[str, str, str]:
+    db = load_db()
+    php_sites = [
+        site for site in db.get("sites", {}).values()
+        if isinstance(site, dict) and site.get("type") == "php" and site.get("user") and site.get("domain")
+    ]
+    php_sites.sort(key=lambda s: (str(s.get("user")), str(s.get("domain"))))
+
+    if not php_sites:
+        die("No PHP sites in stack.json. Create one with: ./manage.py site create <user> <domain>")
+    if len(php_sites) == 1:
+        site = php_sites[0]
+        return str(site["user"]), str(site["domain"]), str(site.get("php_version") or default_php_version())
+
+    if not sys.stdin.isatty():
+        choices = ", ".join(str(site.get("domain")) for site in php_sites)
+        die(f"Multiple PHP sites found; choose one explicitly. Sites: {choices}")
+
+    info("Select site:")
+    for idx, site in enumerate(php_sites, start=1):
+        info(f"  {idx}) {site.get('domain')}  user={site.get('user')}  php={site.get('php_version', default_php_version())}")
+    while True:
+        raw = input("Site number: ").strip()
+        try:
+            choice = int(raw)
+        except ValueError:
+            choice = 0
+        if 1 <= choice <= len(php_sites):
+            site = php_sites[choice - 1]
+            return str(site["user"]), str(site["domain"]), str(site.get("php_version") or default_php_version())
+        warn("invalid selection")
+
+
+def cmd_app_shell(args: argparse.Namespace) -> None:
+    if not args.username and not args.domain:
+        args.username, args.domain, selected_php = select_php_site_from_db()
+        if args.php == default_php_version():
+            args.php = selected_php
+    elif not args.username or not args.domain:
+        die("Usage: ./manage.py shell [username domain] [--php VERSION]")
+    args.command = [args.shell]
+    cmd_app_exec(args)
+
+
 def cmd_app_exec(args: argparse.Namespace) -> None:
     username = validate(args.username, USERNAME_RE, "username")
     domain = validate(args.domain, DOMAIN_PATH_RE, "domain/path name")
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
     php_service = php_service_for(php_version)
+    php_cli_service = php_cli_service_for(php_version)
     app_home = f"/home/{username}"
     workdir = args.workdir or f"{app_home}/{domain}"
     command = args.command or ["sh"]
@@ -668,23 +717,16 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
 
     if not docker_available():
         die("docker is required")
-    if not service_running(php_service):
-        die(f"{php_service} is not running")
-    php_disable_default_pool(php_service)
-    run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", username])
+    if service_running(php_service):
+        run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", username], check=False)
 
     tty_args: list[str] = []
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         tty_args.append("-T")
     os.execvp("docker", [
-        "docker", "compose", "exec", *tty_args,
-        "-u", username,
-        "-w", workdir,
-        "-e", f"HOME={app_home}",
-        "-e", f"USER={username}",
-        "-e", f"LOGNAME={username}",
-        "-e", f"COMPOSER_HOME={app_home}/.composer",
-        php_service,
+        "docker", "compose", "run", "--rm", *tty_args,
+        php_cli_service,
+        "php-cron-as", username, workdir,
         *command,
     ])
 
@@ -793,13 +835,21 @@ def build_parser() -> argparse.ArgumentParser:
     cron_create.add_argument("--workdir", "-w", help="Container workdir")
     cron_create.set_defaults(func=cmd_cron_create)
 
-    app_exec = sub.add_parser("exec", help="Run a command inside a PHP container as an app user")
+    app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app user")
     app_exec.add_argument("username")
     app_exec.add_argument("domain")
     app_exec.add_argument("--php", default=default_php_version(), help="PHP version")
     app_exec.add_argument("--workdir", "-w", help="Container workdir")
     app_exec.add_argument("command", nargs=argparse.REMAINDER, help="Command to run; prefix with -- if needed")
     app_exec.set_defaults(func=cmd_app_exec)
+
+    shell = sub.add_parser("shell", help="Open an ephemeral PHP CLI shell as an app user; with no args, choose from stack.json")
+    shell.add_argument("username", nargs="?")
+    shell.add_argument("domain", nargs="?")
+    shell.add_argument("--php", default=default_php_version(), help="PHP version")
+    shell.add_argument("--workdir", "-w", help="Container workdir")
+    shell.add_argument("--shell", default="bash", help="Shell to run, default: bash")
+    shell.set_defaults(func=cmd_app_shell)
 
     tls = sub.add_parser("tls", help="Manage vhost TLS mode")
     tls_sub = tls.add_subparsers(dest="tls_command", required=True)
