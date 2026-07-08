@@ -845,6 +845,220 @@ def cmd_state(args: argparse.Namespace) -> None:
         info(f"Initialized vibeops/{rel(DB_PATH)}")
 
 
+def prompt_text(label: str, default: str | None = None, *, required: bool = True) -> str:
+    suffix = f" [{default}]" if default not in (None, "") else ""
+    while True:
+        value = input(f"{label}{suffix}: ").strip()
+        if not value and default is not None:
+            value = default
+        if value or not required:
+            return value
+        warn("required")
+
+
+def prompt_confirm(label: str, default: bool = True) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        value = input(f"{label} [{suffix}]: ").strip().lower()
+        if not value:
+            return default
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False
+        warn("answer yes or no")
+
+
+def prompt_choice(label: str, choices: list[str], default: str | None = None) -> str:
+    if not choices:
+        return prompt_text(label, default)
+    info(label + ":")
+    for idx, choice in enumerate(choices, start=1):
+        marker = " *" if choice == default else ""
+        info(f"  {idx}) {choice}{marker}")
+    while True:
+        raw = input(f"Choose 1-{len(choices)}" + (f" [{default}]" if default else "") + ": ").strip()
+        if not raw and default:
+            return default
+        try:
+            idx = int(raw)
+        except ValueError:
+            idx = 0
+        if 1 <= idx <= len(choices):
+            return choices[idx - 1]
+        warn("invalid selection")
+
+
+def available_php_versions() -> list[str]:
+    versions = sorted(p.name for p in PHP_VERSIONS_DIR.iterdir() if p.is_dir()) if PHP_VERSIONS_DIR.exists() else []
+    default = default_php_version()
+    if default not in versions:
+        versions.insert(0, default)
+    return versions
+
+
+def parse_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def print_plan(lines: list[str]) -> None:
+    info("\nPlan:")
+    for line in lines:
+        info(f"  - {line}")
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    db = load_db()
+    services = ["mysql", "redis", "nginx", "php84", "php85", "php84-cron", "php85-cron"]
+    running = running_services()
+    info("VibeOps status\n")
+    info("Docker services:")
+    if not docker_available():
+        info("  docker: not found")
+    else:
+        for service in services:
+            info(f"  {service:<10} {'running' if service in running else '-'}")
+    info("\nSites:")
+    sites = db.get("sites", {})
+    if not sites:
+        info("  none")
+    for domain, site in sorted(sites.items()):
+        if not isinstance(site, dict):
+            continue
+        tls = site.get("tls", {}).get("mode", "")
+        if site.get("type") == "proxy":
+            info(f"  {domain:<28} proxy  {site.get('upstream', '')}  tls={tls}")
+        else:
+            info(f"  {domain:<28} php    user={site.get('user', '')} php={site.get('php_version', '')} tls={tls}")
+    info("\nQuick checks:")
+    info(f"  metadata: vibeops/{rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
+    info(f"  vhosts:   vibeops/{rel(NGINX_VHOST_DIR)}")
+    if args.check_nginx and "nginx" in running:
+        run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])
+
+
+def wizard_create_user() -> None:
+    username = prompt_text("Username")
+    php = prompt_choice("PHP version", available_php_versions(), default_php_version())
+    uid_raw = prompt_text("UID (blank = auto)", "", required=False)
+    no_mysql = not prompt_confirm("Create/update MySQL account?", True)
+    mysql_password = None if no_mysql else prompt_text("MySQL password (blank = generate)", "", required=False) or None
+    no_reload = not prompt_confirm("Reload PHP-FPM if running?", True)
+    print_plan([f"create/update user {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else "yes"), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
+    if prompt_confirm("Continue?", True):
+        cmd_user_create(argparse.Namespace(username=username, uid=int(uid_raw) if uid_raw else None, php=php, no_mysql=no_mysql, mysql_password=mysql_password, no_reload=no_reload))
+
+
+def wizard_create_site() -> None:
+    db = load_db()
+    users = sorted(db.get("users", {}).keys())
+    user_choices = users + ["+ create new user"] if users else []
+    selected = prompt_choice("User", user_choices, users[0] if users else None) if user_choices else "+ create new user"
+    username = prompt_text("New username") if selected == "+ create new user" else selected
+    domain = prompt_text("Domain")
+    aliases = parse_csv(prompt_text("Aliases, comma-separated (blank = none)", "", required=False))
+    php = prompt_choice("PHP version", available_php_versions(), default_php_version())
+    db_name = prompt_text("Database suffix, e.g. app (blank = none)", "", required=False) or None
+    no_index = not prompt_confirm("Create starter index.php if missing?", True)
+    no_reload = not prompt_confirm("Reload nginx/PHP-FPM if running?", True)
+    plan = [f"ensure user {username} on PHP {php}", f"create/update PHP site {domain}"]
+    if aliases:
+        plan.append("aliases: " + ", ".join(aliases))
+    if db_name:
+        plan.append(f"database: {username}_{db_name}")
+    plan.append("reload services: " + ("no" if no_reload else "yes"))
+    print_plan(plan)
+    info("\nEquivalent command:")
+    alias_args = " ".join(f"--alias {shlex.quote(a)}" for a in aliases)
+    info(f"  ./manage.py site create {shlex.quote(username)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)}" + (f" {alias_args}" if alias_args else ""))
+    if prompt_confirm("Continue?", True):
+        cmd_site_create(argparse.Namespace(username=username, domain=domain, db_name=db_name, php=php, alias=aliases, aliases=None, no_index=no_index, no_reload=no_reload))
+
+
+def wizard_create_proxy() -> None:
+    domain = prompt_text("Domain")
+    upstream = prompt_text("Upstream URL", "http://127.0.0.1:3000")
+    aliases = parse_csv(prompt_text("Aliases, comma-separated (blank = none)", "", required=False))
+    no_reload = not prompt_confirm("Reload nginx if running?", True)
+    print_plan([f"create/update proxy {domain}", f"upstream: {upstream}"] + (["aliases: " + ", ".join(aliases)] if aliases else []))
+    if prompt_confirm("Continue?", True):
+        cmd_proxy_create(argparse.Namespace(domain=domain, upstream=upstream, alias=aliases, aliases=None, no_reload=no_reload))
+
+
+def wizard_tls_acme() -> None:
+    db = load_db()
+    domains = sorted(db.get("sites", {}).keys())
+    domain = prompt_choice("Domain", domains) if domains else prompt_text("Domain")
+    off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
+    no_reload = not prompt_confirm("Reload nginx if running?", True)
+    print_plan([(f"switch {domain} to self-signed" if off else f"enable ACME for {domain}"), "reload nginx: " + ("no" if no_reload else "yes")])
+    if prompt_confirm("Continue?", True):
+        cmd_tls_acme(argparse.Namespace(domain=domain, off=off, no_reload=no_reload))
+
+
+def wizard_cron() -> None:
+    db = load_db()
+    php_sites = [s for s in db.get("sites", {}).values() if isinstance(s, dict) and s.get("type") == "php"]
+    labels = [f"{s.get('user')}/{s.get('domain')} (php {s.get('php_version', default_php_version())})" for s in php_sites]
+    label = prompt_choice("PHP site", labels) if labels else ""
+    if label:
+        site = php_sites[labels.index(label)]
+        username = str(site.get("user"))
+        domain = str(site.get("domain"))
+        php = str(site.get("php_version") or default_php_version())
+    else:
+        username = prompt_text("Username")
+        domain = prompt_text("Domain/path")
+        php = prompt_choice("PHP version", available_php_versions(), default_php_version())
+    job_name = prompt_text("Job name")
+    schedule = prompt_text("Schedule", "* * * * *")
+    command = prompt_text("Command", "php artisan schedule:run")
+    workdir = prompt_text("Workdir (blank = site root)", "", required=False) or None
+    print_plan([f"create/update cron {username}/{domain}/{job_name}", f"schedule: {schedule}", f"command: {command}"])
+    if prompt_confirm("Continue?", True):
+        cmd_cron_create(argparse.Namespace(username=username, domain=domain, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir))
+
+
+def cmd_wizard(args: argparse.Namespace) -> None:
+    if not sys.stdin.isatty():
+        die("wizard requires an interactive terminal")
+    actions = [
+        "Create PHP-FPM user",
+        "Create PHP site",
+        "Create reverse proxy",
+        "Enable/switch TLS ACME",
+        "Create cron job",
+        "Open app shell",
+        "Show status",
+        "List users/sites/crons",
+        "Quit",
+    ]
+    while True:
+        info("\nVibeOps")
+        action = prompt_choice("What do you want to do?", actions)
+        if action == "Create PHP-FPM user":
+            wizard_create_user()
+        elif action == "Create PHP site":
+            wizard_create_site()
+        elif action == "Create reverse proxy":
+            wizard_create_proxy()
+        elif action == "Enable/switch TLS ACME":
+            wizard_tls_acme()
+        elif action == "Create cron job":
+            wizard_cron()
+        elif action == "Open app shell":
+            cmd_app_shell(argparse.Namespace(username=None, domain=None, php=default_php_version(), workdir=None, shell="bash"))
+        elif action == "Show status":
+            cmd_status(argparse.Namespace(check_nginx=False))
+        elif action == "List users/sites/crons":
+            kind = prompt_choice("List", ["users", "sites", "crons", "all"], "sites")
+            cmd_list(argparse.Namespace(kind=kind))
+        else:
+            return
+        if not prompt_confirm("Back to menu?", True):
+            return
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="manage.py",
@@ -933,6 +1147,13 @@ def build_parser() -> argparse.ArgumentParser:
     tls_cert.add_argument("--no-reload", action="store_true", help="Do not reload nginx")
     tls_cert.set_defaults(func=cmd_tls_cert)
 
+    status = sub.add_parser("status", help="Show stack status dashboard")
+    status.add_argument("--check-nginx", action="store_true", help="Run nginx -t when nginx is running")
+    status.set_defaults(func=cmd_status)
+
+    wizard = sub.add_parser("wizard", aliases=["tui"], help="Interactive guided menu for common tasks")
+    wizard.set_defaults(func=cmd_wizard)
+
     list_cmd = sub.add_parser("list", help="List metadata from stack.json")
     list_cmd.add_argument("kind", choices=["users", "sites", "crons", "all"])
     list_cmd.set_defaults(func=cmd_list)
@@ -951,6 +1172,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv and sys.stdin.isatty():
+        argv = ["wizard"]
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.func is None:

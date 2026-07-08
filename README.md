@@ -84,6 +84,26 @@ docker compose build php84 php85 php84-cron php85-cron
 docker compose up -d mysql redis php84 php85 php84-cron php85-cron nginx
 ```
 
+## Interactive DX
+
+For guided operations, run the no-dependency Python wizard:
+
+```bash
+./manage.py
+# or explicitly:
+./manage.py wizard
+./manage.py tui
+```
+
+The wizard can create users, PHP sites, proxy vhosts, TLS/ACME config, cron jobs, open app shells, and show stack status. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
+
+For a quick dashboard without entering the wizard:
+
+```bash
+./manage.py status
+./manage.py status --check-nginx
+```
+
 ## Create a PHP-FPM user/pool
 
 Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`.
