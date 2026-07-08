@@ -1,0 +1,69 @@
+# VibeOps local/runtime/user data
+# Keep repository source/config templates tracked; ignore generated tenant data.
+
+# Local secrets/config
+.env
+.env.*
+!.env.example
+stack.json
+
+# User sites, credentials, and per-user logs
+/home/*
+!/home/.gitkeep
+
+# Runtime logs
+/logs/*
+!/logs/.gitkeep
+!/logs/php/
+!/logs/php/php84/
+!/logs/php/php84/.gitkeep
+!/logs/php/php85/
+!/logs/php/php85/.gitkeep
+
+# Backups and dumps
+/backups/*
+!/backups/.gitkeep
+*.sql
+*.sql.gz
+*.dump
+*.bak
+
+# ACME challenges/state and live certificates
+/acme-challenge/*
+!/acme-challenge/.gitkeep
+/certs/*
+!/certs/.gitignore
+!/certs/.gitkeep
+/nginx/acme-state/*
+!/nginx/acme-state/.gitignore
+!/nginx/acme-state/.gitkeep
+
+# Generated Nginx vhosts (keep base source configs)
+/nginx/conf.d/*.conf
+!/nginx/conf.d/00-nginx.conf
+!/nginx/conf.d/01-default.conf
+
+# Generated PHP users, pools, and cron jobs
+/php/*/users.d/*
+!/php/*/users.d/.gitkeep
+/php/*/pool.d/*.conf
+!/php/*/pool.d/zz-health.conf
+/php/*/cron.d/*
+!/php/*/cron.d/.gitkeep
+
+# Runtime sockets/PIDs/cache
+/run/*
+!/run/.gitkeep
+!/run/php-fpm/
+!/run/php-fpm/php84/
+!/run/php-fpm/php84/.gitkeep
+!/run/php-fpm/php85/
+!/run/php-fpm/php85/.gitkeep
+*.sock
+*.pid
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
