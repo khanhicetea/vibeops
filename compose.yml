@@ -93,7 +93,7 @@ services:
     command: ["sh", "-lc", "php-user-sync && exec php-fpm -F"]
     volumes: *php85-volumes
 
-  # Cron services: scheduler only. Restart after adding/changing cron files.
+  # Cron services: scheduler only. manage.py reloads Supercronic with SIGUSR2 after cron changes.
   php84-cron:
     <<: *php-common
     image: *php84-image

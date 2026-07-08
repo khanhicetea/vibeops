@@ -266,13 +266,43 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
         info(f"{service} is not running; run/restart it to create the Linux user inside that PHP container.")
 
 
+def rebuild_supercronic_crontab(php_version: str) -> Path:
+    cron_dir = ROOT / "php" / php_version / "cron.d"
+    mkdir(cron_dir)
+    combined = cron_dir / ".supercronic.cron"
+    lines = [
+        "SHELL=/bin/sh",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "",
+    ]
+    for cron_file in sorted(cron_dir.glob("*.cron")):
+        lines.append(f"# /usr/local/etc/php/cron.d/{cron_file.name}")
+        lines.append(cron_file.read_text().rstrip("\n"))
+        lines.append("")
+    write_text(combined, "\n".join(lines) + "\n", 0o644)
+    return combined
+
+
 def cron_reload(service: str, username: str) -> None:
     if service_running(service):
-        run(["docker", "compose", "exec", "-T", service, "php-user-sync", username], check=False)
-        run(["docker", "compose", "restart", service])
-        info(f"Restarted {service} to load cron changes")
+        script = r'''
+set -eu
+php-user-sync "$1"
+cmdline="$(tr '\000' ' ' < /proc/1/cmdline || true)"
+case "$cmdline" in
+  *supercronic*) kill -USR2 1 ;;
+  *) echo "Supercronic is not running as PID 1 ($cmdline)" >&2; exit 42 ;;
+esac
+'''
+        cp = run(["docker", "compose", "exec", "-T", service, "sh", "-lc", script, "--", username], check=False)
+        if cp.returncode == 0:
+            info(f"Reloaded {service} cron with SIGUSR2")
+        elif cp.returncode == 42:
+            info(f"{service} is running but Supercronic is idle; restart it once to load this cron job.")
+        else:
+            die(f"Failed to reload {service} cron (exit {cp.returncode})")
     else:
-        info(f"{service} is not running; start/restart it to load this cron job.")
+        info(f"{service} is not running; start it to load this cron job.")
 
 
 def read_uid_from_env(path: Path) -> int | None:
@@ -576,6 +606,8 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
     info(f"Created cron job: vibeops/{rel(cron_path)}")
     info(f"Runs as: {username}")
     info(f"Workdir: {workdir}")
+    combined_crontab = rebuild_supercronic_crontab(php_version)
+    info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
     info(f"Command: {command}")
 
     cron_key = f"{username}/{domain}/{job_name}"

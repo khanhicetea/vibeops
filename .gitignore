@@ -67,3 +67,6 @@ stack.json
 Thumbs.db
 *.swp
 *.swo
+
+# Python
+__pycache__/

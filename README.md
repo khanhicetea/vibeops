@@ -172,7 +172,7 @@ This writes:
 php/8.5/cron.d/myuser-example.com-schedule.cron
 ```
 
-The job runs in the `php85-cron` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. Do not scale a cron service to multiple replicas, or jobs will run more than once.
+The job runs in the `php85-cron` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `*.cron` files into `php/8.5/cron.d/.supercronic.cron` and reloads Supercronic with `SIGUSR2`, so the cron container does not need a restart unless it was idle with no Supercronic process. Do not scale a cron service to multiple replicas, or jobs will run more than once.
 
 ## Change a site's PHP version
 
