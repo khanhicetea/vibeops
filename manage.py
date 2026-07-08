@@ -226,8 +226,20 @@ def nginx_reload(no_reload: bool = False) -> None:
         info("nginx container is not running; start it then run: docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload")
 
 
+def php_disable_default_pool(service: str) -> None:
+    # Official PHP images ship a default [www] pool. VibeOps uses only generated
+    # per-user pools, so remove the default pool at runtime too (covers existing
+    # containers built before the Dockerfile cleanup, and PHP images whose
+    # default pool is not root-safe).
+    run([
+        "docker", "compose", "exec", "-T", service, "sh", "-lc",
+        "if [ -f /usr/local/etc/php-fpm.d/www.conf ]; then mv /usr/local/etc/php-fpm.d/www.conf /usr/local/etc/php-fpm.d/www.conf.disabled; fi",
+    ], check=False)
+
+
 def php_reload(service: str, username: str, no_reload: bool = False) -> None:
     if service_running(service):
+        php_disable_default_pool(service)
         run(["docker", "compose", "exec", "-T", service, "php-user-sync", username])
         if not no_reload:
             run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"])
@@ -242,6 +254,7 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
 
 def cron_reload(service: str, username: str) -> None:
     if service_running(service):
+        php_disable_default_pool(service)
         run(["docker", "compose", "exec", "-T", service, "php-user-sync", username])
         run([
             "docker", "compose", "exec", "-T", service, "sh", "-lc",
@@ -448,6 +461,7 @@ def cmd_site_create(args: argparse.Namespace) -> None:
     info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service}/{username}.sock")
 
     if service_running(php_service):
+        php_disable_default_pool(php_service)
         run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", username])
 
     db_full_name = None
@@ -650,6 +664,7 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
         die("docker is required")
     if not service_running(php_service):
         die(f"{php_service} is not running")
+    php_disable_default_pool(php_service)
     run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", username])
 
     tty_args: list[str] = []
