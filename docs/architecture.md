@@ -54,4 +54,4 @@ runtime/home/<app_name>/
   .composer/
 ```
 
-All domains on an app share `/home/<app_name>/www` and `/run/php-fpm/<php_service>/<app_name>.sock`. Separate codebases should be separate apps.
+All domains on an app share the same code tree under `/home/<app_name>/www` and `/run/php-fpm/<php_service>/<app_name>.sock`. The app's `public_dir` metadata selects the Nginx document root inside that tree: empty string means `/home/<app_name>/www` (WordPress/default), while `public` means `/home/<app_name>/www/public` (Laravel). Separate codebases should be separate apps.

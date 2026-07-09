@@ -114,6 +114,10 @@ Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`. An app slug is stac
 
 ```bash
 ./manage.py app create shop shop.example.com app --php 8.5 --alias www.shop.example.com
+# Laravel-style apps usually serve from /home/<app>/www/public:
+./manage.py app create laravel laravel.example.com app --public-dir public
+# WordPress/default apps serve directly from /home/<app>/www (empty public_dir):
+./manage.py app create wp wp.example.com app
 # choose a MySQL major for the optional DB creation:
 ./manage.py app create legacy legacy.example.com app --mysql-service mysql57
 ```
@@ -129,10 +133,15 @@ runtime/nginx/vhosts/app-shop.conf
 runtime/run/php-fpm/php85/shop.sock   # appears after php85 reload/start
 ```
 
-The generated Nginx vhost uses the selected PHP socket and stable `www` docroot:
+The generated Nginx vhost uses the selected PHP socket and the app's `public_dir` metadata for its document root. `public_dir` is a subdirectory inside `/home/<app>/www`; it defaults to empty.
 
 ```nginx
+# default / WordPress-style
 root /home/shop/www;
+
+# Laravel-style when --public-dir public
+root /home/laravel/www/public;
+
 fastcgi_pass unix:/run/php-fpm/php85/shop.sock;
 ```
 

@@ -45,6 +45,7 @@ DOMAIN_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 DOMAIN_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PHP_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
 DB_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+PUBLIC_DIR_RE = re.compile(r"^[A-Za-z0-9._/-]*$")
 MYSQL_SERVICE_RE = re.compile(r"^mysql[0-9]+$")
 JOB_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -430,6 +431,26 @@ def app_www(app_name: str) -> Path:
     return app_home(app_name) / DOCROOT_NAME
 
 
+def validate_public_dir(public_dir: str | None) -> str:
+    public_dir = (public_dir or "").strip().strip("/")
+    if public_dir in {".", ".."} or public_dir.startswith("../") or "/../" in public_dir or public_dir.endswith("/.."):
+        die(f"Invalid public_dir: {public_dir}")
+    if not PUBLIC_DIR_RE.match(public_dir):
+        die(f"Invalid public_dir: {public_dir}")
+    return public_dir
+
+
+def app_document_root(app_name: str, public_dir: str | None = "") -> Path:
+    public_dir = validate_public_dir(public_dir)
+    return app_www(app_name) / public_dir if public_dir else app_www(app_name)
+
+
+def container_document_root(app_name: str, public_dir: str | None = "") -> str:
+    public_dir = validate_public_dir(public_dir)
+    base = f"/home/{app_name}/{DOCROOT_NAME}"
+    return f"{base}/{public_dir}" if public_dir else base
+
+
 def app_vhost_path(app_name: str) -> Path:
     return NGINX_VHOST_DIR / f"app-{app_name}.conf"
 
@@ -548,7 +569,9 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     app = db["apps"].setdefault(app_name, {"name": app_name})
     app["uid"] = app_uid
     app["home"] = rel(app_home(app_name))
-    app["root"] = rel(app_www(app_name))
+    public_dir = validate_public_dir(app.get("public_dir", ""))
+    app["public_dir"] = public_dir
+    app["root"] = rel(app_document_root(app_name, public_dir))
     app["php_version"] = php_version
     app["php_service"] = php_service
     versions = set(app.get("php_versions", []))
@@ -568,12 +591,14 @@ def render_app_vhost(app: dict[str, Any]) -> Path:
     domains = app.get("domains") or [app.get("main_domain")]
     server_names = " ".join(str(d) for d in domains if d)
     conf_path = app_vhost_path(app_name)
+    public_dir = validate_public_dir(str(app.get("public_dir", "")))
     render_template(NGINX_TEMPLATE_DIR / "site.conf.template", conf_path, {
         "USERNAME": app_name,
         "APP_NAME": app_name,
         "MAIN_DOMAIN": app.get("main_domain", ""),
         "SERVER_NAMES": server_names,
         "PHP_SERVICE": app.get("php_service") or php_service_for(str(app.get("php_version") or default_php_version())),
+        "DOCUMENT_ROOT": container_document_root(app_name, public_dir),
     })
     app["vhost"] = rel(conf_path)
     return conf_path
@@ -587,6 +612,7 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     if args.no_mysql and args.db_suffix:
         die("Cannot create a database suffix with --no-mysql")
+    public_dir = validate_public_dir(getattr(args, "public_dir", ""))
     aliases = normalize_aliases(args.alias, args.aliases)
     all_domains = domains_for(main_domain, aliases)
     for domain in all_domains:
@@ -598,13 +624,16 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     old_domains = set(app.get("domains") or [])
     app["main_domain"] = main_domain
     app["domains"] = all_domains
+    app["public_dir"] = public_dir
+    app["root"] = rel(app_document_root(app_name, public_dir))
+    mkdir(app_document_root(app_name, public_dir))
     for old_domain in old_domains - set(all_domains):
         owner = db.get("domains", {}).get(old_domain)
         if owner and owner.get("kind") == "php" and owner.get("app") == app_name:
             db["domains"].pop(old_domain, None)
     apply_app_mysql_metadata(app, app_name, mysql_service, app.get("mysql_credentials"))
 
-    index_path = app_www(app_name) / "index.php"
+    index_path = app_document_root(app_name, public_dir) / "index.php"
     if not args.no_index and not index_path.exists():
         write_template(index_path, PHP_TEMPLATE_DIR / "index.php.template", {"MAIN_DOMAIN": main_domain, "PHP_VERSION": php_version})
 
@@ -622,7 +651,7 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     save_db(db)
 
     info(f"Created HTTP+HTTPS app vhost: vibeops/{rel(conf_path)}")
-    info(f"Document root: vibeops/{rel(app_www(app_name))}")
+    info(f"Document root: vibeops/{rel(app_document_root(app_name, public_dir))}")
     info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service_for(php_version)}/{app_name}.sock")
     nginx_reload(args.no_reload)
 
@@ -734,7 +763,7 @@ def cmd_site_create(args: argparse.Namespace) -> None:
     domain = validate(args.domain, DOMAIN_RE, "domain")
     if app_name not in db.get("apps", {}) and not app_home(app_name).exists():
         warn("'site create' is deprecated; creating an app instead")
-        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
+        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, public_dir="", no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
         cmd_app_create(ns)
         return
     app = db.get("apps", {}).get(app_name)
@@ -1094,6 +1123,15 @@ def prompt_int(label: str, default: str | None = None, *, required: bool = False
             warn(f"invalid integer: {value}")
 
 
+def prompt_public_dir() -> str:
+    while True:
+        raw = prompt_text("Public dir inside www (blank = www, Laravel: public)", "", required=False)
+        try:
+            return validate_public_dir(raw)
+        except StackError as exc:
+            warn(str(exc))
+
+
 def prompt_aliases() -> list[str]:
     while True:
         raw = prompt_text("Aliases, comma-separated (blank = none)", "", required=False)
@@ -1205,12 +1243,13 @@ def wizard_create_site() -> None:
     app_name = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
     domain = prompt_validated("Main domain", DOMAIN_RE, "domain")
     aliases = prompt_aliases()
+    public_dir = prompt_public_dir()
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
     db_name = prompt_validated("Database suffix, e.g. app (blank = none)", DB_NAME_RE, "database suffix", "", required=False) or None
     mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97") if db_name else default_mysql_service()
     no_index = not prompt_confirm("Create starter index.php if missing?", True)
     no_reload = not prompt_confirm("Reload nginx/PHP-FPM if running?", True)
-    plan = [f"create/update app {app_name} on PHP {php}", f"main domain {domain}"]
+    plan = [f"create/update app {app_name} on PHP {php}", f"main domain {domain}", f"document root: /home/{app_name}/www" + (f"/{public_dir}" if public_dir else "")]
     if aliases:
         plan.append("aliases: " + ", ".join(aliases))
     if db_name:
@@ -1219,9 +1258,10 @@ def wizard_create_site() -> None:
     print_plan(plan)
     info("\nEquivalent command:")
     alias_args = " ".join(f"--alias {shlex.quote(a)}" for a in aliases)
-    info(f"  ./manage.py app create {shlex.quote(app_name)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}" + (f" {alias_args}" if alias_args else ""))
+    public_dir_arg = f" --public-dir {shlex.quote(public_dir)}" if public_dir else ""
+    info(f"  ./manage.py app create {shlex.quote(app_name)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}" + public_dir_arg + (f" {alias_args}" if alias_args else ""))
     if prompt_confirm("Continue?", True):
-        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
+        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, public_dir=public_dir, no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
 
 
 def wizard_create_proxy() -> None:
@@ -1326,6 +1366,7 @@ def build_parser() -> argparse.ArgumentParser:
     app_create.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service for optional database creation, e.g. mysql57/mysql84/mysql97")
     app_create.add_argument("--alias", action="append", help="Additional server_name; can be passed multiple times or comma-separated")
     app_create.add_argument("--aliases", help="Comma-separated additional server names")
+    app_create.add_argument("--public-dir", default="", help="Document root subdirectory inside /home/<app>/www, e.g. 'public' for Laravel; default is app root")
     app_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
     app_create.add_argument("--mysql-password", help="Password for the MySQL account")
     app_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")

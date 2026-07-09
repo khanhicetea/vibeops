@@ -20,7 +20,7 @@ server {
     # END TLS_CERTIFICATE
 
     set $site_user __APP_NAME__;
-    set $base /home/__APP_NAME__/www;
+    set $base __DOCUMENT_ROOT__;
     root $base;
 
     include /etc/nginx/snippets/security.conf;
@@ -48,7 +48,7 @@ server {
     server_name __SERVER_NAMES__;
 
     set $site_user __APP_NAME__;
-    set $base /home/__APP_NAME__/www;
+    set $base __DOCUMENT_ROOT__;
     set $enable_https_redirect 0;
     root $base;
 
