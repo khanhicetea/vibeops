@@ -681,6 +681,37 @@ def apply_vhost_tls(conf_path: Path, record: dict[str, Any]) -> None:
     set_https_redirect(conf_path, bool(tls.get("redirect_https")) and tls.get("mode") in {"acme", "files"}, quiet=True)
 
 
+def replace_tls_block(conf_path: Path, replacement: str) -> None:
+    text = conf_path.read_text()
+    text2, count = re.subn(r"# BEGIN TLS_CERTIFICATE\n.*?\n\s*# END TLS_CERTIFICATE", lambda _: replacement, text, count=1, flags=re.S)
+    if count != 1:
+        die(f"Could not find marked TLS certificate block in {rel(conf_path)}")
+    write_text(conf_path, text2)
+
+
+def set_https_redirect(conf_path: Path, enabled: bool, *, quiet: bool = False) -> None:
+    """Toggle the generated HTTP vhost redirect flag."""
+    text = conf_path.read_text()
+    value = "1" if enabled else "0"
+
+    if "set $enable_https_redirect" in text:
+        text2, count = re.subn(r"set \$enable_https_redirect [01];", f"set $enable_https_redirect {value};", text, count=1)
+    else:
+        listen_pos = text.find("listen 80;")
+        server_name_pos = text.find("server_name ", listen_pos)
+        insert_pos = text.find(";", server_name_pos) + 1 if server_name_pos >= 0 else 0
+        if listen_pos < 0 or server_name_pos < 0 or insert_pos <= 0:
+            warn(f"Could not find generated HTTP server in {rel(conf_path)}; skipped HTTPS redirect toggle")
+            return
+        text2 = text[:insert_pos] + f"\n\n    set $enable_https_redirect {value};" + text[insert_pos:]
+        count = 1
+
+    if count and text2 != text:
+        write_text(conf_path, text2)
+        if not quiet:
+            info(("Enabled" if enabled else "Disabled") + f" HTTP to HTTPS redirect in vibeops/{rel(conf_path)}")
+
+
 def render_php_fallback(php_version: str) -> Path:
     php_version = validate(php_version, PHP_VERSION_RE, "PHP version")
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
