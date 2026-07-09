@@ -1,0 +1,8 @@
+[mysqld]
+# MySQL 9.7 defaults for forward-looking apps.
+disable_log_bin
+sql_require_primary_key = OFF
+
+# Keep a modest footprint for single-server VibeOps installs.
+innodb_buffer_pool_size = 512M
+innodb_redo_log_capacity = 512M

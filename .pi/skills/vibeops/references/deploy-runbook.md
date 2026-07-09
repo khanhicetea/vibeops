@@ -19,7 +19,7 @@ This runbook is written for agents and developers operating this repository.
 | `php/<version>/users.d` | Generated PHP container user definitions |
 | `php/<version>/pool.d` | Generated PHP-FPM pool configs |
 | `run/php-fpm/phpXX` | Shared Unix sockets between PHP-FPM and Nginx |
-| `mysql/conf.d/z-custom.cnf` | MySQL custom config |
+| `mysql/common/conf.d/10-common.cnf`, `mysql/versions/*/conf.d/90-version.cnf` | Shared and version-specific MySQL config |
 | `redis/Dockerfile` | Redis image customization |
 | `scripts/create-user.sh` | Creates user home, PHP-FPM user env, pool config, optional MySQL user |
 | `scripts/create-site.sh` | Creates site root, generated Nginx vhost, optional MySQL database |
@@ -54,7 +54,9 @@ cp .env.example .env
 ${EDITOR:-vi} .env
 
 docker compose build php84 php85 redis
-docker compose up -d mysql redis php84 php85 nginx
+docker compose up -d mysql84 redis php84 php85 nginx
+# Optional extra MySQL majors:
+# docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 docker compose ps
 docker compose exec -T nginx nginx -t
 ```
@@ -64,7 +66,7 @@ Expected services by default:
 - `nginx`: host network, no `ports:` entries.
 - `php84`, `php85`: backend network, write sockets to `run/php-fpm/php84` and `run/php-fpm/php85`.
   - The PHP image build installs OPcache only when `php -m` shows it is absent, so PHP 8.5 can use built-in Zend OPcache without reinstalling it.
-- `mysql`: backend network only, named volume `mysql-data`.
+- `mysql57` / `mysql84` / `mysql97`: backend network only, named volumes `mysql57-data` / `mysql84-data` / `mysql97-data`.
 - `redis`: backend network only, named volume `redis-data`.
 
 ## Deploy a PHP app quickly
@@ -90,11 +92,11 @@ Expected services by default:
 4. Configure app environment:
 
    ```text
-   DB_HOST=mysql
+   DB_HOST=mysql84
    DB_PORT=3306
    DB_DATABASE=appuser_app
    DB_USERNAME=appuser
-   DB_PASSWORD=<see home/appuser/.credentials/mysql.env if create-user generated it>
+   DB_PASSWORD=<see home/appuser/.credentials/mysql84.env if create-user generated it>
    REDIS_HOST=redis
    REDIS_PORT=6379
    ```
@@ -253,11 +255,11 @@ Nginx needs group-readable files and executable directories through the path. Th
 
 ### MySQL connection fails from PHP
 
-Use Compose DNS host `mysql`, not `localhost` or `127.0.0.1`.
+Use the selected Compose DNS host (`mysql57`, `mysql84`, or `mysql97`), not `localhost` or `127.0.0.1`.
 
 ```bash
-docker compose exec -T mysql mysqladmin -uroot -p"$MYSQL_ROOT_PASSWORD" ping
-cat home/appuser/.credentials/mysql.env 2>/dev/null || true
+docker compose exec -T mysql84 mysqladmin -uroot -p"$MYSQL_ROOT_PASSWORD" ping
+cat home/appuser/.credentials/mysql84.env 2>/dev/null || true
 ```
 
 The user gets grants on databases matching `<username>_%`.
@@ -292,6 +294,6 @@ Common causes:
 
 - Prefer invoking existing scripts instead of hand-writing generated config.
 - If changing generated vhost behavior, edit templates and explain existing vhosts may need regeneration.
-- Preserve data volumes and user content; never delete `home/`, `mysql-data`, `redis-data`, `backups/`, `certs/`, or `nginx/acme-state/` unless explicitly requested.
+- Preserve data volumes and user content; never delete `home/`, `mysql57-data` / `mysql84-data` / `mysql97-data`, `redis-data`, `backups/`, `certs/`, or `nginx/acme-state/` unless explicitly requested.
 - Treat credentials and certificates as secrets.
 - After config edits, run the narrowest validation command available.

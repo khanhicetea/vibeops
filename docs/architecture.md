@@ -13,7 +13,7 @@ docker/                     # Docker build contexts and image helper binaries
 config/                     # committed stack configuration and templates
   nginx/                    # host-network edge config
   php/                      # PHP common config, versioned pools/users, templates
-  mysql/                    # MySQL config and SQL templates
+  mysql/                    # shared + versioned MySQL config and SQL templates
 
 runtime/                    # mutable/generated/live data
   home/                     # mounted as /home into nginx/php
@@ -21,7 +21,7 @@ runtime/                    # mutable/generated/live data
   nginx/vhosts/             # generated vhosts
   cron/php84|php85/         # generated cron state for supercronic
   logs/                     # nginx/php logs
-  backups/                  # database backups
+  backups/mysql57|mysql84|mysql97/ # versioned database backups
   certs/                    # external certificate files
   nginx-acme-state/         # NGINX ACME account/cert/key state
 ```

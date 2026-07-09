@@ -43,6 +43,7 @@ DOMAIN_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 DOMAIN_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PHP_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
 DB_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+MYSQL_SERVICE_RE = re.compile(r"^mysql[0-9]+$")
 JOB_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -105,6 +106,14 @@ def stack_env() -> dict[str, str]:
 
 def default_php_version() -> str:
     return stack_env().get("DEFAULT_PHP_VERSION", "8.4")
+
+
+def default_mysql_service() -> str:
+    return stack_env().get("DEFAULT_MYSQL_SERVICE", "mysql84")
+
+
+def mysql_root_password(env: dict[str, str], service: str) -> str | None:
+    return env.get(f"{service.upper()}_ROOT_PASSWORD") or env.get("MYSQL_ROOT_PASSWORD")
 
 
 def php_service_for(version: str) -> str:
@@ -369,22 +378,25 @@ def generate_password(length: int = 20) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def create_mysql_user(username: str, password: str | None) -> tuple[bool, str | None]:
+def create_mysql_user(username: str, password: str | None, mysql_service: str) -> tuple[bool, str | None]:
     env = stack_env()
-    if not (ROOT / ".env").exists() or not service_running("mysql"):
-        info("Skipped MySQL user creation; start mysql and rerun, or pass --no-mysql.")
+    mysql_service = validate(mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    if not (ROOT / ".env").exists() or not service_running(mysql_service):
+        info(f"Skipped MySQL user creation; start {mysql_service} and rerun, or pass --no-mysql.")
         return False, None
-    root_password = env.get("MYSQL_ROOT_PASSWORD")
+    root_password = mysql_root_password(env, mysql_service)
     if not root_password:
-        info("Skipped MySQL user creation; MYSQL_ROOT_PASSWORD is missing.")
+        info(f"Skipped MySQL user creation; {mysql_service.upper()}_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD is missing.")
         return False, None
 
-    password = password or env.get("MYSQL_USER_PASSWORD") or generate_password()
     cred_dir = HOME_DIR / username / ".credentials"
-    cred_path = cred_dir / "mysql.env"
+    cred_path = cred_dir / f"{mysql_service}.env"
+    existing_password = parse_env_file(cred_path).get("MYSQL_PASSWORD") if cred_path.exists() else None
+    password = password or env.get(f"{mysql_service.upper()}_USER_PASSWORD") or env.get("MYSQL_USER_PASSWORD") or existing_password or generate_password()
     mkdir(cred_dir, 0o700)
     write_template(cred_path, MYSQL_TEMPLATE_DIR / "user-credentials.env.template", {
         "USERNAME": username,
+        "MYSQL_SERVICE": mysql_service,
         "MYSQL_PASSWORD": password,
     }, 0o600)
 
@@ -392,8 +404,8 @@ def create_mysql_user(username: str, password: str | None) -> tuple[bool, str | 
         "USERNAME": username,
         "MYSQL_PASSWORD_SQL": mysql_string_literal(password),
     })
-    run(["docker", "compose", "exec", "-T", "mysql", "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
-    info(f"MySQL account: {username} / {password}")
+    run(["docker", "compose", "exec", "-T", mysql_service, "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
+    info(f"MySQL account on {mysql_service}: {username} / {password}")
     info(f"Saved: vibeops/{rel(cred_path)}")
     return True, rel(cred_path)
 
@@ -443,7 +455,7 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
     mysql_created = False
     credential_path = None
     if not args.no_mysql:
-        mysql_created, credential_path = create_mysql_user(username, args.mysql_password)
+        mysql_created, credential_path = create_mysql_user(username, args.mysql_password, args.mysql_service)
 
     user = db["users"].setdefault(username, {})
     user["uid"] = user_uid
@@ -453,6 +465,7 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
     user["php_versions"] = sorted(versions)
     if mysql_created:
         user["mysql_user"] = True
+        user["mysql_service"] = args.mysql_service
     if credential_path:
         user["mysql_credentials"] = credential_path
     upsert_timestamp(user)
@@ -460,11 +473,11 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
         save_db(db)
 
 
-def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False) -> None:
+def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> None:
     if (php_version_config_dir(php_version) / "users.d" / f"{username}.env").exists():
         return
     info(f"PHP {php_version} user {username} does not exist; creating it first.")
-    ns = argparse.Namespace(username=username, uid=None, php=php_version, no_mysql=False, mysql_password=None, no_reload=no_reload)
+    ns = argparse.Namespace(username=username, uid=None, php=php_version, no_mysql=False, mysql_password=None, mysql_service=mysql_service or default_mysql_service(), no_reload=no_reload)
     cmd_user_create(ns, db=db, save=False)
 
 
@@ -492,13 +505,14 @@ def cmd_site_create(args: argparse.Namespace) -> None:
     username = validate(args.username, USERNAME_RE, "username")
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
+    mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     db_name = args.db_name
     if db_name:
         validate(db_name, DB_NAME_RE, "db_name")
     aliases = normalize_aliases(args.alias, args.aliases)
     php_service = php_service_for(php_version)
 
-    ensure_user(username, php_version, db, no_reload=args.no_reload)
+    ensure_user(username, php_version, db, no_reload=args.no_reload, mysql_service=mysql_service)
 
     site_root = HOME_DIR / username / main_domain
     mkdir(site_root)
@@ -532,16 +546,17 @@ def cmd_site_create(args: argparse.Namespace) -> None:
     if db_name:
         db_full_name = f"{username}_{db_name}"
         env = stack_env()
-        root_password = env.get("MYSQL_ROOT_PASSWORD")
-        if (ROOT / ".env").exists() and service_running("mysql") and root_password:
+        root_password = mysql_root_password(env, mysql_service)
+        if (ROOT / ".env").exists() and service_running(mysql_service) and root_password:
+            create_mysql_user(username, None, mysql_service)
             sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
                 "DB_FULL_NAME": db_full_name,
                 "USERNAME": username,
             })
-            run(["docker", "compose", "exec", "-T", "mysql", "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
-            info(f"MySQL database: {db_full_name}")
+            run(["docker", "compose", "exec", "-T", mysql_service, "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
+            info(f"MySQL database on {mysql_service}: {db_full_name}")
         else:
-            info("Skipped database creation; mysql is not running, .env is missing, or MYSQL_ROOT_PASSWORD is unset.")
+            info(f"Skipped database creation; {mysql_service} is not running, .env is missing, or root password is unset.")
 
     site = db["sites"].setdefault(main_domain, {})
     site.update({
@@ -551,6 +566,7 @@ def cmd_site_create(args: argparse.Namespace) -> None:
         "user": username,
         "php_version": php_version,
         "php_service": php_service,
+        "mysql_service": mysql_service,
         "root": rel(site_root),
         "vhost": rel(conf_path),
         "tls": site.get("tls", {"mode": "self-signed"}),
@@ -930,7 +946,7 @@ def print_plan(lines: list[str]) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     db = load_db()
-    services = ["mysql", "redis", "nginx", "php84", "php85", "php84-cron", "php85-cron"]
+    services = ["mysql57", "mysql84", "mysql97", "redis", "nginx", "php84", "php85", "php84-cron", "php85-cron"]
     running = running_services()
     info("VibeOps status\n")
     info("Docker services:")
@@ -963,11 +979,12 @@ def wizard_create_user() -> None:
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
     uid_raw = prompt_text("UID (blank = auto)", "", required=False)
     no_mysql = not prompt_confirm("Create/update MySQL account?", True)
+    mysql_service = default_mysql_service() if no_mysql else prompt_text("MySQL service", default_mysql_service())
     mysql_password = None if no_mysql else prompt_text("MySQL password (blank = generate)", "", required=False) or None
     no_reload = not prompt_confirm("Reload PHP-FPM if running?", True)
-    print_plan([f"create/update user {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else "yes"), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
+    print_plan([f"create/update user {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else mysql_service), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
     if prompt_confirm("Continue?", True):
-        cmd_user_create(argparse.Namespace(username=username, uid=int(uid_raw) if uid_raw else None, php=php, no_mysql=no_mysql, mysql_password=mysql_password, no_reload=no_reload))
+        cmd_user_create(argparse.Namespace(username=username, uid=int(uid_raw) if uid_raw else None, php=php, no_mysql=no_mysql, mysql_password=mysql_password, mysql_service=mysql_service, no_reload=no_reload))
 
 
 def wizard_create_site() -> None:
@@ -980,20 +997,21 @@ def wizard_create_site() -> None:
     aliases = parse_csv(prompt_text("Aliases, comma-separated (blank = none)", "", required=False))
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
     db_name = prompt_text("Database suffix, e.g. app (blank = none)", "", required=False) or None
+    mysql_service = prompt_text("MySQL service", default_mysql_service()) if db_name else default_mysql_service()
     no_index = not prompt_confirm("Create starter index.php if missing?", True)
     no_reload = not prompt_confirm("Reload nginx/PHP-FPM if running?", True)
     plan = [f"ensure user {username} on PHP {php}", f"create/update PHP site {domain}"]
     if aliases:
         plan.append("aliases: " + ", ".join(aliases))
     if db_name:
-        plan.append(f"database: {username}_{db_name}")
+        plan.append(f"database: {username}_{db_name} on {mysql_service}")
     plan.append("reload services: " + ("no" if no_reload else "yes"))
     print_plan(plan)
     info("\nEquivalent command:")
     alias_args = " ".join(f"--alias {shlex.quote(a)}" for a in aliases)
-    info(f"  ./manage.py site create {shlex.quote(username)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)}" + (f" {alias_args}" if alias_args else ""))
+    info(f"  ./manage.py site create {shlex.quote(username)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}" + (f" {alias_args}" if alias_args else ""))
     if prompt_confirm("Continue?", True):
-        cmd_site_create(argparse.Namespace(username=username, domain=domain, db_name=db_name, php=php, alias=aliases, aliases=None, no_index=no_index, no_reload=no_reload))
+        cmd_site_create(argparse.Namespace(username=username, domain=domain, db_name=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, no_index=no_index, no_reload=no_reload))
 
 
 def wizard_create_proxy() -> None:
@@ -1098,6 +1116,7 @@ def build_parser() -> argparse.ArgumentParser:
     user_create.add_argument("--php", default=default_php_version(), help="PHP version")
     user_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
     user_create.add_argument("--mysql-password", help="Password for the MySQL account")
+    user_create.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service to create the account in, e.g. mysql57/mysql84/mysql97")
     user_create.add_argument("--no-reload", action="store_true", help="Do not reload PHP-FPM")
     user_create.set_defaults(func=cmd_user_create)
 
@@ -1108,6 +1127,7 @@ def build_parser() -> argparse.ArgumentParser:
     site_create.add_argument("domain")
     site_create.add_argument("db_name", nargs="?")
     site_create.add_argument("--php", default=default_php_version(), help="PHP version")
+    site_create.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service for optional database creation, e.g. mysql57/mysql84/mysql97")
     site_create.add_argument("--alias", action="append", help="Additional server_name; can be passed multiple times or comma-separated")
     site_create.add_argument("--aliases", help="Comma-separated additional server names")
     site_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")

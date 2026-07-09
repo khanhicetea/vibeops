@@ -38,7 +38,8 @@ vibeops/runtime/home/<user>/<domain>
   - `php84-cli` / `php85-cli` are ephemeral deploy/shell services
   - deploy commands, Composer, cron, and PHP-FPM still use the same PHP binary/extensions
 - **PHP connects to MySQL/Redis** over the Compose backend network:
-  - MySQL host: `mysql:3306`
+  - MySQL hosts are versioned services: `mysql57:3306`, `mysql84:3306`, `mysql97:3306`
+  - `DEFAULT_MYSQL_SERVICE` defaults generated users/sites to `mysql84`
   - Redis host: `redis:6379`
 - **Nginx reads site files from `/home` read-only** and talks to PHP by Unix sockets.
 - **The official NGINX ACME module is enabled** with HTTP-01.
@@ -59,7 +60,7 @@ docker/                       # Docker build contexts and image helper binaries
 config/                       # committed stack config and templates
   nginx/                      # Nginx global config, snippets, templates, self-signed cert
   php/                        # PHP common config, versioned users/pools, templates
-  mysql/                      # MySQL config and SQL templates
+  mysql/                      # shared + versioned MySQL config and SQL templates
 runtime/                      # mutable/generated/live data
   home/                       # /home bind mount for user sites
   run/php-fpm/php84/          # PHP 8.4 sockets
@@ -81,7 +82,10 @@ cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD
 
 docker compose build php84 php85 php84-cron php85-cron
-docker compose up -d mysql redis php84 php85 php84-cron php85-cron nginx
+# mysql84 is the default MySQL service.
+docker compose up -d mysql84 redis php84 php85 php84-cron php85-cron nginx
+# Optional extra majors:
+# docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 ```
 
 ## Interactive DX
@@ -116,6 +120,7 @@ Create the same user for a specific PHP version:
 
 ```bash
 ./manage.py user create myuser --php 8.5
+./manage.py user create legacyuser --php 8.4 --mysql-service mysql57
 ```
 
 This creates, for example:
@@ -135,6 +140,8 @@ Generated sites always include both HTTP and HTTPS in one vhost file. HTTPS uses
 
 ```bash
 ./manage.py site create myuser example.com app --php 8.5 --alias www.example.com
+# choose a MySQL major for the optional DB creation:
+./manage.py site create legacyuser legacy.example.com app --mysql-service mysql57
 ```
 
 This creates:
@@ -159,7 +166,7 @@ myuser_app
 PHP app connection values:
 
 ```text
-DB_HOST=mysql
+DB_HOST=mysql84
 DB_PORT=3306
 DB_DATABASE=myuser_app
 DB_USERNAME=myuser

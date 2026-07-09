@@ -10,7 +10,6 @@ x-php-common: &php-common
     SOCKET_GID: ${SOCKET_GID:-101}
     FIX_HOME_OWNERSHIP: ${FIX_HOME_OWNERSHIP:-1}
   depends_on:
-    - mysql
     - redis
   networks:
     - backend
@@ -130,17 +129,54 @@ services:
     command: ["bash"]
     volumes: *php85-volumes
 
-  mysql:
-    image: mysql:8.4
+  # MySQL services are versioned so one server can run legacy, LTS, and preview databases side-by-side.
+  # Start one or more explicitly, for example:
+  #   docker compose up -d mysql84
+  #   docker compose up -d mysql57 mysql84 mysql97
+  # Optional legacy MySQL. Start explicitly with: docker compose --profile mysql57 up -d mysql57
+  mysql57:
+    image: mysql:${MYSQL57_VERSION:-5.7}
+    profiles: ["mysql57"]
     restart: unless-stopped
-    command: ["--defaults-extra-file=/etc/mysql/conf.d/z-custom.cnf"]
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL57_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     volumes:
-      - mysql-data:/var/lib/mysql
-      - ./config/mysql/conf.d/z-custom.cnf:/etc/mysql/conf.d/z-custom.cnf:ro
-      - ./runtime/backups/mysql:/backups
+      - mysql57-data:/var/lib/mysql
+      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
+      - ./config/mysql/versions/5.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
+      - ./runtime/backups/mysql57:/backups
+    networks:
+      - backend
+
+  # Default MySQL service.
+  mysql84:
+    image: mysql:${MYSQL84_VERSION:-8.4}
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL84_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - mysql84-data:/var/lib/mysql
+      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
+      - ./config/mysql/versions/8.4/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
+      - ./runtime/backups/mysql84:/backups
+    networks:
+      - backend
+
+  # Optional preview MySQL. Start explicitly with: docker compose --profile mysql97 up -d mysql97
+  mysql97:
+    image: mysql:${MYSQL97_VERSION:-9.7}
+    profiles: ["mysql97"]
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL97_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - mysql97-data:/var/lib/mysql
+      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
+      - ./config/mysql/versions/9.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
+      - ./runtime/backups/mysql97:/backups
     networks:
       - backend
 
@@ -169,5 +205,7 @@ networks:
   backend:
 
 volumes:
-  mysql-data:
+  mysql57-data:
+  mysql84-data:
+  mysql97-data:
   redis-data:

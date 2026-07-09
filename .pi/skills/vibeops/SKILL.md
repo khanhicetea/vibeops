@@ -34,7 +34,7 @@ Use this skill when working in this `vibeops` repository or helping a developer 
   - nginx: `/run/php-fpm/php84/<user>.sock`
   - PHP container: `/run/php-fpm/<user>.sock`
 - Site roots are `home/<user>/<domain>` and are mounted read-only into Nginx but read-write into PHP.
-- MySQL and Redis are only reachable from backend containers as `mysql:3306` and `redis:6379`.
+- MySQL and Redis are only reachable from backend containers; MySQL services are versioned as `mysql57:3306`, `mysql84:3306`, `mysql97:3306`, and Redis is `redis:6379`.
 - Generated vhosts start with a self-signed cert, then switch to NGINX ACME or explicit cert files.
 
 ## Fast deployment workflows
@@ -45,7 +45,9 @@ Use this skill when working in this `vibeops` repository or helping a developer 
 cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD and optionally DEFAULT_PHP_VERSION/TZ
 docker compose build php84 php85 redis
-docker compose up -d mysql redis php84 php85 nginx
+docker compose up -d mysql84 redis php84 php85 nginx
+# Optional extra MySQL majors:
+# docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 docker compose ps
 docker compose exec -T nginx nginx -t
 ```
@@ -64,7 +66,7 @@ ALTER_DOMAINS=www.example.com ./scripts/create-site.sh <user> example.com app --
 The optional DB argument `app` creates database `<user>_app`. App connection defaults:
 
 ```text
-DB_HOST=mysql
+DB_HOST=mysql84
 DB_PORT=3306
 DB_DATABASE=<user>_<db>
 DB_USERNAME=<user>
