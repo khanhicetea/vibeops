@@ -3,6 +3,7 @@ FROM php:${PHP_VERSION}-fpm-trixie
 
 ARG TZ=Asia/Ho_Chi_Minh
 ARG SUPERCRONIC_VERSION=0.2.33
+ARG NODE_VERSION=24.11.1
 ENV TZ=${TZ}
 
 RUN set -eux; \
@@ -14,11 +15,14 @@ RUN set -eux; \
       curl \
       git \
       gosu \
+      grep \
+      gzip \
       openssh-client \
       openssl \
       passwd \
       tzdata \
       unzip \
+      vim \
       xz-utils \
       $PHPIZE_DEPS \
       libfreetype6 \
@@ -51,8 +55,22 @@ RUN set -eux; \
     php -r "if (hash_file('sha384', 'composer-setup.php') !== trim(file_get_contents('https://composer.github.io/installer.sig'))) { unlink('composer-setup.php'); exit(1); }"; \
     php composer-setup.php --install-dir=/usr/local/bin --filename=composer; \
     rm composer-setup.php; \
+    deb_arch="$(dpkg --print-architecture)"; \
+    case "$deb_arch" in \
+      amd64) node_arch="x64" ;; \
+      arm64) node_arch="arm64" ;; \
+      *) echo "Unsupported architecture for Node.js: $deb_arch" >&2; exit 1 ;; \
+    esac; \
+    node_dist="node-v${NODE_VERSION}-linux-${node_arch}"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/${node_dist}.tar.xz"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"; \
+    grep " ${node_dist}.tar.xz\$" SHASUMS256.txt | sha256sum -c -; \
+    tar -xJf "${node_dist}.tar.xz" -C /usr/local --strip-components=1 --no-same-owner; \
+    rm "${node_dist}.tar.xz" SHASUMS256.txt; \
+    node --version; \
+    npm --version; \
     apt-mark auto '.*' > /dev/null; \
-    apt-mark manual $savedAptMark bash ca-certificates curl git gosu openssh-client openssl passwd tzdata unzip xz-utils libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
+    apt-mark manual $savedAptMark bash ca-certificates curl git gosu grep gzip openssh-client openssl passwd tzdata unzip vim xz-utils libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
     ldd "$(php -r 'echo ini_get("extension_dir");')"/*.so \
       | awk '/=>/ { print $3 } /^\// { print $1 }' \
       | xargs -r -I '{}' sh -c 'dpkg-query -S "$1" 2>/dev/null | cut -d: -f1' sh '{}' \

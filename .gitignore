@@ -6,8 +6,55 @@
 .env.*
 !.env.example
 stack.json
+compose.override.yml
+compose.local.yml
+compose.d/*.yml
 
-# Runtime mutable state
+# Runtime state, generated config, customization, and mutable data
+/runtime/state/*
+!/runtime/state/.gitkeep
+
+/runtime/generated/*
+!/runtime/generated/.gitkeep
+!/runtime/generated/nginx/
+!/runtime/generated/nginx/vhosts/
+!/runtime/generated/nginx/vhosts/.gitkeep
+!/runtime/generated/php/
+!/runtime/generated/php/versions/
+!/runtime/generated/php/versions/8.4/
+!/runtime/generated/php/versions/8.4/pool.d/
+!/runtime/generated/php/versions/8.4/pool.d/.gitkeep
+!/runtime/generated/php/versions/8.4/users.d/
+!/runtime/generated/php/versions/8.4/users.d/.gitkeep
+!/runtime/generated/php/versions/8.5/
+!/runtime/generated/php/versions/8.5/pool.d/
+!/runtime/generated/php/versions/8.5/pool.d/.gitkeep
+!/runtime/generated/php/versions/8.5/users.d/
+!/runtime/generated/php/versions/8.5/users.d/.gitkeep
+!/runtime/generated/cron/
+!/runtime/generated/cron/php84/
+!/runtime/generated/cron/php84/jobs/
+!/runtime/generated/cron/php84/jobs/.gitkeep
+!/runtime/generated/cron/php85/
+!/runtime/generated/cron/php85/jobs/
+!/runtime/generated/cron/php85/jobs/.gitkeep
+/runtime/generated/nginx/vhosts/*.conf
+/runtime/generated/php/versions/*/users.d/*
+!/runtime/generated/php/versions/*/users.d/.gitkeep
+/runtime/generated/php/versions/*/pool.d/*.conf
+!/runtime/generated/php/versions/*/pool.d/.gitkeep
+/runtime/generated/cron/php*/jobs/*.cron
+/runtime/generated/cron/php*/.supercronic.cron
+
+/runtime/custom/*
+!/runtime/custom/.gitkeep
+!/runtime/custom/nginx/
+!/runtime/custom/nginx/.gitkeep
+!/runtime/custom/php/
+!/runtime/custom/php/.gitkeep
+!/runtime/custom/mysql/
+!/runtime/custom/mysql/.gitkeep
+
 /runtime/home/*
 !/runtime/home/.gitkeep
 
@@ -57,13 +104,6 @@ stack.json
 !/runtime/run/php-fpm/php84/.gitkeep
 !/runtime/run/php-fpm/php85/
 !/runtime/run/php-fpm/php85/.gitkeep
-
-# Generated PHP users and pools
-/config/php/versions/*/users.d/*
-!/config/php/versions/*/users.d/.gitkeep
-/config/php/versions/*/pool.d/*.conf
-!/config/php/versions/*/pool.d/zz-fallback.conf
-!/config/php/versions/*/pool.d/.gitkeep
 
 # Dumps/cache/runtime files
 *.sql

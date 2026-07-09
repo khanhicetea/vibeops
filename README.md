@@ -59,16 +59,20 @@ docs/architecture.md          # current file-layout/architecture notes
 docker/                       # Docker build contexts and image helper binaries
 config/                       # committed stack config and templates
   nginx/                      # Nginx global config, snippets, templates, self-signed cert
-  php/                        # PHP common config, versioned users/pools, templates
+  php/                        # PHP common config and templates
   mysql/                      # shared + versioned MySQL config and SQL templates
 runtime/                      # mutable/generated/live data
+  state/stack.json            # local source of truth for apps/domains/proxies/crons
+  generated/                  # disposable rendered config; regenerate with ./manage.py render
+    nginx/vhosts/             # generated vhosts
+    php/versions/             # generated PHP-FPM users/pools
+    cron/php84/jobs/          # generated PHP 8.4 cron jobs
+    cron/php85/jobs/          # generated PHP 8.5 cron jobs
+  custom/                     # user-owned customization hooks
   home/                       # /home bind mount for app homes
   run/php-fpm/php84/          # PHP 8.4 sockets
   run/php-fpm/php85/          # PHP 8.5 sockets
-  nginx/vhosts/               # generated vhosts
   nginx-acme-state/           # NGINX ACME account/cert/private-key state
-  cron/php84/jobs/            # generated PHP 8.4 cron jobs
-  cron/php85/jobs/            # generated PHP 8.5 cron jobs
   logs/                       # nginx/php logs
   certs/                      # externally managed cert files
   backups/                    # backups/dumps
@@ -80,6 +84,8 @@ runtime/                      # mutable/generated/live data
 cd vibeops
 cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD
+
+./manage.py render
 
 docker compose build php84 php85 php84-cron php85-cron
 # mysql84 is the default MySQL service.
@@ -108,6 +114,8 @@ For a quick dashboard without entering the wizard:
 ./manage.py status --check-nginx
 ```
 
+Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`; use `./manage.py compose ...` to include all local fragments. See `docs/customization.md` for examples and edge cases.
+
 ## Create an app
 
 Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`. An app slug is stack-wide unique and becomes the Linux user, PHP-FPM pool, and MySQL user.
@@ -127,9 +135,9 @@ This creates, for example:
 ```text
 runtime/home/shop/www/
 runtime/home/shop/logs/
-config/php/versions/8.5/users.d/shop.env
-config/php/versions/8.5/pool.d/shop.conf
-runtime/nginx/vhosts/app-shop.conf
+runtime/generated/php/versions/8.5/users.d/shop.env
+runtime/generated/php/versions/8.5/pool.d/shop.conf
+runtime/generated/nginx/vhosts/app-shop.conf
 runtime/run/php-fpm/php85/shop.sock   # appears after php85 reload/start
 ```
 
@@ -197,11 +205,11 @@ Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs p
 This writes:
 
 ```text
-runtime/cron/php85/jobs/shop-schedule.cron
-runtime/cron/php85/.supercronic.cron
+runtime/generated/cron/php85/jobs/shop-schedule.cron
+runtime/generated/cron/php85/.supercronic.cron
 ```
 
-The job runs in the `php85-cron` container as `shop`, from `/home/shop/www`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `jobs/*.cron` files into `runtime/cron/php85/.supercronic.cron` and reloads Supercronic with `SIGUSR2`; if the cron container was idle before the first job, `manage.py` restarts it once to start Supercronic. Do not scale a cron service to multiple replicas, or jobs will run more than once.
+The job runs in the `php85-cron` container as `shop`, from `/home/shop/www`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `jobs/*.cron` files into `runtime/generated/cron/php85/.supercronic.cron` and reloads Supercronic with `SIGUSR2`; if the cron container was idle before the first job, `manage.py` restarts it once to start Supercronic. Do not scale a cron service to multiple replicas, or jobs will run more than once.
 
 ## Change an app's PHP version
 
@@ -284,15 +292,15 @@ Copy an existing PHP service in `compose.yml` and change both the service suffix
       - ./runtime/run/php-fpm/phpXX:/run/php-fpm
       - ./runtime/logs/php/phpXX:/var/log/php
       - ./config/php/common/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
-      - ./config/php/versions/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
-      - ./config/php/versions/8.x/users.d:/usr/local/etc/php/users.d:ro
-      - ./runtime/cron/phpXX:/usr/local/etc/php/cron.d:ro
+      - ./runtime/generated/php/versions/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
+      - ./runtime/generated/php/versions/8.x/users.d:/usr/local/etc/php/users.d:ro
+      - ./runtime/generated/cron/phpXX:/usr/local/etc/php/cron.d:ro
 ```
 
 Then:
 
 ```bash
-mkdir -p config/php/versions/8.x/{pool.d,users.d} runtime/cron/phpXX/jobs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
+mkdir -p runtime/generated/php/versions/8.x/{pool.d,users.d} runtime/generated/cron/phpXX/jobs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
 docker compose build phpXX
 docker compose up -d phpXX
 ./manage.py app create myapp example.com --php 8.x
