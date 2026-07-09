@@ -1073,6 +1073,37 @@ def prompt_text(label: str, default: str | None = None, *, required: bool = True
         warn("required")
 
 
+def prompt_validated(label: str, pattern: re.Pattern[str], value_label: str, default: str | None = None, *, required: bool = True, hint: str | None = None) -> str:
+    while True:
+        value = prompt_text(label, default, required=required)
+        if not value and not required:
+            return value
+        if pattern.match(value):
+            return value
+        warn(f"invalid {value_label}: {value}" + (f" ({hint})" if hint else ""))
+
+
+def prompt_int(label: str, default: str | None = None, *, required: bool = False) -> int | None:
+    while True:
+        value = prompt_text(label, default, required=required)
+        if not value:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            warn(f"invalid integer: {value}")
+
+
+def prompt_aliases() -> list[str]:
+    while True:
+        raw = prompt_text("Aliases, comma-separated (blank = none)", "", required=False)
+        aliases = parse_csv(raw)
+        invalid = [a for a in aliases if not DOMAIN_RE.match(a)]
+        if not invalid:
+            return aliases
+        warn("invalid alias domain(s): " + ", ".join(invalid))
+
+
 def prompt_confirm(label: str, default: bool = True) -> bool:
     suffix = "Y/n" if default else "y/N"
     while True:
@@ -1157,26 +1188,26 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def wizard_create_user() -> None:
-    username = prompt_text("App name")
+    username = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
-    uid_raw = prompt_text("UID (blank = auto)", "", required=False)
+    uid = prompt_int("UID (blank = auto)", "", required=False)
     no_mysql = not prompt_confirm("Create/update MySQL account?", True)
-    mysql_service = default_mysql_service() if no_mysql else prompt_text("MySQL service", default_mysql_service())
+    mysql_service = default_mysql_service() if no_mysql else prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97")
     mysql_password = None if no_mysql else prompt_text("MySQL password (blank = generate)", "", required=False) or None
     no_reload = not prompt_confirm("Reload PHP-FPM if running?", True)
     print_plan([f"create/update app identity {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else mysql_service), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
     if prompt_confirm("Continue?", True):
-        cmd_user_create(argparse.Namespace(username=username, uid=int(uid_raw) if uid_raw else None, php=php, no_mysql=no_mysql, mysql_password=mysql_password, mysql_service=mysql_service, no_reload=no_reload))
+        cmd_user_create(argparse.Namespace(username=username, uid=uid, php=php, no_mysql=no_mysql, mysql_password=mysql_password, mysql_service=mysql_service, no_reload=no_reload))
 
 
 
 def wizard_create_site() -> None:
-    app_name = prompt_text("App name")
-    domain = prompt_text("Main domain")
-    aliases = parse_csv(prompt_text("Aliases, comma-separated (blank = none)", "", required=False))
+    app_name = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
+    domain = prompt_validated("Main domain", DOMAIN_RE, "domain")
+    aliases = prompt_aliases()
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
-    db_name = prompt_text("Database suffix, e.g. app (blank = none)", "", required=False) or None
-    mysql_service = prompt_text("MySQL service", default_mysql_service()) if db_name else default_mysql_service()
+    db_name = prompt_validated("Database suffix, e.g. app (blank = none)", DB_NAME_RE, "database suffix", "", required=False) or None
+    mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97") if db_name else default_mysql_service()
     no_index = not prompt_confirm("Create starter index.php if missing?", True)
     no_reload = not prompt_confirm("Reload nginx/PHP-FPM if running?", True)
     plan = [f"create/update app {app_name} on PHP {php}", f"main domain {domain}"]
@@ -1194,9 +1225,9 @@ def wizard_create_site() -> None:
 
 
 def wizard_create_proxy() -> None:
-    domain = prompt_text("Domain")
+    domain = prompt_validated("Domain", DOMAIN_RE, "domain")
     upstream = prompt_text("Upstream URL", "http://127.0.0.1:3000")
-    aliases = parse_csv(prompt_text("Aliases, comma-separated (blank = none)", "", required=False))
+    aliases = prompt_aliases()
     no_reload = not prompt_confirm("Reload nginx if running?", True)
     print_plan([f"create/update proxy {domain}", f"upstream: {upstream}"] + (["aliases: " + ", ".join(aliases)] if aliases else []))
     if prompt_confirm("Continue?", True):
@@ -1206,7 +1237,7 @@ def wizard_create_proxy() -> None:
 def wizard_tls_acme() -> None:
     db = load_db()
     domains = sorted(db.get("domains", {}).keys())
-    domain = prompt_choice("Domain", domains) if domains else prompt_text("Domain")
+    domain = prompt_choice("Domain", domains) if domains else prompt_validated("Domain", DOMAIN_RE, "domain")
     off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
     no_redirect_https = False if off else not prompt_confirm("Redirect HTTP to HTTPS after ACME?", True)
     no_reload = not prompt_confirm("Reload nginx if running?", True)
@@ -1225,9 +1256,9 @@ def wizard_cron() -> None:
         app_name = str(app.get("name"))
         php = str(app.get("php_version") or default_php_version())
     else:
-        app_name = prompt_text("App name")
+        app_name = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
         php = prompt_choice("PHP version", available_php_versions(), default_php_version())
-    job_name = prompt_text("Job name")
+    job_name = prompt_validated("Job name", JOB_RE, "job name")
     schedule = prompt_text("Schedule", "* * * * *")
     command = prompt_text("Command", "php artisan schedule:run")
     workdir = prompt_text("Workdir (blank = /home/<app>/www)", "", required=False) or None
