@@ -21,6 +21,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from vibeops.template import render_template_text as render_vibeops_template_text
+
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = ROOT / "config"
 RUNTIME_DIR = ROOT / "runtime"
@@ -261,9 +263,7 @@ def write_text(path: Path, content: str, mode: int | None = None) -> None:
 
 
 def render_template_text(text: str, values: dict[str, Any]) -> str:
-    for key, value in values.items():
-        text = text.replace(f"__{key}__", str(value))
-    return text
+    return render_vibeops_template_text(text, values)
 
 
 def template_text(path: Path, values: dict[str, Any]) -> str:
@@ -724,29 +724,10 @@ def render_app_identity(app: dict[str, Any]) -> None:
     app["root"] = rel(app_document_root(app_name, public_dir))
 
 
-def nginx_php_locations(app_name: str, php_service: str, php_entrypoint: str) -> str:
-    php_entrypoint = validate_php_entrypoint(php_entrypoint)
-    if php_entrypoint == "front-controller":
-        return f"""    # Only the front controller may execute PHP; other .php paths 404.
-    location = /index.php {{
-        fastcgi_pass unix:/run/php-fpm/{php_service}/{app_name}.sock;
-        include /etc/nginx/snippets/php_fastcgi.conf;
-    }}
-
-    location ~ \\.php$ {{
-        return 404;
-    }}"""
-    return f"""    # Legacy/direct mode: allow any existing PHP script under the document root.
-    location ~ \\.php$ {{
-        fastcgi_pass unix:/run/php-fpm/{php_service}/{app_name}.sock;
-        include /etc/nginx/snippets/php_fastcgi.conf;
-    }}"""
-
-
 def render_app_vhost(app: dict[str, Any]) -> Path:
     app_name = str(app["name"])
-    domains = app.get("domains") or [app.get("main_domain")]
-    server_names = " ".join(str(d) for d in domains if d)
+    domains = [str(d) for d in (app.get("domains") or [app.get("main_domain")]) if d]
+    server_names = " ".join(domains)
     conf_path = app_vhost_path(app_name)
     public_dir = validate_public_dir(str(app.get("public_dir", "")))
     php_service = app.get("php_service") or php_service_for(str(app.get("php_version") or default_php_version()))
@@ -757,9 +738,10 @@ def render_app_vhost(app: dict[str, Any]) -> Path:
         "APP_NAME": app_name,
         "MAIN_DOMAIN": app.get("main_domain", ""),
         "SERVER_NAMES": server_names,
+        "SERVER_DOMAINS": domains,
         "PHP_SERVICE": php_service,
+        "PHP_FRONT_CONTROLLER": php_entrypoint == "front-controller",
         "DOCUMENT_ROOT": container_document_root(app_name, public_dir),
-        "PHP_LOCATIONS": nginx_php_locations(app_name, php_service, php_entrypoint),
     })
     apply_vhost_tls(conf_path, app)
     app["vhost"] = rel(conf_path)
@@ -942,12 +924,14 @@ def cmd_site_create(args: argparse.Namespace) -> None:
 
 def render_proxy_vhost(site: dict[str, Any]) -> Path:
     main_domain = str(site["domain"])
-    aliases = list(site.get("aliases") or [])
-    server_names = " ".join([main_domain] + aliases)
+    aliases = [str(alias) for alias in (site.get("aliases") or [])]
+    server_domains = [main_domain, *aliases]
+    server_names = " ".join(server_domains)
     conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
     render_template(NGINX_TEMPLATE_DIR / "proxy.conf.template", conf_path, {
         "MAIN_DOMAIN": main_domain,
         "SERVER_NAMES": server_names,
+        "SERVER_DOMAINS": server_domains,
         "UPSTREAM": site.get("upstream", ""),
     })
     apply_vhost_tls(conf_path, site)

@@ -1,2 +1,2 @@
 <?php
-echo "OK: __MAIN_DOMAIN__ on PHP __PHP_VERSION__\n";
+echo "OK: ${MAIN_DOMAIN} on PHP ${PHP_VERSION}\n";

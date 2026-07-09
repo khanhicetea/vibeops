@@ -1,4 +1,4 @@
 # BEGIN TLS_CERTIFICATE
-    ssl_certificate __CERT_PATH__;
-    ssl_certificate_key __CERT_KEY_PATH__;
+    ssl_certificate ${CERT_PATH};
+    ssl_certificate_key ${CERT_KEY_PATH};
     # END TLS_CERTIFICATE

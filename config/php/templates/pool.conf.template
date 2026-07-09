@@ -1,10 +1,10 @@
-[__USERNAME__]
-user = __USERNAME__
-group = __SOCKET_GROUP_NAME__
+[${USERNAME}]
+user = ${USERNAME}
+group = ${SOCKET_GROUP_NAME}
 
-listen = /run/php-fpm/__USERNAME__.sock
-listen.owner = __USERNAME__
-listen.group = __SOCKET_GROUP_NAME__
+listen = /run/php-fpm/${USERNAME}.sock
+listen.owner = ${USERNAME}
+listen.group = ${SOCKET_GROUP_NAME}
 listen.mode = 0660
 
 pm = dynamic
@@ -16,11 +16,11 @@ pm.max_requests = 256
 
 request_terminate_timeout = 60s
 request_slowlog_timeout = 10s
-slowlog = /home/__USERNAME__/logs/fpm-php-__PHP_VERSION__.slow.log
+slowlog = /home/${USERNAME}/logs/fpm-php-${PHP_VERSION}.slow.log
 php_flag[display_errors] = off
 php_admin_flag[log_errors] = on
-php_admin_value[error_log] = /home/__USERNAME__/logs/fpm-php-__PHP_VERSION__.error.log
-php_admin_value[open_basedir] = /home/__USERNAME__/:/tmp/:/usr/local/lib/php/:/var/log/php/
+php_admin_value[error_log] = /home/${USERNAME}/logs/fpm-php-${PHP_VERSION}.error.log
+php_admin_value[open_basedir] = /home/${USERNAME}/:/tmp/:/usr/local/lib/php/:/var/log/php/
 
 clear_env = yes
 catch_workers_output = yes

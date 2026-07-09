@@ -1,9 +1,9 @@
 [vibeops_fallback]
 user = www-data
-group = __SOCKET_GROUP_NAME__
+group = ${SOCKET_GROUP_NAME}
 listen = /run/php-fpm/fallback.sock
 listen.owner = www-data
-listen.group = __SOCKET_GROUP_NAME__
+listen.group = ${SOCKET_GROUP_NAME}
 listen.mode = 0660
 pm = ondemand
 pm.max_children = 1

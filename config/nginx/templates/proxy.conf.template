@@ -5,7 +5,7 @@ server {
     listen [::]:443 quic;
     http2 on;
 
-    server_name __SERVER_NAMES__;
+    server_name{% for DOMAIN in SERVER_DOMAINS %} ${DOMAIN}{% endfor %};
 
     # Default boot certificate. This keeps HTTPS config valid before DNS/ACME is ready.
     # When the domain is ready for real ACME, comment these two lines and uncomment
@@ -25,7 +25,7 @@ server {
     # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     location / {
-        proxy_pass __UPSTREAM__;
+        proxy_pass ${UPSTREAM};
         include /etc/nginx/snippets/proxy_ssl.conf;
     }
 }
@@ -33,7 +33,7 @@ server {
 server {
     listen 80;
     listen [::]:80;
-    server_name __SERVER_NAMES__;
+    server_name{% for DOMAIN in SERVER_DOMAINS %} ${DOMAIN}{% endfor %};
 
     set $enable_https_redirect 0;
 
@@ -46,7 +46,7 @@ server {
             return 301 https://$host$request_uri;
         }
 
-        proxy_pass __UPSTREAM__;
+        proxy_pass ${UPSTREAM};
         include /etc/nginx/snippets/proxy_ssl.conf;
     }
 }

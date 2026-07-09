@@ -5,7 +5,7 @@ server {
     listen [::]:443 quic;
     http2 on;
 
-    server_name __SERVER_NAMES__;
+    server_name{% for DOMAIN in SERVER_DOMAINS %} ${DOMAIN}{% endfor %};
 
     # Default boot certificate. This keeps HTTPS config valid before DNS/ACME is ready.
     # When the domain is ready for real ACME, comment these two lines and uncomment
@@ -19,8 +19,8 @@ server {
     # ssl_certificate_key $acme_certificate_key;
     # END TLS_CERTIFICATE
 
-    set $site_user __APP_NAME__;
-    set $base __DOCUMENT_ROOT__;
+    set $site_user ${APP_NAME};
+    set $base ${DOCUMENT_ROOT};
     root $base;
 
     include /etc/nginx/snippets/security.conf;
@@ -36,16 +36,32 @@ server {
 
     include /etc/nginx/snippets/general.conf;
 
-__PHP_LOCATIONS__
+{% if PHP_FRONT_CONTROLLER %}
+    # Only the front controller may execute PHP; other .php paths 404.
+    location = /index.php {
+        fastcgi_pass unix:/run/php-fpm/${PHP_SERVICE}/${APP_NAME}.sock;
+        include /etc/nginx/snippets/php_fastcgi.conf;
+    }
+
+    location ~ \.php$ {
+        return 404;
+    }
+{% else %}
+    # Legacy/direct mode: allow any existing PHP script under the document root.
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php-fpm/${PHP_SERVICE}/${APP_NAME}.sock;
+        include /etc/nginx/snippets/php_fastcgi.conf;
+    }
+{% endif %}
 }
 
 server {
     listen 80;
     listen [::]:80;
-    server_name __SERVER_NAMES__;
+    server_name{% for DOMAIN in SERVER_DOMAINS %} ${DOMAIN}{% endfor %};
 
-    set $site_user __APP_NAME__;
-    set $base __DOCUMENT_ROOT__;
+    set $site_user ${APP_NAME};
+    set $base ${DOCUMENT_ROOT};
     set $enable_https_redirect 0;
     root $base;
 
@@ -65,5 +81,21 @@ server {
 
     include /etc/nginx/snippets/general.conf;
 
-__PHP_LOCATIONS__
+{% if PHP_FRONT_CONTROLLER %}
+    # Only the front controller may execute PHP; other .php paths 404.
+    location = /index.php {
+        fastcgi_pass unix:/run/php-fpm/${PHP_SERVICE}/${APP_NAME}.sock;
+        include /etc/nginx/snippets/php_fastcgi.conf;
+    }
+
+    location ~ \.php$ {
+        return 404;
+    }
+{% else %}
+    # Legacy/direct mode: allow any existing PHP script under the document root.
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php-fpm/${PHP_SERVICE}/${APP_NAME}.sock;
+        include /etc/nginx/snippets/php_fastcgi.conf;
+    }
+{% endif %}
 }
