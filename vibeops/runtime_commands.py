@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from vibeops.helpers import *  # noqa: F403
-from vibeops.app_commands import cmd_app_list
+from vibeops.app_commands import cmd_app_list, ensure_app
 from vibeops.cron_commands import render_cron_job
 from vibeops.proxy_commands import render_proxy_vhost
 

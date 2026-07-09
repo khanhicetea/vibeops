@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from vibeops.helpers import *  # noqa: F403
+from vibeops.app_commands import ensure_app
 
 def safe_app_part(app_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", app_name)
