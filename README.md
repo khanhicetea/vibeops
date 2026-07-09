@@ -122,10 +122,13 @@ Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`. An app slug is stac
 
 ```bash
 ./manage.py app create shop shop.example.com app --php 8.5 --alias www.shop.example.com
-# Laravel-style apps usually serve from /home/<app>/www/public:
+# Laravel/Symfony/front-controller apps usually serve from /home/<app>/www/public.
+# Non-empty --public-dir defaults to PHP front-controller mode: only /index.php executes.
 ./manage.py app create laravel laravel.example.com app --public-dir public
-# WordPress/default apps serve directly from /home/<app>/www (empty public_dir):
+# WordPress/default/legacy apps serve directly from /home/<app>/www and allow direct PHP scripts:
 ./manage.py app create wp wp.example.com app
+# Force legacy PHP routing if a public-dir app needs multiple direct PHP endpoints:
+./manage.py app create oldapp old.example.com app --public-dir public --php-entrypoint legacy
 # choose a MySQL major for the optional DB creation:
 ./manage.py app create legacy legacy.example.com app --mysql-service mysql57
 ```
@@ -141,7 +144,10 @@ runtime/generated/nginx/vhosts/app-shop.conf
 runtime/run/php-fpm/php85/shop.sock   # appears after php85 reload/start
 ```
 
-The generated Nginx vhost uses the selected PHP socket and the app's `public_dir` metadata for its document root. `public_dir` is a subdirectory inside `/home/<app>/www`; it defaults to empty.
+The generated Nginx vhost uses the selected PHP socket plus app metadata:
+
+- `public_dir`: document root subdirectory inside `/home/<app>/www`; empty means app root.
+- `php_entrypoint`: `front-controller` only executes `/index.php` and returns 404 for other `.php` paths; `legacy` allows existing `.php` scripts. `auto` chooses `front-controller` when `public_dir` is non-empty, otherwise `legacy`.
 
 ```nginx
 # default / WordPress-style
@@ -151,6 +157,10 @@ root /home/shop/www;
 root /home/laravel/www/public;
 
 fastcgi_pass unix:/run/php-fpm/php85/shop.sock;
+
+# front-controller mode hardens single-entry apps:
+location = /index.php { ... fastcgi_pass ... }
+location ~ \.php$ { return 404; }
 ```
 
 The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). The app's MySQL user is `shop` on that service and has prefix grants for `shop_%`, so one app can own multiple databases.
