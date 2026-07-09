@@ -2,16 +2,16 @@
 
 VibeOps is a Docker-based LEMP operations stack for vibe-coding workflows, with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions, MySQL, Redis, cron, and ACME-ready TLS.
 
-It is optimized for production performance and DX while keeping the familiar structure:
+It is optimized for production performance and DX around isolated apps. The primary deployable unit is an app slug:
 
 ```text
-/home/<user>/<domain>
+/home/<app_name>/www
 ```
 
 In this stack that maps to:
 
 ```text
-vibeops/runtime/home/<user>/<domain>
+vibeops/runtime/home/<app_name>/www
 ```
 
 ## Architecture
@@ -24,14 +24,14 @@ vibeops/runtime/home/<user>/<domain>
   - `php84` from `php:8.4-fpm-trixie`
   - `php85` from `php:8.5-fpm-trixie`
   - OPcache is installed only when `php -m` shows it is missing, so PHP 8.5 can use its built-in Zend OPcache without reinstalling it.
-- **PHP-FPM exposes per-user Unix sockets** in versioned shared dirs:
-  - host path: `vibeops/runtime/run/php-fpm/php84/<user>.sock`
-  - nginx path: `/run/php-fpm/php84/<user>.sock`
-  - PHP container path: `/run/php-fpm/<user>.sock`
-- **Each PHP-FPM pool is a Linux user** inside each PHP container:
-  - user home: `/home/<user>`
-  - sites: `/home/<user>/<domain>`
-  - logs: `/home/<user>/logs`
+- **PHP-FPM exposes per-app Unix sockets** in versioned shared dirs:
+  - host path: `vibeops/runtime/run/php-fpm/php84/<app_name>.sock`
+  - nginx path: `/run/php-fpm/php84/<app_name>.sock`
+  - PHP container path: `/run/php-fpm/<app_name>.sock`
+- **Each app is a Linux user / PHP-FPM pool / MySQL user** inside PHP containers:
+  - app home: `/home/<app_name>`
+  - document root: `/home/<app_name>/www`
+  - logs: `/home/<app_name>/logs`
 - **PHP runtime is split by role** while sharing the same PHP image/version:
   - `php84` / `php85` run PHP-FPM only and expose sockets
   - `php84-cron` / `php85-cron` run supercronic only
@@ -39,9 +39,9 @@ vibeops/runtime/home/<user>/<domain>
   - deploy commands, Composer, cron, and PHP-FPM still use the same PHP binary/extensions
 - **PHP connects to MySQL/Redis** over the Compose backend network:
   - MySQL hosts are versioned services: `mysql57:3306`, `mysql84:3306`, `mysql97:3306`
-  - `DEFAULT_MYSQL_SERVICE` defaults generated users/sites to `mysql84`
+  - `DEFAULT_MYSQL_SERVICE` defaults generated apps to `mysql84`
   - Redis host: `redis:6379`
-- **Nginx reads site files from `/home` read-only** and talks to PHP by Unix sockets.
+- **Nginx reads app files from `/home` read-only** and talks to PHP by Unix sockets.
 - **The official NGINX ACME module is enabled** with HTTP-01.
   - Generated vhosts always include both HTTP and HTTPS.
   - HTTPS starts with a default self-signed cert so Nginx can boot before DNS/ACME is ready.
@@ -53,7 +53,7 @@ vibeops/runtime/home/<user>/<domain>
 ```text
 compose.yml
 .env.example
-manage.py                     # create users/sites/crons and run app commands
+manage.py                     # create apps/domains/crons and run app commands
 docs/architecture.md          # current file-layout/architecture notes
 
 docker/                       # Docker build contexts and image helper binaries
@@ -62,7 +62,7 @@ config/                       # committed stack config and templates
   php/                        # PHP common config, versioned users/pools, templates
   mysql/                      # shared + versioned MySQL config and SQL templates
 runtime/                      # mutable/generated/live data
-  home/                       # /home bind mount for user sites
+  home/                       # /home bind mount for app homes
   run/php-fpm/php84/          # PHP 8.4 sockets
   run/php-fpm/php85/          # PHP 8.5 sockets
   nginx/vhosts/               # generated vhosts
@@ -99,7 +99,7 @@ For guided operations, run the no-dependency Python wizard:
 ./manage.py tui
 ```
 
-The wizard can create users, PHP sites, proxy vhosts, TLS/ACME config, cron jobs, open app shells, and show stack status. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
+The wizard can create apps, app domains, proxy vhosts, TLS/ACME config, cron jobs, open app shells, and show stack status. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
 
 For a quick dashboard without entering the wizard:
 
@@ -108,71 +108,59 @@ For a quick dashboard without entering the wizard:
 ./manage.py status --check-nginx
 ```
 
-## Create a PHP-FPM user/pool
+## Create an app
 
-Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`.
-
-```bash
-./manage.py user create myuser
-```
-
-Create the same user for a specific PHP version:
+Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`. An app slug is stack-wide unique and becomes the Linux user, PHP-FPM pool, and MySQL user.
 
 ```bash
-./manage.py user create myuser --php 8.5
-./manage.py user create legacyuser --php 8.4 --mysql-service mysql57
+./manage.py app create shop shop.example.com app --php 8.5 --alias www.shop.example.com
+# choose a MySQL major for the optional DB creation:
+./manage.py app create legacy legacy.example.com app --mysql-service mysql57
 ```
 
 This creates, for example:
 
 ```text
-runtime/home/myuser/
-config/php/versions/8.5/users.d/myuser.env
-config/php/versions/8.5/pool.d/myuser.conf
-runtime/run/php-fpm/php85/myuser.sock   # appears after php85 reload/start
+runtime/home/shop/www/
+runtime/home/shop/logs/
+config/php/versions/8.5/users.d/shop.env
+config/php/versions/8.5/pool.d/shop.conf
+runtime/nginx/vhosts/app-shop.conf
+runtime/run/php-fpm/php85/shop.sock   # appears after php85 reload/start
 ```
 
-The same username reuses the same numeric UID across PHP versions.
-
-## Create a site and choose PHP version
-
-Generated sites always include both HTTP and HTTPS in one vhost file. HTTPS uses the default self-signed certificate until you switch the marked TLS block to real ACME.
-
-```bash
-./manage.py site create myuser example.com app --php 8.5 --alias www.example.com
-# choose a MySQL major for the optional DB creation:
-./manage.py site create legacyuser legacy.example.com app --mysql-service mysql57
-```
-
-This creates:
-
-```text
-runtime/home/myuser/example.com/
-runtime/nginx/vhosts/example.com.conf
-```
-
-The generated Nginx vhost uses the selected PHP socket:
+The generated Nginx vhost uses the selected PHP socket and stable `www` docroot:
 
 ```nginx
-fastcgi_pass unix:/run/php-fpm/php85/myuser.sock;
+root /home/shop/www;
+fastcgi_pass unix:/run/php-fpm/php85/shop.sock;
 ```
 
-The optional DB argument, `app`, creates:
-
-```text
-myuser_app
-```
+The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). The app's MySQL user is `shop` on that service and has prefix grants for `shop_%`, so one app can own multiple databases.
 
 PHP app connection values:
 
 ```text
 DB_HOST=mysql84
 DB_PORT=3306
-DB_DATABASE=myuser_app
-DB_USERNAME=myuser
+DB_DATABASE=shop_app
+DB_USERNAME=shop
 REDIS_HOST=redis
 REDIS_PORT=6379
 ```
+
+## App domains
+
+An app has exactly one main domain plus optional alias domains. All domains on an app share the same code tree, PHP-FPM pool, and databases. A domain may belong to only one app or proxy vhost.
+
+```bash
+./manage.py app domain add shop alt.shop.example.com
+./manage.py app domain set-main shop www.shop.example.com
+./manage.py app domain remove shop alt.shop.example.com
+./manage.py app show shop
+```
+
+Use a separate app slug for a separate codebase; the old multi-site-under-one-user model is deprecated.
 
 ## Deploy app code and run Composer
 
@@ -181,39 +169,40 @@ Run app commands in an ephemeral matching PHP CLI container as the same Linux us
 ```bash
 ./manage.py shell
 # or explicitly:
-./manage.py shell myuser example.com --php 8.5
-./manage.py exec myuser example.com --php 8.5 -- git clone git@github.com:org/project.git .
-./manage.py exec myuser example.com --php 8.5 -- composer install
-./manage.py exec myuser example.com --php 8.5 -- php artisan migrate
+./manage.py shell shop --php 8.5
+./manage.py exec shop --php 8.5 -- git clone git@github.com:org/project.git .
+./manage.py exec shop --php 8.5 -- composer install
+./manage.py exec shop --php 8.5 -- php artisan migrate
 ```
 
-Use `SITE_INDEX=0` for existing projects so the directory is empty before `git clone ... .`. This keeps Git, Composer, PHP-FPM, and generated files on the same UID/GID. SSH deploy keys can live in `runtime/home/myuser/.ssh/` with normal SSH permissions.
+SSH deploy keys can live in `runtime/home/shop/.ssh/` with normal SSH permissions.
 
 ## Cron jobs
 
-Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs per PHP version:
+Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs per app and PHP version:
 
 ```bash
-./manage.py cron create myuser example.com schedule '* * * * *' 'php artisan schedule:run' --php 8.5
+./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run' --php 8.5
 ```
 
 This writes:
 
 ```text
-runtime/cron/php85/jobs/myuser-example.com-schedule.cron
+runtime/cron/php85/jobs/shop-schedule.cron
 runtime/cron/php85/.supercronic.cron
 ```
 
-The job runs in the `php85-cron` container as `myuser`, from `/home/myuser/example.com`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `jobs/*.cron` files into `runtime/cron/php85/.supercronic.cron` and reloads Supercronic with `SIGUSR2`; if the cron container was idle before the first job, `manage.py` restarts it once to start Supercronic. Do not scale a cron service to multiple replicas, or jobs will run more than once.
+The job runs in the `php85-cron` container as `shop`, from `/home/shop/www`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. `manage.py` merges `jobs/*.cron` files into `runtime/cron/php85/.supercronic.cron` and reloads Supercronic with `SIGUSR2`; if the cron container was idle before the first job, `manage.py` restarts it once to start Supercronic. Do not scale a cron service to multiple replicas, or jobs will run more than once.
 
-## Change a site's PHP version
+## Change an app's PHP version
 
-Re-run `manage.py site create` with another `--php` version. It regenerates the Nginx vhost and reloads Nginx if running:
+Re-run `manage.py app create` with another `--php` version. It regenerates app identity and the Nginx vhost:
 
 ```bash
-./manage.py user create myuser --php 8.4
-./manage.py site create myuser example.com --php 8.4
+./manage.py app create shop shop.example.com --php 8.4
 ```
+
+Deprecated compatibility commands remain for now: `user create` creates only the app identity, and `site create` prints guidance or maps to `app create` only for unambiguous new apps.
 
 ## TLS certificates
 
@@ -297,15 +286,14 @@ Then:
 mkdir -p config/php/versions/8.x/{pool.d,users.d} runtime/cron/phpXX/jobs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
 docker compose build phpXX
 docker compose up -d phpXX
-./manage.py user create myuser --php 8.x
-./manage.py site create myuser example.com --php 8.x
+./manage.py app create myapp example.com --php 8.x
 ```
 
 ## Important permission detail
 
-The official Debian-based Nginx image runs workers as GID `101`. PHP-FPM sockets are created with `SOCKET_GID=101` via `.env`, so Nginx can access them across containers. Site files are group-readable so Nginx can serve static assets directly.
+The official Debian-based Nginx image runs workers as GID `101`. PHP-FPM sockets are created with `SOCKET_GID=101` via `.env`, so Nginx can access them across containers. App files are group-readable so Nginx can serve static assets directly.
 
-For very large `/home/<user>` directories you can disable automatic recursive ownership fixes:
+For very large `/home/<app_name>` directories you can disable automatic recursive ownership fixes:
 
 ```env
 FIX_HOME_OWNERSHIP=0

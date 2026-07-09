@@ -36,9 +36,11 @@ CERTS_DIR = RUNTIME_DIR / "certs"
 PHP_SOCKET_DIR = RUNTIME_DIR / "run" / "php-fpm"
 PHP_LOG_DIR = RUNTIME_DIR / "logs" / "php"
 CRON_RUNTIME_DIR = RUNTIME_DIR / "cron"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+DOCROOT_NAME = "www"
 
-USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+APP_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+USERNAME_RE = APP_NAME_RE
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 DOMAIN_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PHP_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
@@ -140,24 +142,33 @@ def cron_jobs_dir_for(version: str) -> Path:
     return cron_dir_for(version) / "jobs"
 
 
+def empty_db() -> dict[str, Any]:
+    return {
+        "schema": SCHEMA_VERSION,
+        "apps": {},
+        "domains": {},
+        "sites": {},
+        "users": {},
+        "crons": {},
+        "updated_at": now(),
+    }
+
+
 def load_db() -> dict[str, Any]:
     if not DB_PATH.exists():
-        return {
-            "schema": SCHEMA_VERSION,
-            "users": {},
-            "sites": {},
-            "crons": {},
-            "updated_at": now(),
-        }
+        return empty_db()
     try:
         data = json.loads(DB_PATH.read_text())
     except json.JSONDecodeError as exc:
         die(f"Cannot parse {rel(DB_PATH)}: {exc}")
     if not isinstance(data, dict):
         die(f"{rel(DB_PATH)} must contain a JSON object")
-    data.setdefault("schema", SCHEMA_VERSION)
-    data.setdefault("users", {})
+    if int(data.get("schema", 0) or 0) != SCHEMA_VERSION:
+        die(f"{rel(DB_PATH)} schema is {data.get('schema')}; this new project CLI expects schema {SCHEMA_VERSION}. Reinitialize with: ./manage.py state init --force")
+    data.setdefault("apps", {})
+    data.setdefault("domains", {})
     data.setdefault("sites", {})
+    data.setdefault("users", {})
     data.setdefault("crons", {})
     return data
 
@@ -348,22 +359,22 @@ def read_uid_from_env(path: Path) -> int | None:
     return None
 
 
-def allocate_uid(username: str, explicit_uid: int | None, db: dict[str, Any]) -> int:
+def allocate_uid(app_name: str, explicit_uid: int | None, db: dict[str, Any]) -> int:
     if explicit_uid is not None:
         return explicit_uid
 
-    existing = db.get("users", {}).get(username, {}).get("uid")
+    existing = db.get("apps", {}).get(app_name, {}).get("uid")
     if isinstance(existing, int):
         return existing
 
-    for path in sorted(PHP_VERSIONS_DIR.glob(f"*/users.d/{username}.env")):
+    for path in sorted(PHP_VERSIONS_DIR.glob(f"*/users.d/{app_name}.env")):
         uid = read_uid_from_env(path)
         if uid is not None:
             return uid
 
     max_uid = 0
-    for user in db.get("users", {}).values():
-        uid = user.get("uid") if isinstance(user, dict) else None
+    for app in db.get("apps", {}).values():
+        uid = app.get("uid") if isinstance(app, dict) else None
         if isinstance(uid, int):
             max_uid = max(max_uid, uid)
     for path in PHP_VERSIONS_DIR.glob("*/users.d/*.env"):
@@ -410,75 +421,17 @@ def create_mysql_user(username: str, password: str | None, mysql_service: str) -
     return True, rel(cred_path)
 
 
-def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = None, save: bool = True) -> None:
-    db = db if db is not None else load_db()
-    username = validate(args.username, USERNAME_RE, "username")
-    php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
-    user_uid = allocate_uid(username, args.uid, db)
-    php_service = php_service_for(php_version)
-    socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
 
-    mkdir(HOME_DIR / username / "logs", 0o770)
-    mkdir(php_version_config_dir(php_version) / "users.d")
-    mkdir(php_version_config_dir(php_version) / "pool.d")
-    mkdir(cron_dir_for(php_version))
-    mkdir(PHP_SOCKET_DIR / php_service)
-    mkdir(PHP_LOG_DIR / php_service)
-
-    fallback_path = php_version_config_dir(php_version) / "pool.d" / "zz-fallback.conf"
-    if not fallback_path.exists():
-        write_template(fallback_path, PHP_TEMPLATE_DIR / "fallback.conf.template", {
-            "SOCKET_GROUP_NAME": socket_group_name,
-        })
-
-    write_template(php_version_config_dir(php_version) / "users.d" / f"{username}.env", PHP_TEMPLATE_DIR / "user.env.template", {
-        "USERNAME": username,
-        "UID": user_uid,
-    })
-    write_template(php_version_config_dir(php_version) / "pool.d" / f"{username}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
-        "USERNAME": username,
-        "SOCKET_GROUP_NAME": socket_group_name,
-        "PHP_VERSION": php_version,
-    })
-    try:
-        (HOME_DIR / username).chmod(0o750)
-    except PermissionError:
-        warn(f"could not chmod home/{username}")
-
-    info(f"Created PHP {php_version} user config: {username} uid={user_uid}")
-    info(f"Home: vibeops/{rel(HOME_DIR / username)}")
-    info(f"Pool: vibeops/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{username}.conf')}")
-    info(f"Socket: vibeops/{rel(PHP_SOCKET_DIR / php_service / f'{username}.sock')}")
-
-    php_reload(php_service, username, no_reload=args.no_reload)
-
-    mysql_created = False
-    credential_path = None
-    if not args.no_mysql:
-        mysql_created, credential_path = create_mysql_user(username, args.mysql_password, args.mysql_service)
-
-    user = db["users"].setdefault(username, {})
-    user["uid"] = user_uid
-    user.setdefault("home", rel(HOME_DIR / username))
-    versions = set(user.get("php_versions", []))
-    versions.add(php_version)
-    user["php_versions"] = sorted(versions)
-    if mysql_created:
-        user["mysql_user"] = True
-        user["mysql_service"] = args.mysql_service
-    if credential_path:
-        user["mysql_credentials"] = credential_path
-    upsert_timestamp(user)
-    if save:
-        save_db(db)
+def app_home(app_name: str) -> Path:
+    return HOME_DIR / app_name
 
 
-def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> None:
-    if (php_version_config_dir(php_version) / "users.d" / f"{username}.env").exists():
-        return
-    info(f"PHP {php_version} user {username} does not exist; creating it first.")
-    ns = argparse.Namespace(username=username, uid=None, php=php_version, no_mysql=False, mysql_password=None, mysql_service=mysql_service or default_mysql_service(), no_reload=no_reload)
-    cmd_user_create(ns, db=db, save=False)
+def app_www(app_name: str) -> Path:
+    return app_home(app_name) / DOCROOT_NAME
+
+
+def app_vhost_path(app_name: str) -> Path:
+    return NGINX_VHOST_DIR / f"app-{app_name}.conf"
 
 
 def render_template(template: Path, destination: Path, values: dict[str, Any]) -> None:
@@ -500,83 +453,297 @@ def normalize_aliases(alias: Iterable[str] | None, aliases: str | None) -> list[
     return sorted(dict.fromkeys(out))
 
 
-def cmd_site_create(args: argparse.Namespace) -> None:
+def domains_for(main_domain: str, aliases: Iterable[str]) -> list[str]:
+    ordered = [main_domain, *aliases]
+    return list(dict.fromkeys(ordered))
+
+
+def assert_domain_free(domain: str, db: dict[str, Any], *, allow_app: str | None = None, allow_domain: str | None = None) -> None:
+    owner = db.get("domains", {}).get(domain)
+    if not owner:
+        return
+    if owner.get("kind") == "php" and allow_app and owner.get("app") == allow_app:
+        return
+    if owner.get("kind") == "proxy" and allow_domain and owner.get("domain") == allow_domain:
+        return
+    die(f"Domain already exists in stack.json: {domain} ({owner.get('kind')})")
+
+
+def apply_app_mysql_metadata(app: dict[str, Any], app_name: str, mysql_service: str, credential_path: str | None = None) -> None:
+    app["mysql_service"] = mysql_service
+    app["mysql_host"] = mysql_service
+    app["mysql_port"] = 3306
+    app["mysql_user_name"] = app_name
+    if credential_path:
+        app["mysql_credentials"] = credential_path
+
+
+def create_database(app_name: str, suffix: str, mysql_service: str) -> str | None:
+    mysql_service = validate(mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    validate(suffix, DB_NAME_RE, "database suffix")
+    db_full_name = f"{app_name}_{suffix}"
+    env = stack_env()
+    root_password = mysql_root_password(env, mysql_service)
+    if (ROOT / ".env").exists() and service_running(mysql_service) and root_password:
+        sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
+            "DB_FULL_NAME": db_full_name,
+            "USERNAME": app_name,
+        })
+        run(["docker", "compose", "exec", "-T", mysql_service, "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
+        info(f"MySQL database on {mysql_service}: {db_full_name}")
+    else:
+        info(f"Skipped database creation; {mysql_service} is not running, .env is missing, or root password is unset.")
+    return db_full_name
+
+
+def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, uid: int | None = None, no_mysql: bool = False, mysql_password: str | None = None, mysql_service: str | None = None, no_reload: bool = False) -> dict[str, Any]:
+    app_name = validate(app_name, APP_NAME_RE, "app_name")
+    php_version = validate(php_version, PHP_VERSION_RE, "PHP version")
+    mysql_service = validate(mysql_service or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
+    app_uid = allocate_uid(app_name, uid, db)
+    php_service = php_service_for(php_version)
+    socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
+
+    mkdir(app_home(app_name) / "logs", 0o770)
+    mkdir(app_www(app_name))
+    mkdir(app_home(app_name) / ".credentials", 0o700)
+    mkdir(app_home(app_name) / ".composer")
+    mkdir(app_home(app_name) / ".ssh", 0o700)
+    mkdir(php_version_config_dir(php_version) / "users.d")
+    mkdir(php_version_config_dir(php_version) / "pool.d")
+    mkdir(cron_dir_for(php_version))
+    mkdir(PHP_SOCKET_DIR / php_service)
+    mkdir(PHP_LOG_DIR / php_service)
+
+    fallback_path = php_version_config_dir(php_version) / "pool.d" / "zz-fallback.conf"
+    if not fallback_path.exists():
+        write_template(fallback_path, PHP_TEMPLATE_DIR / "fallback.conf.template", {"SOCKET_GROUP_NAME": socket_group_name})
+
+    write_template(php_version_config_dir(php_version) / "users.d" / f"{app_name}.env", PHP_TEMPLATE_DIR / "user.env.template", {
+        "USERNAME": app_name,
+        "UID": app_uid,
+    })
+    write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
+        "USERNAME": app_name,
+        "SOCKET_GROUP_NAME": socket_group_name,
+        "PHP_VERSION": php_version,
+    })
+    try:
+        app_home(app_name).chmod(0o750)
+    except PermissionError:
+        warn(f"could not chmod home/{app_name}")
+
+    info(f"Created PHP {php_version} app identity: {app_name} uid={app_uid}")
+    info(f"Home: vibeops/{rel(app_home(app_name))}")
+    info(f"Pool: vibeops/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{app_name}.conf')}")
+    info(f"Socket: vibeops/{rel(PHP_SOCKET_DIR / php_service / f'{app_name}.sock')}")
+
+    php_reload(php_service, app_name, no_reload=no_reload)
+
+    mysql_created = False
+    credential_path = None
+    if not no_mysql:
+        mysql_created, credential_path = create_mysql_user(app_name, mysql_password, mysql_service)
+
+    app = db["apps"].setdefault(app_name, {"name": app_name})
+    app["uid"] = app_uid
+    app["home"] = rel(app_home(app_name))
+    app["root"] = rel(app_www(app_name))
+    app["php_version"] = php_version
+    app["php_service"] = php_service
+    versions = set(app.get("php_versions", []))
+    versions.add(php_version)
+    app["php_versions"] = sorted(versions)
+    app.setdefault("databases", [])
+    app.setdefault("tls", {"mode": "self-signed"})
+    apply_app_mysql_metadata(app, app_name, mysql_service, credential_path)
+    if mysql_created:
+        app["mysql_user"] = True
+    upsert_timestamp(app)
+    return app
+
+
+def render_app_vhost(app: dict[str, Any]) -> Path:
+    app_name = str(app["name"])
+    domains = app.get("domains") or [app.get("main_domain")]
+    server_names = " ".join(str(d) for d in domains if d)
+    conf_path = app_vhost_path(app_name)
+    render_template(NGINX_TEMPLATE_DIR / "site.conf.template", conf_path, {
+        "USERNAME": app_name,
+        "APP_NAME": app_name,
+        "MAIN_DOMAIN": app.get("main_domain", ""),
+        "SERVER_NAMES": server_names,
+        "PHP_SERVICE": app.get("php_service") or php_service_for(str(app.get("php_version") or default_php_version())),
+    })
+    app["vhost"] = rel(conf_path)
+    return conf_path
+
+
+def cmd_app_create(args: argparse.Namespace) -> None:
     db = load_db()
-    username = validate(args.username, USERNAME_RE, "username")
-    main_domain = validate(args.domain, DOMAIN_RE, "domain")
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    main_domain = validate(args.main_domain, DOMAIN_RE, "main domain")
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
     mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
-    db_name = args.db_name
-    if db_name:
-        validate(db_name, DB_NAME_RE, "db_name")
+    if args.no_mysql and args.db_suffix:
+        die("Cannot create a database suffix with --no-mysql")
     aliases = normalize_aliases(args.alias, args.aliases)
-    php_service = php_service_for(php_version)
+    all_domains = domains_for(main_domain, aliases)
+    for domain in all_domains:
+        assert_domain_free(domain, db, allow_app=app_name)
 
-    ensure_user(username, php_version, db, no_reload=args.no_reload, mysql_service=mysql_service)
+    app = ensure_app_identity(app_name, php_version, db, uid=args.uid, no_mysql=args.no_mysql, mysql_password=getattr(args, "mysql_password", None), mysql_service=mysql_service, no_reload=args.no_reload)
+    if app.get("main_domain") and app.get("main_domain") != main_domain:
+        die(f"App {app_name} already has main domain {app.get('main_domain')}; use app domain set-main")
+    old_domains = set(app.get("domains") or [])
+    app["main_domain"] = main_domain
+    app["domains"] = all_domains
+    for old_domain in old_domains - set(all_domains):
+        owner = db.get("domains", {}).get(old_domain)
+        if owner and owner.get("kind") == "php" and owner.get("app") == app_name:
+            db["domains"].pop(old_domain, None)
+    apply_app_mysql_metadata(app, app_name, mysql_service, app.get("mysql_credentials"))
 
-    site_root = HOME_DIR / username / main_domain
-    mkdir(site_root)
-    mkdir(HOME_DIR / username / "logs")
-
-    index_path = site_root / "index.php"
+    index_path = app_www(app_name) / "index.php"
     if not args.no_index and not index_path.exists():
-        write_template(index_path, PHP_TEMPLATE_DIR / "index.php.template", {
-            "MAIN_DOMAIN": main_domain,
-            "PHP_VERSION": php_version,
-        })
+        write_template(index_path, PHP_TEMPLATE_DIR / "index.php.template", {"MAIN_DOMAIN": main_domain, "PHP_VERSION": php_version})
 
-    server_names = " ".join([main_domain] + aliases)
-    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
-    render_template(NGINX_TEMPLATE_DIR / "site.conf.template", conf_path, {
-        "USERNAME": username,
-        "MAIN_DOMAIN": main_domain,
-        "SERVER_NAMES": server_names,
-        "PHP_SERVICE": php_service,
-    })
+    if args.db_suffix:
+        db_full_name = create_database(app_name, args.db_suffix, mysql_service)
+        if db_full_name and db_full_name not in app.setdefault("databases", []):
+            app["databases"].append(db_full_name)
+        if db_full_name:
+            app.setdefault("database_services", {})[db_full_name] = mysql_service
 
-    info(f"Created HTTP+HTTPS PHP vhost with default self-signed cert: vibeops/{rel(conf_path)}")
-    info(f"Document root: vibeops/{rel(site_root)}")
-    info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service}/{username}.sock")
-
-    if service_running(php_service):
-        php_disable_default_pool(php_service)
-        run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", username])
-
-    db_full_name = None
-    if db_name:
-        db_full_name = f"{username}_{db_name}"
-        env = stack_env()
-        root_password = mysql_root_password(env, mysql_service)
-        if (ROOT / ".env").exists() and service_running(mysql_service) and root_password:
-            create_mysql_user(username, None, mysql_service)
-            sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
-                "DB_FULL_NAME": db_full_name,
-                "USERNAME": username,
-            })
-            run(["docker", "compose", "exec", "-T", mysql_service, "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
-            info(f"MySQL database on {mysql_service}: {db_full_name}")
-        else:
-            info(f"Skipped database creation; {mysql_service} is not running, .env is missing, or root password is unset.")
-
-    site = db["sites"].setdefault(main_domain, {})
-    site.update({
-        "type": "php",
-        "domain": main_domain,
-        "aliases": aliases,
-        "user": username,
-        "php_version": php_version,
-        "php_service": php_service,
-        "mysql_service": mysql_service,
-        "root": rel(site_root),
-        "vhost": rel(conf_path),
-        "tls": site.get("tls", {"mode": "self-signed"}),
-    })
-    if db_name:
-        site["db_name"] = db_name
-        site["db_full_name"] = db_full_name
-    upsert_timestamp(site)
+    conf_path = render_app_vhost(app)
+    for domain in all_domains:
+        db["domains"][domain] = {"kind": "php", "app": app_name}
+    upsert_timestamp(app)
     save_db(db)
+
+    info(f"Created HTTP+HTTPS app vhost: vibeops/{rel(conf_path)}")
+    info(f"Document root: vibeops/{rel(app_www(app_name))}")
+    info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service_for(php_version)}/{app_name}.sock")
     nginx_reload(args.no_reload)
+
+
+def ensure_app(app_name: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> dict[str, Any]:
+    if app_name in db.get("apps", {}) and (php_version_config_dir(php_version) / "users.d" / f"{app_name}.env").exists():
+        return db["apps"][app_name]
+    info(f"PHP {php_version} app identity {app_name} does not exist; creating it first.")
+    return ensure_app_identity(app_name, php_version, db, mysql_service=mysql_service, no_reload=no_reload)
+
+
+def cmd_app_domain_add(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    domain = validate(args.domain, DOMAIN_RE, "domain")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict) or not app.get("main_domain"):
+        die(f"Unknown app or app has no vhost: {app_name}")
+    assert_domain_free(domain, db, allow_app=app_name)
+    domains = list(app.get("domains") or [app["main_domain"]])
+    if domain not in domains:
+        domains.append(domain)
+    app["domains"] = domains
+    db["domains"][domain] = {"kind": "php", "app": app_name}
+    render_app_vhost(app)
+    upsert_timestamp(app)
+    save_db(db)
+    info(f"Added domain {domain} to app {app_name}")
+    nginx_reload(args.no_reload)
+
+
+def cmd_app_domain_remove(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    domain = validate(args.domain, DOMAIN_RE, "domain")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict):
+        die(f"Unknown app: {app_name}")
+    if domain == app.get("main_domain"):
+        die("Cannot remove the main domain; use app domain set-main first")
+    domains = [d for d in app.get("domains", []) if d != domain]
+    if len(domains) == len(app.get("domains", [])):
+        die(f"Domain {domain} is not on app {app_name}")
+    app["domains"] = domains
+    db.get("domains", {}).pop(domain, None)
+    render_app_vhost(app)
+    upsert_timestamp(app)
+    save_db(db)
+    info(f"Removed domain {domain} from app {app_name}")
+    nginx_reload(args.no_reload)
+
+
+def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    domain = validate(args.domain, DOMAIN_RE, "domain")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict):
+        die(f"Unknown app: {app_name}")
+    domains = list(app.get("domains") or [])
+    if domain not in domains:
+        die(f"Domain {domain} is not on app {app_name}; add it first")
+    app["main_domain"] = domain
+    app["domains"] = [domain] + [d for d in domains if d != domain]
+    render_app_vhost(app)
+    upsert_timestamp(app)
+    save_db(db)
+    info(f"Set main domain for {app_name}: {domain}")
+    nginx_reload(args.no_reload)
+
+
+def cmd_app_list(args: argparse.Namespace) -> None:
+    db = load_db()
+    apps = db.get("apps", {})
+    if not apps:
+        info("No apps in stack.json. Create one with: ./manage.py app create <app_name> <main_domain>")
+        return
+    for name, app in sorted(apps.items()):
+        if not isinstance(app, dict):
+            continue
+        domains = ",".join(app.get("domains", []) or [])
+        info(f"{name}\tphp={app.get('php_version', '')}\tmain={app.get('main_domain', '')}\tdomains={domains}")
+
+
+def cmd_app_show(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict):
+        die(f"Unknown app: {app_name}")
+    print(json.dumps(app, indent=2, sort_keys=True))
+
+
+def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = None, save: bool = True) -> None:
+    warn("'user create' is deprecated; use 'app create <app_name> <main_domain>' for deployable apps")
+    db = db if db is not None else load_db()
+    ensure_app_identity(args.username, args.php, db, uid=args.uid, no_mysql=args.no_mysql, mysql_password=args.mysql_password, mysql_service=args.mysql_service, no_reload=args.no_reload)
+    if save:
+        save_db(db)
+
+
+def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> None:
+    ensure_app(username, php_version, db, no_reload=no_reload, mysql_service=mysql_service)
+
+
+def cmd_site_create(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.username, APP_NAME_RE, "app_name")
+    domain = validate(args.domain, DOMAIN_RE, "domain")
+    if app_name not in db.get("apps", {}) and not app_home(app_name).exists():
+        warn("'site create' is deprecated; creating an app instead")
+        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
+        cmd_app_create(ns)
+        return
+    app = db.get("apps", {}).get(app_name)
+    if isinstance(app, dict) and domain in (app.get("domains") or []):
+        render_app_vhost(app)
+        save_db(db)
+        info(f"Regenerated app vhost for {app_name}")
+        return
+    die("site create is deprecated and multi-site users are no longer supported. Use either:\n  ./manage.py app domain add {0} {1}   # same codebase\n  ./manage.py app create <new_app> {1} {2}   # new isolation".format(app_name, domain, args.db_name or ""))
 
 
 def cmd_proxy_create(args: argparse.Namespace) -> None:
@@ -586,6 +753,8 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
     if not upstream:
         die("upstream is required")
     aliases = normalize_aliases(args.alias, args.aliases)
+    for domain in domains_for(main_domain, aliases):
+        assert_domain_free(domain, db, allow_domain=main_domain)
     server_names = " ".join([main_domain] + aliases)
     conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
     render_template(NGINX_TEMPLATE_DIR / "proxy.conf.template", conf_path, {
@@ -604,9 +773,20 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
         "vhost": rel(conf_path),
         "tls": site.get("tls", {"mode": "self-signed"}),
     })
+    new_domains = set(domains_for(main_domain, aliases))
+    for old_domain, owner in list(db.get("domains", {}).items()):
+        if owner.get("kind") == "proxy" and owner.get("domain") == main_domain and old_domain not in new_domains:
+            db["domains"].pop(old_domain, None)
+    for domain in sorted(new_domains):
+        db["domains"][domain] = {"kind": "proxy", "domain": main_domain}
     upsert_timestamp(site)
     save_db(db)
     nginx_reload(args.no_reload)
+
+
+
+def safe_app_part(app_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", app_name)
 
 
 def safe_domain_part(domain: str) -> str:
@@ -615,8 +795,7 @@ def safe_domain_part(domain: str) -> str:
 
 def cmd_cron_create(args: argparse.Namespace) -> None:
     db = load_db()
-    username = validate(args.username, USERNAME_RE, "username")
-    domain = validate(args.domain, DOMAIN_PATH_RE, "domain/path name")
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     job_name = validate(args.job_name, JOB_RE, "job-name")
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
     schedule = args.schedule
@@ -624,48 +803,47 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
     if not schedule or not command:
         die("schedule and command are required")
     php_service = php_cron_service_for(php_version)
-    app_home = f"/home/{username}"
-    workdir = args.workdir or f"{app_home}/{domain}"
+    workdir = args.workdir or f"/home/{app_name}/{DOCROOT_NAME}"
 
-    ensure_user(username, php_version, db)
+    ensure_app(app_name, php_version, db)
     mkdir(cron_jobs_dir_for(php_version))
-    mkdir(HOME_DIR / username / domain)
+    mkdir(app_www(app_name))
 
-    cron_path = cron_jobs_dir_for(php_version) / f"{username}-{safe_domain_part(domain)}-{job_name}.cron"
+    cron_path = cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
     write_template(cron_path, PHP_TEMPLATE_DIR / "cron.cron.template", {
-        "USERNAME": username,
-        "DOMAIN": domain,
+        "USERNAME": app_name,
+        "APP_NAME": app_name,
+        "DOMAIN": DOCROOT_NAME,
         "PHP_VERSION": php_version,
         "PHP_SERVICE": php_service,
         "SCHEDULE": schedule,
-        "QUOTED_USERNAME": shlex.quote(username),
+        "QUOTED_USERNAME": shlex.quote(app_name),
         "QUOTED_WORKDIR": shlex.quote(workdir),
         "QUOTED_COMMAND": shlex.quote(command),
     }, 0o644)
 
     info(f"Created cron job: vibeops/{rel(cron_path)}")
-    info(f"Runs as: {username}")
+    info(f"Runs as: {app_name}")
     info(f"Workdir: {workdir}")
     combined_crontab = rebuild_supercronic_crontab(php_version)
     info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
     info(f"Command: {command}")
 
-    cron_key = f"{username}/{domain}/{job_name}"
+    cron_key = f"{app_name}/{job_name}"
     cron = db["crons"].setdefault(cron_key, {})
     cron.update({
-        "user": username,
-        "domain": domain,
+        "app": app_name,
         "job_name": job_name,
         "php_version": php_version,
         "php_service": php_service,
         "schedule": schedule,
         "command": command,
         "workdir": workdir,
-        "path": rel(cron_path),
+        "file": rel(cron_path),
     })
     upsert_timestamp(cron)
     save_db(db)
-    cron_reload(php_service, [username])
+    cron_reload(php_service, [app_name])
 
 
 def cmd_cron_reload(args: argparse.Namespace) -> None:
@@ -705,10 +883,27 @@ def set_https_redirect(conf_path: Path, enabled: bool) -> None:
         info(("Enabled" if enabled else "Disabled") + f" HTTP to HTTPS redirect in vibeops/{rel(conf_path)}")
 
 
+def vhost_for_domain(domain: str, db: dict[str, Any]) -> tuple[Path, dict[str, Any] | None]:
+    owner = db.get("domains", {}).get(domain)
+    if owner and owner.get("kind") == "php":
+        app = db.get("apps", {}).get(owner.get("app"))
+        if not isinstance(app, dict):
+            die(f"Domain {domain} points to missing app {owner.get('app')}")
+        return ROOT / str(app.get("vhost", rel(app_vhost_path(str(app.get("name")))))), app
+    if owner and owner.get("kind") == "proxy":
+        site = db.get("sites", {}).get(owner.get("domain"))
+        if isinstance(site, dict):
+            return ROOT / str(site.get("vhost", rel(NGINX_VHOST_DIR / f"{owner.get('domain')}.conf"))), site
+    site = db.get("sites", {}).get(domain)
+    if isinstance(site, dict):
+        return ROOT / str(site.get("vhost", rel(NGINX_VHOST_DIR / f"{domain}.conf"))), site
+    return NGINX_VHOST_DIR / f"{domain}.conf", None
+
+
 def cmd_tls_acme(args: argparse.Namespace) -> None:
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
-    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
+    conf_path, record = vhost_for_domain(main_domain, db)
     if not conf_path.exists():
         die(f"Missing vhost: vibeops/{rel(conf_path)}")
     if args.off:
@@ -719,9 +914,9 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
         mode = "acme"
     replace_tls_block(conf_path, replacement)
     set_https_redirect(conf_path, mode == "acme" and not args.no_redirect_https)
-    site = db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
-    site["tls"] = {"mode": mode, "redirect_https": mode == "acme" and not args.no_redirect_https}
-    upsert_timestamp(site)
+    record = record or db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
+    record["tls"] = {"mode": mode, "redirect_https": mode == "acme" and not args.no_redirect_https}
+    upsert_timestamp(record)
     save_db(db)
     info(("Enabled NGINX ACME for" if mode == "acme" else "Switched to self-signed certificate for") + f" {main_domain}")
     nginx_reload(args.no_reload)
@@ -730,7 +925,7 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
 def cmd_tls_cert(args: argparse.Namespace) -> None:
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
-    conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
+    conf_path, record = vhost_for_domain(main_domain, db)
     if not conf_path.exists():
         die(f"Missing vhost: vibeops/{rel(conf_path)}")
     cert_path = args.cert or f"/etc/letsencrypt/live/{main_domain}/fullchain.pem"
@@ -747,9 +942,9 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
             if not host_path.exists():
                 warn(f"expected host {label} file vibeops/{rel(host_path)} was not found")
 
-    site = db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
-    site["tls"] = {"mode": "files", "cert": cert_path, "key": key_path}
-    upsert_timestamp(site)
+    record = record or db["sites"].setdefault(main_domain, {"domain": main_domain, "vhost": rel(conf_path)})
+    record["tls"] = {"mode": "files", "cert": cert_path, "key": key_path}
+    upsert_timestamp(record)
     save_db(db)
     info(f"Switched {main_domain} to certificate files:")
     info(f"  cert: {cert_path}")
@@ -757,70 +952,61 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
     nginx_reload(args.no_reload)
 
 
-def select_php_site_from_db() -> tuple[str, str, str]:
+
+def select_app_from_db() -> tuple[str, str]:
     db = load_db()
-    php_sites = [
-        site for site in db.get("sites", {}).values()
-        if isinstance(site, dict) and site.get("type") == "php" and site.get("user") and site.get("domain")
-    ]
-    php_sites.sort(key=lambda s: (str(s.get("user")), str(s.get("domain"))))
-
-    if not php_sites:
-        die("No PHP sites in stack.json. Create one with: ./manage.py site create <user> <domain>")
-    if len(php_sites) == 1:
-        site = php_sites[0]
-        return str(site["user"]), str(site["domain"]), str(site.get("php_version") or default_php_version())
-
+    apps = [app for app in db.get("apps", {}).values() if isinstance(app, dict) and app.get("name")]
+    apps.sort(key=lambda a: str(a.get("name")))
+    if not apps:
+        die("No apps in stack.json. Create one with: ./manage.py app create <app_name> <main_domain>")
+    if len(apps) == 1:
+        app = apps[0]
+        return str(app["name"]), str(app.get("php_version") or default_php_version())
     if not sys.stdin.isatty():
-        choices = ", ".join(str(site.get("domain")) for site in php_sites)
-        die(f"Multiple PHP sites found; choose one explicitly. Sites: {choices}")
-
-    info("Select site:")
-    for idx, site in enumerate(php_sites, start=1):
-        info(f"  {idx}) {site.get('domain')}  user={site.get('user')}  php={site.get('php_version', default_php_version())}")
+        choices = ", ".join(str(app.get("name")) for app in apps)
+        die(f"Multiple apps found; choose one explicitly. Apps: {choices}")
+    info("Select app:")
+    for idx, app in enumerate(apps, start=1):
+        info(f"  {idx}) {app.get('name')}  main={app.get('main_domain', '-')}  php={app.get('php_version', default_php_version())}")
     while True:
-        raw = input("Site number: ").strip()
+        raw = input("App number: ").strip()
         try:
             choice = int(raw)
         except ValueError:
             choice = 0
-        if 1 <= choice <= len(php_sites):
-            site = php_sites[choice - 1]
-            return str(site["user"]), str(site["domain"]), str(site.get("php_version") or default_php_version())
+        if 1 <= choice <= len(apps):
+            app = apps[choice - 1]
+            return str(app["name"]), str(app.get("php_version") or default_php_version())
         warn("invalid selection")
 
 
 def cmd_app_shell(args: argparse.Namespace) -> None:
-    if not args.username and not args.domain:
-        args.username, args.domain, selected_php = select_php_site_from_db()
+    if not args.app_name:
+        args.app_name, selected_php = select_app_from_db()
         if args.php == default_php_version():
             args.php = selected_php
-    elif not args.username or not args.domain:
-        die("Usage: ./manage.py shell [username domain] [--php VERSION]")
     args.command = [args.shell]
     cmd_app_exec(args)
 
 
 def cmd_app_exec(args: argparse.Namespace) -> None:
-    username = validate(args.username, USERNAME_RE, "username")
-    domain = validate(args.domain, DOMAIN_PATH_RE, "domain/path name")
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
     php_service = php_service_for(php_version)
     php_cli_service = php_cli_service_for(php_version)
-    app_home = f"/home/{username}"
-    workdir = args.workdir or f"{app_home}/{domain}"
+    workdir = args.workdir or f"/home/{app_name}/{DOCROOT_NAME}"
     command = args.command or ["sh"]
     if command and command[0] == "--":
         command = command[1:] or ["sh"]
 
     db = load_db()
-    ensure_user(username, php_version, db)
+    ensure_app(app_name, php_version, db)
     save_db(db)
 
     if not docker_available():
         die("docker is required")
     if service_running(php_service):
-        run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", username], check=False)
+        run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", app_name], check=False)
 
     tty_args: list[str] = []
     if not sys.stdin.isatty() or not sys.stdout.isatty():
@@ -828,7 +1014,7 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
     os.execvp("docker", [
         "docker", "compose", "run", "--rm", *tty_args,
         php_cli_service,
-        "php-cron-as", username, workdir,
+        "php-cron-as", app_name, workdir,
         *command,
     ])
 
@@ -836,31 +1022,25 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
 def cmd_list(args: argparse.Namespace) -> None:
     db = load_db()
     kind = args.kind
-    if kind == "users":
-        users = db.get("users", {})
-        if not users:
-            info("No users in stack.json. Create one with: ./manage.py user create <username>")
+    if kind == "apps":
+        cmd_app_list(args)
+    elif kind == "domains":
+        domains = db.get("domains", {})
+        if not domains:
+            info("No domains in stack.json.")
             return
-        for name, user in sorted(users.items()):
-            versions = ",".join(user.get("php_versions", [])) if isinstance(user, dict) else ""
-            uid = user.get("uid", "") if isinstance(user, dict) else ""
-            info(f"{name}\tuid={uid}\tphp={versions}")
-    elif kind == "sites":
-        sites = db.get("sites", {})
-        if not sites:
-            info("No sites in stack.json. Create one with: ./manage.py site create <user> <domain>")
-            return
-        for domain, site in sorted(sites.items()):
-            if not isinstance(site, dict):
-                continue
-            if site.get("type") == "proxy":
-                info(f"{domain}\tproxy\t{site.get('upstream', '')}\ttls={site.get('tls', {}).get('mode', '')}")
+        for domain, owner in sorted(domains.items()):
+            if owner.get("kind") == "php":
+                info(f"{domain}\tphp\tapp={owner.get('app', '')}")
             else:
-                info(f"{domain}\tphp\tuser={site.get('user', '')}\tphp={site.get('php_version', '')}\ttls={site.get('tls', {}).get('mode', '')}")
+                info(f"{domain}\tproxy\tvhost={owner.get('domain', '')}")
+    elif kind in {"users", "sites"}:
+        warn(f"'list {kind}' is deprecated; use 'list apps' or 'list domains'")
+        cmd_list(argparse.Namespace(kind="apps" if kind == "users" else "domains"))
     elif kind == "crons":
         crons = db.get("crons", {})
         if not crons:
-            info("No crons in stack.json. Create one with: ./manage.py cron create <user> <domain> <name> '<schedule>' '<command>'")
+            info("No crons in stack.json. Create one with: ./manage.py cron create <app_name> <name> '<schedule>' '<command>'")
             return
         for key, cron in sorted(crons.items()):
             if not isinstance(cron, dict):
@@ -878,7 +1058,7 @@ def cmd_state(args: argparse.Namespace) -> None:
     elif args.state_action == "init":
         if DB_PATH.exists() and not args.force:
             die(f"{rel(DB_PATH)} already exists; use --force to overwrite")
-        save_db({"schema": SCHEMA_VERSION, "users": {}, "sites": {}, "crons": {}})
+        save_db(empty_db())
         info(f"Initialized vibeops/{rel(DB_PATH)}")
 
 
@@ -955,18 +1135,20 @@ def cmd_status(args: argparse.Namespace) -> None:
     else:
         for service in services:
             info(f"  {service:<10} {'running' if service in running else '-'}")
-    info("\nSites:")
-    sites = db.get("sites", {})
-    if not sites:
+    info("\nApps:")
+    apps = db.get("apps", {})
+    if not apps:
         info("  none")
-    for domain, site in sorted(sites.items()):
-        if not isinstance(site, dict):
+    for name, app in sorted(apps.items()):
+        if not isinstance(app, dict):
             continue
-        tls = site.get("tls", {}).get("mode", "")
-        if site.get("type") == "proxy":
-            info(f"  {domain:<28} proxy  {site.get('upstream', '')}  tls={tls}")
-        else:
-            info(f"  {domain:<28} php    user={site.get('user', '')} php={site.get('php_version', '')} tls={tls}")
+        tls = app.get("tls", {}).get("mode", "")
+        info(f"  {name:<20} php={app.get('php_version', ''):<4} main={app.get('main_domain', '-')} tls={tls}")
+    proxies = [s for s in db.get("sites", {}).values() if isinstance(s, dict) and s.get("type") == "proxy"]
+    if proxies:
+        info("\nProxies:")
+        for site in sorted(proxies, key=lambda s: str(s.get("domain"))):
+            info(f"  {site.get('domain', ''):<28} {site.get('upstream', '')} tls={site.get('tls', {}).get('mode', '')}")
     info("\nQuick checks:")
     info(f"  metadata: vibeops/{rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
     info(f"  vhosts:   vibeops/{rel(NGINX_VHOST_DIR)}")
@@ -975,43 +1157,40 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def wizard_create_user() -> None:
-    username = prompt_text("Username")
+    username = prompt_text("App name")
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
     uid_raw = prompt_text("UID (blank = auto)", "", required=False)
     no_mysql = not prompt_confirm("Create/update MySQL account?", True)
     mysql_service = default_mysql_service() if no_mysql else prompt_text("MySQL service", default_mysql_service())
     mysql_password = None if no_mysql else prompt_text("MySQL password (blank = generate)", "", required=False) or None
     no_reload = not prompt_confirm("Reload PHP-FPM if running?", True)
-    print_plan([f"create/update user {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else mysql_service), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
+    print_plan([f"create/update app identity {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else mysql_service), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
     if prompt_confirm("Continue?", True):
         cmd_user_create(argparse.Namespace(username=username, uid=int(uid_raw) if uid_raw else None, php=php, no_mysql=no_mysql, mysql_password=mysql_password, mysql_service=mysql_service, no_reload=no_reload))
 
 
+
 def wizard_create_site() -> None:
-    db = load_db()
-    users = sorted(db.get("users", {}).keys())
-    user_choices = users + ["+ create new user"] if users else []
-    selected = prompt_choice("User", user_choices, users[0] if users else None) if user_choices else "+ create new user"
-    username = prompt_text("New username") if selected == "+ create new user" else selected
-    domain = prompt_text("Domain")
+    app_name = prompt_text("App name")
+    domain = prompt_text("Main domain")
     aliases = parse_csv(prompt_text("Aliases, comma-separated (blank = none)", "", required=False))
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
     db_name = prompt_text("Database suffix, e.g. app (blank = none)", "", required=False) or None
     mysql_service = prompt_text("MySQL service", default_mysql_service()) if db_name else default_mysql_service()
     no_index = not prompt_confirm("Create starter index.php if missing?", True)
     no_reload = not prompt_confirm("Reload nginx/PHP-FPM if running?", True)
-    plan = [f"ensure user {username} on PHP {php}", f"create/update PHP site {domain}"]
+    plan = [f"create/update app {app_name} on PHP {php}", f"main domain {domain}"]
     if aliases:
         plan.append("aliases: " + ", ".join(aliases))
     if db_name:
-        plan.append(f"database: {username}_{db_name} on {mysql_service}")
+        plan.append(f"database: {app_name}_{db_name} on {mysql_service}")
     plan.append("reload services: " + ("no" if no_reload else "yes"))
     print_plan(plan)
     info("\nEquivalent command:")
     alias_args = " ".join(f"--alias {shlex.quote(a)}" for a in aliases)
-    info(f"  ./manage.py site create {shlex.quote(username)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}" + (f" {alias_args}" if alias_args else ""))
+    info(f"  ./manage.py app create {shlex.quote(app_name)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}" + (f" {alias_args}" if alias_args else ""))
     if prompt_confirm("Continue?", True):
-        cmd_site_create(argparse.Namespace(username=username, domain=domain, db_name=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, no_index=no_index, no_reload=no_reload))
+        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
 
 
 def wizard_create_proxy() -> None:
@@ -1026,7 +1205,7 @@ def wizard_create_proxy() -> None:
 
 def wizard_tls_acme() -> None:
     db = load_db()
-    domains = sorted(db.get("sites", {}).keys())
+    domains = sorted(db.get("domains", {}).keys())
     domain = prompt_choice("Domain", domains) if domains else prompt_text("Domain")
     off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
     no_redirect_https = False if off else not prompt_confirm("Redirect HTTP to HTTPS after ACME?", True)
@@ -1038,47 +1217,45 @@ def wizard_tls_acme() -> None:
 
 def wizard_cron() -> None:
     db = load_db()
-    php_sites = [s for s in db.get("sites", {}).values() if isinstance(s, dict) and s.get("type") == "php"]
-    labels = [f"{s.get('user')}/{s.get('domain')} (php {s.get('php_version', default_php_version())})" for s in php_sites]
-    label = prompt_choice("PHP site", labels) if labels else ""
+    apps = [a for a in db.get("apps", {}).values() if isinstance(a, dict) and a.get("name")]
+    labels = [f"{a.get('name')} (php {a.get('php_version', default_php_version())})" for a in apps]
+    label = prompt_choice("App", labels) if labels else ""
     if label:
-        site = php_sites[labels.index(label)]
-        username = str(site.get("user"))
-        domain = str(site.get("domain"))
-        php = str(site.get("php_version") or default_php_version())
+        app = apps[labels.index(label)]
+        app_name = str(app.get("name"))
+        php = str(app.get("php_version") or default_php_version())
     else:
-        username = prompt_text("Username")
-        domain = prompt_text("Domain/path")
+        app_name = prompt_text("App name")
         php = prompt_choice("PHP version", available_php_versions(), default_php_version())
     job_name = prompt_text("Job name")
     schedule = prompt_text("Schedule", "* * * * *")
     command = prompt_text("Command", "php artisan schedule:run")
-    workdir = prompt_text("Workdir (blank = site root)", "", required=False) or None
-    print_plan([f"create/update cron {username}/{domain}/{job_name}", f"schedule: {schedule}", f"command: {command}"])
+    workdir = prompt_text("Workdir (blank = /home/<app>/www)", "", required=False) or None
+    print_plan([f"create/update cron {app_name}/{job_name}", f"schedule: {schedule}", f"command: {command}"])
     if prompt_confirm("Continue?", True):
-        cmd_cron_create(argparse.Namespace(username=username, domain=domain, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir))
+        cmd_cron_create(argparse.Namespace(app_name=app_name, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir))
 
 
 def cmd_wizard(args: argparse.Namespace) -> None:
     if not sys.stdin.isatty():
         die("wizard requires an interactive terminal")
     actions = [
-        "Create PHP-FPM user",
-        "Create PHP site",
+        "Create app identity",
+        "Create app",
         "Create reverse proxy",
         "Enable/switch TLS ACME",
         "Create cron job",
         "Open app shell",
         "Show status",
-        "List users/sites/crons",
+        "List apps/domains/crons",
         "Quit",
     ]
     while True:
         info("\nVibeOps")
         action = prompt_choice("What do you want to do?", actions)
-        if action == "Create PHP-FPM user":
+        if action == "Create app identity":
             wizard_create_user()
-        elif action == "Create PHP site":
+        elif action == "Create app":
             wizard_create_site()
         elif action == "Create reverse proxy":
             wizard_create_proxy()
@@ -1087,11 +1264,11 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         elif action == "Create cron job":
             wizard_cron()
         elif action == "Open app shell":
-            cmd_app_shell(argparse.Namespace(username=None, domain=None, php=default_php_version(), workdir=None, shell="bash"))
+            cmd_app_shell(argparse.Namespace(app_name=None, php=default_php_version(), workdir=None, shell="bash"))
         elif action == "Show status":
             cmd_status(argparse.Namespace(check_nginx=False))
-        elif action == "List users/sites/crons":
-            kind = prompt_choice("List", ["users", "sites", "crons", "all"], "sites")
+        elif action == "List apps/domains/crons":
+            kind = prompt_choice("List", ["apps", "domains", "crons", "all"], "apps")
             cmd_list(argparse.Namespace(kind=kind))
         else:
             return
@@ -1108,7 +1285,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(func=None)
     sub = parser.add_subparsers(dest="command")
 
-    user = sub.add_parser("user", help="Manage PHP-FPM users")
+    app = sub.add_parser("app", help="Manage isolated PHP apps")
+    app_sub = app.add_subparsers(dest="app_command", required=True)
+    app_create = app_sub.add_parser("create", help="Create/update an isolated app")
+    app_create.add_argument("app_name")
+    app_create.add_argument("main_domain")
+    app_create.add_argument("db_suffix", nargs="?")
+    app_create.add_argument("--php", default=default_php_version(), help="PHP version")
+    app_create.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service for optional database creation, e.g. mysql57/mysql84/mysql97")
+    app_create.add_argument("--alias", action="append", help="Additional server_name; can be passed multiple times or comma-separated")
+    app_create.add_argument("--aliases", help="Comma-separated additional server names")
+    app_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
+    app_create.add_argument("--mysql-password", help="Password for the MySQL account")
+    app_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")
+    app_create.add_argument("--no-reload", action="store_true", help="Do not reload nginx/PHP-FPM")
+    app_create.add_argument("--uid", type=int, help="Explicit Linux UID")
+    app_create.set_defaults(func=cmd_app_create)
+    app_domain = app_sub.add_parser("domain", help="Manage app domains")
+    app_domain_sub = app_domain.add_subparsers(dest="domain_command", required=True)
+    app_domain_add = app_domain_sub.add_parser("add", help="Add an alias domain to an app")
+    app_domain_add.add_argument("app_name")
+    app_domain_add.add_argument("domain")
+    app_domain_add.add_argument("--no-reload", action="store_true", help="Do not reload nginx")
+    app_domain_add.set_defaults(func=cmd_app_domain_add)
+    app_domain_remove = app_domain_sub.add_parser("remove", help="Remove an alias domain from an app")
+    app_domain_remove.add_argument("app_name")
+    app_domain_remove.add_argument("domain")
+    app_domain_remove.add_argument("--no-reload", action="store_true", help="Do not reload nginx")
+    app_domain_remove.set_defaults(func=cmd_app_domain_remove)
+    app_domain_main = app_domain_sub.add_parser("set-main", help="Set the app main domain")
+    app_domain_main.add_argument("app_name")
+    app_domain_main.add_argument("domain")
+    app_domain_main.add_argument("--no-reload", action="store_true", help="Do not reload nginx")
+    app_domain_main.set_defaults(func=cmd_app_domain_set_main)
+    app_list = app_sub.add_parser("list", help="List apps")
+    app_list.set_defaults(func=cmd_app_list)
+    app_show = app_sub.add_parser("show", help="Show an app record")
+    app_show.add_argument("app_name")
+    app_show.set_defaults(func=cmd_app_show)
+
+    user = sub.add_parser("user", help="Deprecated: manage app identities")
     user_sub = user.add_subparsers(dest="user_command", required=True)
     user_create = user_sub.add_parser("create", help="Create/update a PHP-FPM user and pool")
     user_create.add_argument("username")
@@ -1147,8 +1363,7 @@ def build_parser() -> argparse.ArgumentParser:
     cron = sub.add_parser("cron", help="Manage supercronic jobs")
     cron_sub = cron.add_subparsers(dest="cron_command", required=True)
     cron_create = cron_sub.add_parser("create", help="Create/update an app cron job")
-    cron_create.add_argument("username")
-    cron_create.add_argument("domain")
+    cron_create.add_argument("app_name")
     cron_create.add_argument("job_name")
     cron_create.add_argument("schedule")
     cron_create.add_argument("command")
@@ -1159,17 +1374,15 @@ def build_parser() -> argparse.ArgumentParser:
     cron_reload_cmd.add_argument("--php", default=default_php_version(), help="PHP version")
     cron_reload_cmd.set_defaults(func=cmd_cron_reload)
 
-    app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app user")
-    app_exec.add_argument("username")
-    app_exec.add_argument("domain")
+    app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app")
+    app_exec.add_argument("app_name")
     app_exec.add_argument("--php", default=default_php_version(), help="PHP version")
     app_exec.add_argument("--workdir", "-w", help="Container workdir")
     app_exec.add_argument("command", nargs=argparse.REMAINDER, help="Command to run; prefix with -- if needed")
     app_exec.set_defaults(func=cmd_app_exec)
 
-    shell = sub.add_parser("shell", help="Open an ephemeral PHP CLI shell as an app user; with no args, choose from stack.json")
-    shell.add_argument("username", nargs="?")
-    shell.add_argument("domain", nargs="?")
+    shell = sub.add_parser("shell", help="Open an ephemeral PHP CLI shell as an app; with no args, choose from stack.json")
+    shell.add_argument("app_name", nargs="?")
     shell.add_argument("--php", default=default_php_version(), help="PHP version")
     shell.add_argument("--workdir", "-w", help="Container workdir")
     shell.add_argument("--shell", default="bash", help="Shell to run, default: bash")
@@ -1198,7 +1411,7 @@ def build_parser() -> argparse.ArgumentParser:
     wizard.set_defaults(func=cmd_wizard)
 
     list_cmd = sub.add_parser("list", help="List metadata from stack.json")
-    list_cmd.add_argument("kind", choices=["users", "sites", "crons", "all"])
+    list_cmd.add_argument("kind", choices=["apps", "domains", "crons", "all", "users", "sites"])
     list_cmd.set_defaults(func=cmd_list)
 
     state = sub.add_parser("state", help="Inspect/init the JSON metadata DB")
