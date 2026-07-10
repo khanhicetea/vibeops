@@ -346,7 +346,7 @@ Filesystem repair is explicit. Check first, use `--dry-run` before a large repai
 ./manage.py permissions check shop --json
 ```
 
-A recursive repair can scan a large tree. It keeps private paths private and reapplies Nginx-readable group policy only below the selected document root. `manage.py exec` and `shell` create files as the app user; public directories inherit the Nginx-readable group policy after an explicit repair.
+A recursive repair can scan a large tree. It keeps private paths private and reapplies Nginx-readable group policy only below the selected document root. App creation performs this repair once while the tree is new. `manage.py exec` and `shell` run as the app's private UID/GID with `umask 0027`; setgid public directories make newly created public files inherit the Nginx-readable group. Use an explicit recursive repair after importing or changing an existing tree.
 
 ## MySQL databases and backups
 

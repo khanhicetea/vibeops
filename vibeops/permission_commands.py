@@ -69,6 +69,18 @@ def _permission_args(args: argparse.Namespace, app_name: str) -> list[str]:
     return helper_args
 
 
+def initialize_app_permissions(app_name: str, version: str) -> bool:
+    """Apply the complete filesystem policy once after an app is created."""
+    if not docker_available():
+        warn(f"Docker is unavailable; after the PHP image is available run: ./manage.py permissions fix {app_name} --recursive")
+        return False
+    cp = run(_container_command(version, "php-permissions", ["fix", app_name, "--recursive"]), check=False)
+    if cp.returncode != 0:
+        warn(f"Initial permission repair could not run; after PHP is available run: ./manage.py permissions fix {app_name} --recursive")
+        return False
+    return True
+
+
 def cmd_permissions(args: argparse.Namespace) -> None:
     if not docker_available():
         die("docker is required")

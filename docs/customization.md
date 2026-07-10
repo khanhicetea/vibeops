@@ -268,7 +268,7 @@ Remember to apply the same mount to FPM, CLI, and cron if app code uses it in al
 
 ### App identity and permission repair
 
-State renders each app's private UID/GID and selected public directory into `runtime/generated/php/versions/<version>/users.d/`. Startup reconciles identities only; it never repairs a complete home tree. Use the first-class commands when filesystem policy needs attention:
+State renders each app's private UID/GID and selected public directory into `runtime/generated/php/versions/<version>/users.d/`. Startup reconciles identities only; it never repairs a complete home tree. App creation initializes its new, small tree once. Shell, exec, and cron run as the app's private UID/GID with `umask 0027`; setgid public directories preserve the Nginx-readable group for new files. Use the first-class commands when an existing filesystem policy needs attention:
 
 ```bash
 ./manage.py identity sync appuser --php 8.5

@@ -10,4 +10,7 @@ app="$1"
 workdir="$2"
 shift 2
 php-identity-sync "$app"
+# Repair only policy directories here, never an existing app tree. This gives a
+# newly-created app's shell a setgid document root before it creates files.
+php-permissions fix "$app"
 exec php-cron-as "$app" "$workdir" "$@"

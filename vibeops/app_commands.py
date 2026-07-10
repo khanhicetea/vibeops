@@ -5,6 +5,7 @@ import argparse
 import json
 
 from vibeops.helpers import *  # noqa: F403
+from vibeops.permission_commands import initialize_app_permissions
 
 def cmd_app_create(args: argparse.Namespace) -> None:
     db = load_db()
@@ -53,6 +54,9 @@ def cmd_app_create(args: argparse.Namespace) -> None:
         db["domains"][domain] = {"kind": "php", "app": app_name}
     upsert_timestamp(app)
     save_db(db)
+    # App creation is the one safe time to repair the entire (small) initial tree.
+    # Later deploys must opt into a recursive repair explicitly.
+    initialize_app_permissions(app_name, php_version)
 
     info(f"Created HTTP+HTTPS app vhost: vibeops/{rel(conf_path)}")
     info(f"Document root: vibeops/{rel(app_document_root(app_name, public_dir))}")
@@ -214,6 +218,7 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
     ensure_app_identity(args.username, args.php, db, uid=args.uid, no_mysql=args.no_mysql, mysql_password=args.mysql_password, mysql_service=args.mysql_service, no_reload=args.no_reload)
     if save:
         save_db(db)
+        initialize_app_permissions(args.username, args.php)
 
 
 def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> None:

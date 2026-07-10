@@ -101,7 +101,8 @@ private_dirs() {
 ancestor_paths() {
   path="$www"
   while [ "$path" != "$docroot" ]; do
-    if [ "$action" = check ]; then check_path "$path" "$app" "$SOCKET_GROUP_NAME" 710; else apply_path "$path" "$app:$SOCKET_GROUP_NAME" 710; fi
+    # setgid keeps newly-created public subdirectories in the shared Nginx-readable group.
+    if [ "$action" = check ]; then check_path "$path" "$app" "$SOCKET_GROUP_NAME" 2710; else apply_path "$path" "$app:$SOCKET_GROUP_NAME" 2710; fi
     next="${public_dir#*/}"
     [ "$next" != "$public_dir" ] || break
     part="${public_dir%%/*}"

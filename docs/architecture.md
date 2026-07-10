@@ -57,7 +57,7 @@ Use `./manage.py compose ...` when you want all local fragments included. See `d
 
 Rendered `users.d/<app>.env` metadata records `USERNAME`, `UID`, matching private `GID`, and `PUBLIC_DIR`. PHP startup creates/reconciles only those Linux identities; it does not touch app homes. FPM workers use the app-private group, while the Unix socket remains group-owned by `nginxsock` for Nginx interoperability.
 
-Filesystem policy is an explicit, app-scoped operation: `./manage.py permissions check <app>` reports drift and `./manage.py permissions fix <app> [--recursive]` repairs it. Private app paths remain `app:app`; the selected document root is group-readable/traversable by Nginx. The reload lifecycle is:
+Filesystem policy is app-scoped: app creation initializes its small tree, while `./manage.py permissions check <app>` reports drift and `./manage.py permissions fix <app> [--recursive]` repairs existing trees explicitly. Private app paths remain `app:app`; the selected document root is setgid and group-readable/traversable by Nginx. CLI and cron commands run with the app's private UID/GID and `umask 0027`, so new public files inherit the Nginx-readable group. The reload lifecycle is:
 
 ```text
 render -> identity sync -> php-fpm -tt -> reload

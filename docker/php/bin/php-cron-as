@@ -27,6 +27,9 @@ mkdir -p "$APP_COMPOSER_HOME"
 chown "$APP_USER:$APP_USER" "$APP_COMPOSER_HOME"
 
 cd "$APP_WORKDIR"
+# Files become 0640 and directories 0750 by default. Public directories are
+# setgid to nginxsock, so their children retain the Nginx-readable group.
+umask 0027
 exec gosu "$APP_USER" env \
   HOME="$APP_HOME" \
   USER="$APP_USER" \
