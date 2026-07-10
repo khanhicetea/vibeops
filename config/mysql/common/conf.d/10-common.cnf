@@ -11,11 +11,9 @@ max_connections = 150
 open_files_limit = 65535
 wait_timeout = 300
 
-# Conservative per-session buffers to avoid memory spikes under concurrency.
-read_buffer_size = 1M
-read_rnd_buffer_size = 2M
-sort_buffer_size = 2M
-join_buffer_size = 1M
+# Per-session buffers intentionally left at server defaults.
+# Large global overrides (e.g. 2M × max_connections) risk OOM on multi-tenant hosts.
+# Heavy analytical queries should use SET SESSION sort_buffer_size=... instead.
 tmp_table_size = 64M
 max_heap_table_size = 64M
 table_open_cache = 2000
@@ -27,6 +25,14 @@ collation_server = utf8mb4_unicode_ci
 # InnoDB baseline.
 innodb_file_per_table = 1
 innodb_flush_method = O_DIRECT
-innodb_io_capacity = 400
+innodb_io_capacity = 1000
+innodb_io_capacity_max = 2000
 innodb_log_buffer_size = 16M
 innodb_strict_mode = 1
+
+# Persist error + slow query logs on the host bind mount (see compose volumes).
+log_error = /var/log/mysql/error.log
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 2
+log_queries_not_using_indexes = 0

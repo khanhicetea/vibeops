@@ -366,5 +366,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     info("\nQuick checks:")
     info(f"  metadata: vibeops/{rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
     info(f"  vhosts:   vibeops/{rel(NGINX_VHOST_DIR)}")
+    for mysql_service in ("mysql57", "mysql84", "mysql97"):
+        if mysql_service in running:
+            ok = mysql_admin_ping(mysql_service)
+            info(f"  {mysql_service} ping: {'ok' if ok else 'failed'}")
+            info(f"  {mysql_service} logs: vibeops/{rel(mysql_log_dir(mysql_service))}")
     if args.check_nginx and "nginx" in running:
         run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])

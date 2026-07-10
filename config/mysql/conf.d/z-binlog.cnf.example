@@ -1,0 +1,23 @@
+# Optional binary log overlay for point-in-time recovery experiments.
+#
+# Default VibeOps keeps disable_log_bin in version conf (8.4/9.7).
+# Enabling binlog increases disk I/O and is not a substitute for logical dumps.
+#
+# Manual enable (operator-only; do not enable by default):
+# 1. ./manage.py db backup --mysql-service mysql84
+# 2. Comment out or remove disable_log_bin from
+#    config/mysql/versions/8.4/conf.d/90-version.cnf (or the version you run)
+# 3. Copy this file next to the version conf or merge settings into 90-version.cnf
+# 4. docker compose up -d mysql84
+# 5. Monitor free space under the mysql data volume
+#
+# PITR still requires: regular logical dumps + retained binlogs + operator skill.
+# Binlog without off-box dumps is still not a backup strategy.
+
+[mysqld]
+server-id = 1
+log_bin = /var/lib/mysql/mysql-bin
+binlog_format = ROW
+binlog_expire_logs_seconds = 604800
+# sync_binlog = 1          # durability; more I/O
+# innodb_flush_log_at_trx_commit = 1  # already default

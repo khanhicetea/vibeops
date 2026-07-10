@@ -5,5 +5,5 @@ mysql_native_password = ON
 sql_require_primary_key = OFF
 
 # Prefer the 8.x redo log capacity setting.
-innodb_buffer_pool_size = 512M
+# innodb_buffer_pool_size is set via compose command (MYSQL_INNODB_BUFFER_POOL_SIZE).
 innodb_redo_log_capacity = 512M

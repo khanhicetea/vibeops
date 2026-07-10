@@ -82,6 +82,48 @@ def build_parser() -> argparse.ArgumentParser:
     site_create.add_argument("--no-reload", action="store_true", help="Do not reload nginx/PHP-FPM")
     site_create.set_defaults(func=cmd_site_create)
 
+    db = sub.add_parser("db", help="Manage MySQL databases and backups")
+    db_sub = db.add_subparsers(dest="db_command", required=True)
+
+    db_list = db_sub.add_parser("list", help="List non-system databases")
+    db_list.add_argument("--app", "--user", dest="app", help="Only databases for this app (prefix app_*)")
+    db_list.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_list.set_defaults(func=cmd_db_list)
+
+    db_create = db_sub.add_parser("create", help="Create app_suffix database and refresh prefix grants")
+    db_create.add_argument("app_name")
+    db_create.add_argument("db_suffix")
+    db_create.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_create.set_defaults(func=cmd_db_create)
+
+    db_user_reset = db_sub.add_parser("user-reset", help="Rotate an app MySQL password and rewrite credentials file")
+    db_user_reset.add_argument("app_name")
+    db_user_reset.add_argument("--password", help="New password (generated if omitted)")
+    db_user_reset.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_user_reset.set_defaults(func=cmd_db_user_reset)
+
+    db_shell = db_sub.add_parser("shell", help="Open an interactive mysql client (root by default)")
+    db_shell.add_argument("--user", help="App MySQL user (uses runtime/home/<app>/.credentials/<service>.env)")
+    db_shell.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_shell.set_defaults(func=cmd_db_shell)
+
+    db_backup = db_sub.add_parser("backup", help="Logical dump to runtime/backups/<mysql_service>/")
+    db_backup.add_argument("database", nargs="?", help="Single database name (default: all non-system DBs)")
+    db_backup.add_argument("--app", "--user", dest="app", help="All databases for this app (prefix app_*)")
+    db_backup.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_backup.add_argument("--keep", type=int, help="After backup, keep only the N newest .sql files in the backup dir")
+    db_backup.set_defaults(func=cmd_db_backup)
+
+    db_restore = db_sub.add_parser("restore", help="Restore a .sql dump into a MySQL service")
+    db_restore.add_argument("backup_file", help="Path or filename under runtime/backups/<service>/")
+    db_restore.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_restore.add_argument("--yes", action="store_true", help="Skip interactive confirmation")
+    db_restore.set_defaults(func=cmd_db_restore)
+
+    db_list_backups = db_sub.add_parser("list-backups", help="List dumps under runtime/backups/<mysql_service>/")
+    db_list_backups.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_list_backups.set_defaults(func=cmd_db_list_backups)
+
     proxy = sub.add_parser("proxy", help="Manage reverse proxy vhosts")
     proxy_sub = proxy.add_subparsers(dest="proxy_command", required=True)
     proxy_create = proxy_sub.add_parser("create", help="Create/update a proxy vhost")

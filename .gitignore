@@ -68,12 +68,28 @@ compose.d/*.yml
 !/runtime/logs/php/php84/.gitkeep
 !/runtime/logs/php/php85/
 !/runtime/logs/php/php85/.gitkeep
+!/runtime/logs/mysql57/
+!/runtime/logs/mysql57/.gitkeep
+!/runtime/logs/mysql84/
+!/runtime/logs/mysql84/.gitkeep
+!/runtime/logs/mysql97/
+!/runtime/logs/mysql97/.gitkeep
+/runtime/logs/mysql*/*
+!/runtime/logs/mysql*/.gitkeep
 
 /runtime/backups/*
 !/runtime/backups/.gitkeep
 !/runtime/backups/mysql/
 /runtime/backups/mysql/*
 !/runtime/backups/mysql/.gitkeep
+!/runtime/backups/mysql57/
+!/runtime/backups/mysql57/.gitkeep
+!/runtime/backups/mysql84/
+!/runtime/backups/mysql84/.gitkeep
+!/runtime/backups/mysql97/
+!/runtime/backups/mysql97/.gitkeep
+/runtime/backups/mysql*/*
+!/runtime/backups/mysql*/.gitkeep
 
 /runtime/acme-challenge/*
 !/runtime/acme-challenge/.gitkeep

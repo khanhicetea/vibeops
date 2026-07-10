@@ -3,6 +3,6 @@
 disable_log_bin
 sql_require_primary_key = OFF
 
-# Keep a modest footprint for single-server VibeOps installs.
-innodb_buffer_pool_size = 512M
+# Prefer the 8.x/9.x redo log capacity setting.
+# innodb_buffer_pool_size is set via compose command (MYSQL_INNODB_BUFFER_POOL_SIZE).
 innodb_redo_log_capacity = 512M

@@ -73,9 +73,10 @@ runtime/                      # mutable/generated/live data
   run/php-fpm/php84/          # PHP 8.4 sockets
   run/php-fpm/php85/          # PHP 8.5 sockets
   nginx-acme-state/           # NGINX ACME account/cert/private-key state
-  logs/                       # nginx/php logs
+  logs/                       # nginx/php/mysql logs
+    mysql84/                  # mysqld error + slow query logs (per MySQL service)
   certs/                      # externally managed cert files
-  backups/                    # backups/dumps
+  backups/                    # logical dumps (mysql57/mysql84/mysql97)
 ```
 
 ## Quick start
@@ -163,7 +164,9 @@ location = /index.php { ... fastcgi_pass ... }
 location ~ \.php$ { return 404; }
 ```
 
-The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). The app's MySQL user is `shop` on that service and has prefix grants for `shop_%`, so one app can own multiple databases.
+The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). The app's MySQL user is `shop` on that service and has prefix grants for `shop_*` databases. MySQL grants escape wildcard characters in app names before granting access, so valid app names containing `_` do not broaden privileges.
+
+Credentials are written to `runtime/home/<app>/.credentials/<mysql_service>.env` (mode 600). That file contains both `MYSQL_*` and Laravel-style `DB_*` keys. The password is not printed to stdout; open the credentials file when you need it. `DB_DATABASE` / full name is `{app}_{db_suffix}` when you pass a database suffix to `app create` or `db create`.
 
 PHP app connection values:
 
@@ -328,6 +331,59 @@ FIX_HOME_OWNERSHIP=0
 
 Then manage ownership yourself.
 
+## MySQL databases and backups
+
+Logical dumps go under `runtime/backups/<mysql_service>/` (mounted at `/backups` in each MySQL container). Prefer these over ad-hoc `docker compose exec` with root passwords on the host process list.
+
+```bash
+./manage.py db list
+./manage.py db list --app shop
+./manage.py db create shop app
+./manage.py db user-reset shop
+./manage.py db shell
+./manage.py db shell --user shop
+./manage.py db backup
+./manage.py db backup shop_app
+./manage.py db backup --app shop
+./manage.py db list-backups
+./manage.py db restore runtime/backups/mysql84/<file>.sql --yes
+```
+
+Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major.
+
+### MySQL data and recovery
+
+#### What is durable by default
+
+- Table data lives in Docker named volumes (`mysql84-data`, `mysql57-data`, `mysql97-data`; see `compose.yml`).
+- Recreating a MySQL container keeps data **if** the volume is not removed.
+- `docker compose down -v` **destroys** MySQL data. Do not use `-v` on production hosts unless you intend to wipe.
+
+#### What is not covered without backups
+
+- Accidental `DROP DATABASE` / bad app migration / logical corruption
+- With `disable_log_bin` (default on 8.4/9.7), there is **no** point-in-time recovery from the binary log
+
+#### Recommended recovery path
+
+1. Schedule regular `./manage.py db backup` (host cron or manual before risky deploys)
+2. Store/copy `runtime/backups/mysql84` (and other majors you run) off-box if the host disk is not enough
+3. Restore with `./manage.py db restore <file.sql> --yes`
+
+#### Crash vs human error
+
+| Event | Default protection |
+|-------|--------------------|
+| Container crash / reboot | InnoDB recovery on the named data volume |
+| `docker compose up -d` recreate | Volume keeps data |
+| `docker compose down -v` | **Data loss** |
+| Accidental DROP / bad migration | Logical dump restore only |
+| PITR to minute X | Not available while binlog is disabled |
+
+Optional binlog settings for experiments live in `config/mysql/conf.d/z-binlog.cnf.example`. Binlog is **opt-in**, increases disk I/O, and still needs logical dumps — it is not a managed RDS substitute. Default stock compose keeps binlog disabled.
+
+MySQL error and slow-query logs are under `runtime/logs/<mysql_service>/` (`error.log`, `slow.log`; `long_query_time=2`). On first start the bind-mounted log dir must be writable by the container `mysql` user (often uid 999); if mysqld cannot create logs, `chmod 777 runtime/logs/mysql84` or `chown 999:999 runtime/logs/mysql84`.
+
 ## Performance choices
 
 - Host networking for Nginx removes Docker port-map/NAT overhead.
@@ -338,6 +394,19 @@ Then manage ownership yourself.
 - Global `proxy_cache` and `fastcgi_cache` zones are declared for vhosts to opt in.
 - PHP, MySQL, Redis stay isolated on a Compose backend network.
 - MySQL/Redis are not exposed with host ports by default.
+- MySQL keeps per-session sort/read buffers at server defaults so concurrent PHP connections do not multiply multi-megabyte allocations; size `innodb_buffer_pool_size` for the host instead.
+- Server defaults use utf8mb4 / utf8mb4_unicode_ci and `max_allowed_packet=64M` for dumps/migrations. First restart after redo capacity changes can take longer while redo files resize.
+- PHP services wait for the default `mysql84` healthcheck before starting, reducing cold-boot connection refused races.
+
+### MySQL memory
+
+| Host RAM (approx) | Suggested `MYSQL_INNODB_BUFFER_POOL_SIZE` | Notes |
+|-------------------|-------------------------------------------|--------|
+| 1–2 GB | 256M | Shared with PHP/Nginx/Redis |
+| 4 GB | 512M–1G | Default 512M for mysql84/mysql97 |
+| 8 GB+ | 1G–2G | Leave headroom for PHP-FPM |
+
+Buffer pool is **not** “all free RAM”; leave room for OS page cache, PHP, and Redis. Size must be a multiple of 128M (InnoDB chunk size). Set `MYSQL_INNODB_BUFFER_POOL_SIZE` in `.env` (see `.env.example`).
 
 ## Notes
 

@@ -26,8 +26,9 @@ runtime/                    # local state/generated/live data
   custom/                   # user-owned customization hooks/compose adjuncts
   home/                     # mounted as /home into nginx/php; app homes live at <app>/www
   run/php-fpm/php84|php85/  # PHP-FPM Unix sockets
-  logs/                     # nginx/php logs
-  backups/mysql57|mysql84|mysql97/ # versioned database backups
+  logs/                     # nginx/php/mysql logs
+    mysql57|mysql84|mysql97/ # mysqld error + slow query logs per service
+  backups/mysql57|mysql84|mysql97/ # versioned logical database dumps
   certs/                    # external certificate files
   nginx-acme-state/         # NGINX ACME account/cert/key state
 ```
@@ -81,3 +82,11 @@ runtime/home/<app_name>/
 ```
 
 All domains on an app share the same code tree under `/home/<app_name>/www` and `/run/php-fpm/<php_service>/<app_name>.sock`. The app's `public_dir` metadata selects the Nginx document root inside that tree: empty string means `/home/<app_name>/www` (WordPress/default), while `public` means `/home/<app_name>/www/public` (Laravel/Symfony). The app's `php_entrypoint` metadata controls PHP routing: `front-controller` only executes `/index.php` and 404s other `.php` paths, while `legacy` keeps direct PHP script execution for older apps. `auto` defaults to `front-controller` when `public_dir` is non-empty. Separate codebases should be separate apps.
+
+## MySQL recovery model
+
+- **Durable by default:** InnoDB data for each major lives in a named Docker volume (`mysql84-data`, etc.). Container recreate keeps data; `docker compose down -v` destroys it.
+- **Human-error recovery:** use `./manage.py db backup` / `./manage.py db restore` and keep `runtime/backups/<service>/` copies off-box when needed.
+- **No PITR by default:** 8.4/9.7 conf keeps `disable_log_bin`. Logical dumps are the supported recovery path until an operator intentionally enables binlog (see `config/mysql/conf.d/z-binlog.cnf.example`).
+- **Readiness:** PHP services depend on `mysql84` being healthy; each MySQL service exposes a `mysqladmin ping` healthcheck.
+- **Credentials:** app MySQL passwords live only under `runtime/home/<app>/.credentials/` (mode 600); manage.py does not print them and does not put the root password on host process argv.

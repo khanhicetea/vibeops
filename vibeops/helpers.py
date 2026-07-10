@@ -288,6 +288,76 @@ def mysql_string_literal(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "''")
 
 
+def mysql_grant_pattern(value: str) -> str:
+    """Escape MySQL GRANT database-pattern wildcards for a literal identifier fragment."""
+    return value.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+
+
+def mysql_user_database_grant_pattern(username: str) -> str:
+    """Return the database pattern for all databases owned by username: <username>_*.
+
+    In MySQL GRANT database patterns, ``_`` and ``%`` are wildcards even inside the
+    database pattern. Escape username wildcards and append an escaped separator
+    underscore so ``foo_bar`` grants ``foo_bar_*``, not ``fooXbar_*``.
+    """
+    return mysql_grant_pattern(username) + r"\_%"
+
+
+def mysql_backup_dir(service: str) -> Path:
+    service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
+    return RUNTIME_DIR / "backups" / service
+
+
+def mysql_log_dir(service: str) -> Path:
+    service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
+    return RUNTIME_DIR / "logs" / service
+
+
+SYSTEM_MYSQL_DATABASES = frozenset({"mysql", "sys", "performance_schema", "information_schema"})
+
+
+def mysql_root_exec_sql(sql: str, *, service: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run SQL as MySQL root inside the container using container env password.
+
+    Relies on MYSQL_ROOT_PASSWORD already injected by compose into the mysql service.
+    Does not pass the password on the host process command line.
+    """
+    service = validate(service or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
+    if not service_running(service):
+        die(f"{service} service is not running")
+    cp = run(
+        [
+            "docker", "compose", "exec", "-T", service,
+            "sh", "-lc",
+            'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --batch --raw',
+        ],
+        input_text=sql,
+        check=False,
+        capture=True,
+    )
+    if check and cp.returncode != 0:
+        err = (cp.stderr or cp.stdout or "").strip()
+        # Avoid echoing secrets; mysql may warn about CLI password usage inside the container.
+        die(f"mysql on {service} failed (exit {cp.returncode})" + (f": {err}" if err else ""))
+    return cp
+
+
+def mysql_admin_ping(service: str | None = None) -> bool:
+    service = validate(service or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
+    if not service_running(service):
+        return False
+    cp = run(
+        [
+            "docker", "compose", "exec", "-T", service,
+            "sh", "-lc",
+            'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent',
+        ],
+        check=False,
+        capture=True,
+    )
+    return cp.returncode == 0
+
+
 def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
 
@@ -454,8 +524,7 @@ def create_mysql_user(username: str, password: str | None, mysql_service: str) -
     if not (ROOT / ".env").exists() or not service_running(mysql_service):
         info(f"Skipped MySQL user creation; start {mysql_service} and rerun, or pass --no-mysql.")
         return False, None
-    root_password = mysql_root_password(env, mysql_service)
-    if not root_password:
+    if not mysql_root_password(env, mysql_service):
         info(f"Skipped MySQL user creation; {mysql_service.upper()}_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD is missing.")
         return False, None
 
@@ -473,10 +542,12 @@ def create_mysql_user(username: str, password: str | None, mysql_service: str) -
     sql = template_text(MYSQL_TEMPLATE_DIR / "create-user.sql.template", {
         "USERNAME": username,
         "MYSQL_PASSWORD_SQL": mysql_string_literal(password),
+        "DB_GRANT_PATTERN": mysql_user_database_grant_pattern(username),
     })
-    run(["docker", "compose", "exec", "-T", mysql_service, "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
-    info(f"MySQL account on {mysql_service}: {username} / {password}")
-    info(f"Saved: vibeops/{rel(cred_path)}")
+    mysql_root_exec_sql(sql, service=mysql_service)
+    info(f"MySQL account ready on {mysql_service}: user={username}")
+    info(f"Credentials saved (mode 600): vibeops/{rel(cred_path)}")
+    info("Password is only in that file; not printed here.")
     return True, rel(cred_path)
 
 
@@ -574,18 +645,38 @@ def apply_app_mysql_metadata(app: dict[str, Any], app_name: str, mysql_service: 
         app["mysql_credentials"] = credential_path
 
 
+def ensure_mysql_database(app_name: str, suffix: str, mysql_service: str) -> str:
+    """Create DB app_name_suffix and grant <app_name>_* privileges. Returns full name."""
+    mysql_service = validate(mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    app_name = validate(app_name, APP_NAME_RE, "app_name")
+    validate(suffix, DB_NAME_RE, "database suffix")
+    db_full_name = f"{app_name}_{suffix}"
+    env = stack_env()
+    if not (ROOT / ".env").exists() or not service_running(mysql_service) or not mysql_root_password(env, mysql_service):
+        die(f"Cannot create database; {mysql_service} is not running, .env is missing, or root password is unset.")
+    sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
+        "DB_FULL_NAME": db_full_name,
+        "USERNAME": app_name,
+        "DB_GRANT_PATTERN": mysql_user_database_grant_pattern(app_name),
+    })
+    mysql_root_exec_sql(sql, service=mysql_service)
+    info(f"MySQL database on {mysql_service}: {db_full_name}")
+    return db_full_name
+
+
 def create_database(app_name: str, suffix: str, mysql_service: str) -> str | None:
+    """Best-effort database create used by app create (skips when mysql is down)."""
     mysql_service = validate(mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     validate(suffix, DB_NAME_RE, "database suffix")
     db_full_name = f"{app_name}_{suffix}"
     env = stack_env()
-    root_password = mysql_root_password(env, mysql_service)
-    if (ROOT / ".env").exists() and service_running(mysql_service) and root_password:
+    if (ROOT / ".env").exists() and service_running(mysql_service) and mysql_root_password(env, mysql_service):
         sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
             "DB_FULL_NAME": db_full_name,
             "USERNAME": app_name,
+            "DB_GRANT_PATTERN": mysql_user_database_grant_pattern(app_name),
         })
-        run(["docker", "compose", "exec", "-T", mysql_service, "mysql", "-uroot", f"-p{root_password}"], input_text=sql)
+        mysql_root_exec_sql(sql, service=mysql_service)
         info(f"MySQL database on {mysql_service}: {db_full_name}")
     else:
         info(f"Skipped database creation; {mysql_service} is not running, .env is missing, or root password is unset.")

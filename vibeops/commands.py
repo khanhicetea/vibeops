@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from vibeops.helpers import *  # noqa: F403
 from vibeops.app_commands import *  # noqa: F403
+from vibeops.db_commands import *  # noqa: F403
 from vibeops.proxy_commands import *  # noqa: F403
 from vibeops.cron_commands import *  # noqa: F403
 from vibeops.tls_commands import *  # noqa: F403

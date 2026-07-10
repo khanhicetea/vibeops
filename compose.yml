@@ -10,7 +10,10 @@ x-php-common: &php-common
     SOCKET_GID: ${SOCKET_GID:-101}
     FIX_HOME_OWNERSHIP: ${FIX_HOME_OWNERSHIP:-1}
   depends_on:
-    - redis
+    mysql84:
+      condition: service_healthy
+    redis:
+      condition: service_started
   networks:
     - backend
 
@@ -52,6 +55,13 @@ x-php85-volumes: &php85-volumes
   - ./docker/php/bin/php-user-sync:/usr/local/bin/php-user-sync:ro
   - ./docker/php/bin/php-cron-as:/usr/local/bin/php-cron-as:ro
   - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
+
+x-mysql-healthcheck: &mysql-healthcheck
+  test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p$$MYSQL_ROOT_PASSWORD"]
+  interval: 5s
+  timeout: 5s
+  retries: 20
+  start_period: 30s
 
 services:
   nginx:
@@ -134,10 +144,13 @@ services:
   #   docker compose up -d mysql84
   #   docker compose up -d mysql57 mysql84 mysql97
   # Optional legacy MySQL. Start explicitly with: docker compose --profile mysql57 up -d mysql57
+  # Buffer pool size must be a multiple of 128M (innodb_buffer_pool_chunk_size default class).
   mysql57:
     image: mysql:${MYSQL57_VERSION:-5.7}
     profiles: ["mysql57"]
     restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-384M}
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL57_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
@@ -146,6 +159,8 @@ services:
       - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
       - ./config/mysql/versions/5.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
       - ./runtime/backups/mysql57:/backups
+      - ./runtime/logs/mysql57:/var/log/mysql
+    healthcheck: *mysql-healthcheck
     networks:
       - backend
 
@@ -153,6 +168,8 @@ services:
   mysql84:
     image: mysql:${MYSQL84_VERSION:-8.4}
     restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-512M}
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL84_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
@@ -161,6 +178,8 @@ services:
       - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
       - ./config/mysql/versions/8.4/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
       - ./runtime/backups/mysql84:/backups
+      - ./runtime/logs/mysql84:/var/log/mysql
+    healthcheck: *mysql-healthcheck
     networks:
       - backend
 
@@ -169,6 +188,8 @@ services:
     image: mysql:${MYSQL97_VERSION:-9.7}
     profiles: ["mysql97"]
     restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-512M}
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL97_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
@@ -177,6 +198,8 @@ services:
       - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
       - ./config/mysql/versions/9.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
       - ./runtime/backups/mysql97:/backups
+      - ./runtime/logs/mysql97:/var/log/mysql
+    healthcheck: *mysql-healthcheck
     networks:
       - backend
 
