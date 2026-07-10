@@ -68,6 +68,18 @@ def ensure_app(app_name: str, php_version: str, db: dict[str, Any], no_reload: b
     return ensure_app_identity(app_name, php_version, db, mysql_service=mysql_service, no_reload=no_reload)
 
 
+def cmd_app_domain_list(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict) or not app.get("main_domain"):
+        die(f"Unknown app or app has no vhost: {app_name}")
+    domains = list(dict.fromkeys(app.get("domains") or [app["main_domain"]]))
+    for index, domain in enumerate(domains, start=1):
+        main = " (main)" if domain == app.get("main_domain") else ""
+        info(f"{index}) {domain}{main}")
+
+
 def cmd_app_domain_add(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -88,13 +100,27 @@ def cmd_app_domain_add(args: argparse.Namespace) -> None:
     nginx_reload(args.no_reload)
 
 
+def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
+    number = getattr(args, "number", None)
+    if number is not None:
+        if getattr(args, "domain", None):
+            die("Provide either a domain or --number, not both")
+        domains = [domain for domain in dict.fromkeys(app.get("domains") or [app.get("main_domain")]) if isinstance(domain, str) and domain]
+        if not 1 <= number <= len(domains):
+            die(f"Invalid domain number: {number}")
+        return domains[number - 1]
+    if not getattr(args, "domain", None):
+        die("Provide a domain or --number from 'app domain list'")
+    return validate(args.domain, DOMAIN_RE, "domain")
+
+
 def cmd_app_domain_remove(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
-    domain = validate(args.domain, DOMAIN_RE, "domain")
     app = db.get("apps", {}).get(app_name)
     if not isinstance(app, dict):
         die(f"Unknown app: {app_name}")
+    domain = app_domain_from_args(args, app)
     if domain == app.get("main_domain"):
         die("Cannot remove the main domain; use app domain set-main first")
     domains = [d for d in app.get("domains", []) if d != domain]
@@ -112,10 +138,10 @@ def cmd_app_domain_remove(args: argparse.Namespace) -> None:
 def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
-    domain = validate(args.domain, DOMAIN_RE, "domain")
     app = db.get("apps", {}).get(app_name)
     if not isinstance(app, dict):
         die(f"Unknown app: {app_name}")
+    domain = app_domain_from_args(args, app)
     domains = list(app.get("domains") or [])
     if domain not in domains:
         die(f"Domain {domain} is not on app {app_name}; add it first")
@@ -126,6 +152,38 @@ def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Set main domain for {app_name}: {domain}")
     nginx_reload(args.no_reload)
+
+
+def cmd_app_db_list(args: argparse.Namespace) -> None:
+    db = load_db()
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict):
+        die(f"Unknown app: {app_name}")
+    databases = list(dict.fromkeys(app.get("databases") or []))
+    if not databases:
+        info(f"No databases recorded for app {app_name}.")
+        return
+    services = app.get("database_services") or {}
+    for index, database in enumerate(databases, start=1):
+        service = services.get(database) or app.get("mysql_service") or default_mysql_service()
+        info(f"{index}) {database}\tservice={service}")
+
+
+def cmd_app_db_create(args: argparse.Namespace) -> None:
+    app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+    db = load_db()
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict):
+        die(f"Unknown app: {app_name}")
+    suffix = validate(args.db_suffix, DB_NAME_RE, "database suffix")
+    service = validate(args.mysql_service or str(app.get("mysql_service") or default_mysql_service()), MYSQL_SERVICE_RE, "MySQL service")
+    db_full_name = ensure_mysql_database(app_name, suffix, service)
+    if db_full_name not in app.setdefault("databases", []):
+        app["databases"].append(db_full_name)
+    app.setdefault("database_services", {})[db_full_name] = service
+    upsert_timestamp(app)
+    save_db(db)
 
 
 def cmd_app_list(args: argparse.Namespace) -> None:

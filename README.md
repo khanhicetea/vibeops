@@ -106,7 +106,7 @@ For guided operations, run the no-dependency Python wizard:
 ./manage.py tui
 ```
 
-The wizard can create apps, app domains, proxy vhosts, TLS/ACME config, cron jobs, open app shells, and show stack status. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
+The wizard can create apps, app domains and databases, proxy vhosts, TLS/ACME config, cron jobs, open app shells, and show stack status. Its domain and cron managers present numbered listings for selecting a main domain or deleting an alias/cron, then refresh the listing after changes. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
 
 For a quick dashboard without entering the wizard:
 
@@ -187,6 +187,9 @@ An app has exactly one main domain plus optional alias domains. All domains on a
 ./manage.py app domain add shop alt.shop.example.com
 ./manage.py app domain set-main shop www.shop.example.com
 ./manage.py app domain remove shop alt.shop.example.com
+./manage.py app domain list shop
+./manage.py app domain set-main shop --number 2
+./manage.py app domain remove shop --number 3
 ./manage.py app show shop
 ```
 
@@ -213,6 +216,8 @@ Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs p
 
 ```bash
 ./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run' --php 8.5
+./manage.py cron list
+./manage.py cron remove shop schedule  # or: ./manage.py cron remove --number 1
 ```
 
 This writes:
@@ -339,6 +344,8 @@ Logical dumps go under `runtime/backups/<mysql_service>/` (mounted at `/backups`
 ./manage.py db list
 ./manage.py db list --app shop
 ./manage.py db create shop app
+./manage.py app db list shop
+./manage.py app db create shop reporting
 ./manage.py db user-reset shop
 ./manage.py db shell
 ./manage.py db shell --user shop

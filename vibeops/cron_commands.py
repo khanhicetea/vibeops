@@ -69,6 +69,50 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
     cron_reload(php_service, [app_name])
 
 
+def cmd_cron_list(args: argparse.Namespace) -> None:
+    db = load_db()
+    crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
+    if not crons:
+        info("No crons in state. Create one with: ./manage.py cron create <app_name> <name> '<schedule>' '<command>'")
+        return
+    for index, (key, cron) in enumerate(crons, start=1):
+        info(f"{index}) {key}\tphp={cron.get('php_version', '')}\t{cron.get('schedule', '')}\t{cron.get('command', '')}")
+
+
+def cmd_cron_remove(args: argparse.Namespace) -> None:
+    db = load_db()
+    number = getattr(args, "number", None)
+    if number is not None:
+        if getattr(args, "app_name", None) or getattr(args, "job_name", None):
+            die("Provide either an app name and job name or --number, not both")
+        crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
+        if not 1 <= number <= len(crons):
+            die(f"Invalid cron number: {number}")
+        cron_key, cron = crons[number - 1]
+        app_name = validate(str(cron.get("app", "")), APP_NAME_RE, "app_name")
+        job_name = validate(str(cron.get("job_name", "")), JOB_RE, "job-name")
+    else:
+        if not getattr(args, "app_name", None) or not getattr(args, "job_name", None):
+            die("Provide an app name and job name, or --number from 'cron list'")
+        app_name = validate(args.app_name, APP_NAME_RE, "app_name")
+        job_name = validate(args.job_name, JOB_RE, "job-name")
+        cron_key = f"{app_name}/{job_name}"
+        cron = db.get("crons", {}).get(cron_key)
+        if not isinstance(cron, dict):
+            die(f"Unknown cron job: {cron_key}")
+
+    php_version = validate(str(cron.get("php_version") or default_php_version()), PHP_VERSION_RE, "PHP version")
+    cron_path = cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
+    cron_path.unlink(missing_ok=True)
+    db["crons"].pop(cron_key, None)
+    save_db(db)
+
+    combined_crontab = rebuild_supercronic_crontab(php_version)
+    info(f"Removed cron job: {cron_key}")
+    info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
+    cron_reload(php_cron_service_for(php_version))
+
+
 def cmd_cron_reload(args: argparse.Namespace) -> None:
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
     combined_crontab = rebuild_supercronic_crontab(php_version)

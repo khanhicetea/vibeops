@@ -6,8 +6,17 @@ import shlex
 import sys
 
 from vibeops.helpers import *  # noqa: F403
-from vibeops.app_commands import cmd_app_create, cmd_user_create
-from vibeops.cron_commands import cmd_cron_create
+from vibeops.app_commands import (
+    cmd_app_create,
+    cmd_app_db_create,
+    cmd_app_db_list,
+    cmd_app_domain_add,
+    cmd_app_domain_list,
+    cmd_app_domain_remove,
+    cmd_app_domain_set_main,
+    cmd_user_create,
+)
+from vibeops.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
 from vibeops.proxy_commands import cmd_proxy_create
 from vibeops.runtime_commands import *  # noqa: F403
 from vibeops.tls_commands import cmd_tls_acme
@@ -73,6 +82,101 @@ def wizard_tls_acme() -> None:
         cmd_tls_acme(argparse.Namespace(domain=domain, off=off, no_redirect_https=no_redirect_https, no_reload=no_reload))
 
 
+def wizard_select_app(*, require_vhost: bool = False) -> tuple[str, dict[str, Any]]:
+    db = load_db()
+    apps = [
+        (name, app)
+        for name, app in sorted(db.get("apps", {}).items())
+        if isinstance(app, dict) and app.get("name") and (not require_vhost or app.get("main_domain"))
+    ]
+    if not apps:
+        die("No apps with a vhost in state. Create an app first." if require_vhost else "No apps in state. Create an app first.")
+    labels = [f"{name} (main: {app.get('main_domain', '-')})" for name, app in apps]
+    label = prompt_choice("App", labels)
+    return apps[labels.index(label)]
+
+
+def wizard_manage_domains() -> None:
+    app_name, _ = wizard_select_app(require_vhost=True)
+    while True:
+        info(f"\nDomains for {app_name}:")
+        cmd_app_domain_list(argparse.Namespace(app_name=app_name))
+        db = load_db()
+        app = db["apps"][app_name]
+        domains = list(dict.fromkeys(app.get("domains") or [app["main_domain"]]))
+        action = prompt_choice("Domain action", ["Add domain", "Delete domain", "Change main domain", "Back"])
+        if action == "Back":
+            return
+        if action == "Add domain":
+            domain = prompt_validated("Domain", DOMAIN_RE, "domain")
+            no_reload = not prompt_confirm("Reload nginx if running?", True)
+            print_plan([f"add {domain} to app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+            if prompt_confirm("Continue?", True):
+                cmd_app_domain_add(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+        elif action == "Delete domain":
+            aliases = [domain for domain in domains if domain != app.get("main_domain")]
+            if not aliases:
+                warn("The main domain cannot be deleted. Add and select another domain as main first.")
+                continue
+            domain = prompt_choice("Domain number to delete", domains)
+            if domain == app.get("main_domain"):
+                warn("Cannot delete the main domain; change the main domain first.")
+                continue
+            no_reload = not prompt_confirm("Reload nginx if running?", True)
+            print_plan([f"remove {domain} from app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+            if prompt_confirm("Continue?", False):
+                cmd_app_domain_remove(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+        else:
+            domain = prompt_choice("Domain number to make main", domains, str(app.get("main_domain")))
+            if domain == app.get("main_domain"):
+                info(f"{domain} is already the main domain.")
+                continue
+            no_reload = not prompt_confirm("Reload nginx if running?", True)
+            print_plan([f"set {domain} as main domain for {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+            if prompt_confirm("Continue?", True):
+                cmd_app_domain_set_main(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+
+
+def wizard_manage_databases() -> None:
+    app_name, app = wizard_select_app()
+    while True:
+        info(f"\nDatabases for {app_name}:")
+        cmd_app_db_list(argparse.Namespace(app_name=app_name))
+        action = prompt_choice("Database action", ["Create database", "Back"])
+        if action == "Back":
+            return
+        suffix = prompt_validated("Database suffix", DB_NAME_RE, "database suffix")
+        default_service = str(app.get("mysql_service") or default_mysql_service())
+        mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_service, hint="for example mysql57, mysql84, mysql97")
+        print_plan([f"create database {app_name}_{suffix}", f"MySQL service: {mysql_service}"])
+        if prompt_confirm("Continue?", True):
+            cmd_app_db_create(argparse.Namespace(app_name=app_name, db_suffix=suffix, mysql_service=mysql_service))
+        # Return to the top of the loop so the listing immediately reflects a new DB.
+        app = load_db()["apps"][app_name]
+
+
+def wizard_manage_crons() -> None:
+    while True:
+        info("\nCron jobs:")
+        cmd_cron_list(argparse.Namespace())
+        db = load_db()
+        crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
+        actions = ["Create cron job"] + (["Delete cron job"] if crons else []) + ["Back"]
+        action = prompt_choice("Cron action", actions)
+        if action == "Back":
+            return
+        if action == "Create cron job":
+            wizard_cron()
+            continue
+        labels = [f"{key} ({cron.get('schedule', '')}: {cron.get('command', '')})" for key, cron in crons]
+        selected = prompt_choice("Cron number to delete", labels)
+        cron_key, cron = crons[labels.index(selected)]
+        print_plan([f"remove cron {cron_key}", f"PHP {cron.get('php_version', default_php_version())}"])
+        if prompt_confirm("Continue?", False):
+            cmd_cron_remove(argparse.Namespace(app_name=cron["app"], job_name=cron["job_name"]))
+        # Return to the top of the loop so the listing immediately reflects removal.
+
+
 def wizard_cron() -> None:
     db = load_db()
     apps = [a for a in db.get("apps", {}).values() if isinstance(a, dict) and a.get("name")]
@@ -102,7 +206,9 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         "Create app",
         "Create reverse proxy",
         "Enable/switch TLS ACME",
-        "Create cron job",
+        "Manage cron jobs",
+        "Manage app domains",
+        "Manage app databases",
         "Open app shell",
         "Show status",
         "List apps/domains/crons",
@@ -119,8 +225,12 @@ def cmd_wizard(args: argparse.Namespace) -> None:
             wizard_create_proxy()
         elif action == "Enable/switch TLS ACME":
             wizard_tls_acme()
-        elif action == "Create cron job":
-            wizard_cron()
+        elif action == "Manage cron jobs":
+            wizard_manage_crons()
+        elif action == "Manage app domains":
+            wizard_manage_domains()
+        elif action == "Manage app databases":
+            wizard_manage_databases()
         elif action == "Open app shell":
             cmd_app_shell(argparse.Namespace(app_name=None, php=default_php_version(), workdir=None, shell="bash"))
         elif action == "Show status":
