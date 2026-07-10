@@ -1,6 +1,6 @@
 [${USERNAME}]
 user = ${USERNAME}
-group = ${SOCKET_GROUP_NAME}
+group = ${USERNAME}
 
 listen = /run/php-fpm/${USERNAME}.sock
 listen.owner = ${USERNAME}

@@ -233,8 +233,10 @@ Likely causes:
 ls -l run/php-fpm/php85/
 docker compose logs --tail=200 php85
 docker compose exec -T php85 php-fpm -tt
-docker compose exec -T php85 php-user-sync appuser
-docker compose exec -T php85 sh -lc 'kill -USR2 1'
+./manage.py identity sync appuser --php 8.5
+./manage.py permissions check appuser
+./manage.py permissions fix appuser --recursive --dry-run
+./manage.py permissions fix appuser --recursive
 ```
 
 Likely causes:
@@ -251,7 +253,7 @@ namei -l home/appuser/example.com
 find home/appuser/example.com -maxdepth 2 -type f -ls | head
 ```
 
-Nginx needs group-readable files and executable directories through the path. The PHP `php-user-sync` helper normally fixes ownership and group read/execute when `FIX_HOME_OWNERSHIP=1`.
+Nginx needs group-readable public files and executable directories through the public path. Check the app policy first, then preview and explicitly repair it with `./manage.py permissions fix appuser --recursive --dry-run` and `./manage.py permissions fix appuser --recursive`.
 
 ### MySQL connection fails from PHP
 

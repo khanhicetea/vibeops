@@ -18,6 +18,7 @@ from vibeops.app_commands import (
 )
 from vibeops.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
 from vibeops.proxy_commands import cmd_proxy_create
+from vibeops.permission_commands import cmd_permissions
 from vibeops.runtime_commands import *  # noqa: F403
 from vibeops.tls_commands import cmd_tls_acme
 
@@ -80,6 +81,26 @@ def wizard_tls_acme() -> None:
     print_plan([(f"switch {domain} to self-signed" if off else f"enable ACME for {domain}"), "redirect HTTP to HTTPS: " + ("no" if no_redirect_https else "yes"), "reload nginx: " + ("no" if no_reload else "yes")])
     if prompt_confirm("Continue?", True):
         cmd_tls_acme(argparse.Namespace(domain=domain, off=off, no_redirect_https=no_redirect_https, no_reload=no_reload))
+
+
+def wizard_check_permissions() -> None:
+    app_name, _ = wizard_select_app()
+    print_plan([f"check filesystem permissions for {app_name}"])
+    info("\nEquivalent command:")
+    info(f"  ./manage.py permissions check {shlex.quote(app_name)}")
+    if prompt_confirm("Continue?", True):
+        cmd_permissions(argparse.Namespace(permission_action="check", app_name=app_name, all=False, json=False))
+
+
+def wizard_fix_permissions() -> None:
+    app_name, _ = wizard_select_app()
+    recursive = prompt_confirm("Repair the complete app tree recursively?", False)
+    command = f"./manage.py permissions fix {shlex.quote(app_name)}" + (" --recursive" if recursive else "")
+    print_plan([f"repair filesystem permissions for {app_name}", "recursive: " + ("yes" if recursive else "no")])
+    info("\nEquivalent command:")
+    info(f"  {command}")
+    if prompt_confirm("Apply permission repair?", False):
+        cmd_permissions(argparse.Namespace(permission_action="fix", app_name=app_name, all=False, recursive=recursive, dry_run=False, json=False))
 
 
 def wizard_select_app(*, require_vhost: bool = False) -> tuple[str, dict[str, Any]]:
@@ -209,6 +230,8 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         "Manage cron jobs",
         "Manage app domains",
         "Manage app databases",
+        "Check app permissions",
+        "Fix app permissions",
         "Open app shell",
         "Show status",
         "List apps/domains/crons",
@@ -231,6 +254,10 @@ def cmd_wizard(args: argparse.Namespace) -> None:
             wizard_manage_domains()
         elif action == "Manage app databases":
             wizard_manage_databases()
+        elif action == "Check app permissions":
+            wizard_check_permissions()
+        elif action == "Fix app permissions":
+            wizard_fix_permissions()
         elif action == "Open app shell":
             cmd_app_shell(argparse.Namespace(app_name=None, php=default_php_version(), workdir=None, shell="bash"))
         elif action == "Show status":

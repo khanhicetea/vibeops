@@ -48,7 +48,7 @@ DEFAULT_PHP_VERSION=8.5
 DEFAULT_MYSQL_SERVICE=mysql84
 TZ=Asia/Ho_Chi_Minh
 SOCKET_GID=101
-FIX_HOME_OWNERSHIP=1
+# Startup only synchronizes identities; use permissions check/fix explicitly.
 ```
 
 Do not commit `.env`.
@@ -266,15 +266,18 @@ services:
 
 Remember to apply the same mount to FPM, CLI, and cron if app code uses it in all contexts.
 
-### Disable automatic home ownership fix
+### App identity and permission repair
 
-Use `.env`:
+State renders each app's private UID/GID and selected public directory into `runtime/generated/php/versions/<version>/users.d/`. Startup reconciles identities only; it never repairs a complete home tree. Use the first-class commands when filesystem policy needs attention:
 
-```env
-FIX_HOME_OWNERSHIP=0
+```bash
+./manage.py identity sync appuser --php 8.5
+./manage.py permissions check appuser
+./manage.py permissions fix appuser --recursive --dry-run
+./manage.py permissions fix appuser --recursive
 ```
 
-This is useful on large `runtime/home` trees where recursive ownership checks are slow.
+Recursive repair is explicit because it can scan large trees. Keep secrets outside the selected document root; only public paths receive the Nginx socket group's read/traverse access.
 
 ### Use a custom proxy app on the host
 

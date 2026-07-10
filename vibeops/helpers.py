@@ -406,25 +406,9 @@ def nginx_reload(no_reload: bool = False) -> None:
         info("nginx container is not running; start it then run: docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload")
 
 
-def php_disable_default_pool(service: str) -> None:
-    # Official PHP images ship [www] fragments in more than one file (for
-    # example www.conf and sometimes docker.conf). VibeOps uses only generated
-    # per-user pools, so disable any default [www] fragments at runtime too.
-    run([
-        "docker", "compose", "exec", "-T", service, "sh", "-lc",
-        "for f in /usr/local/etc/php-fpm.d/*.conf; do "
-        "[ -e \"$f\" ] || continue; "
-        "if grep -q '^\\[www\\]' \"$f\"; then mv \"$f\" \"$f.disabled\"; fi; "
-        "done; "
-        "rm -f /usr/local/etc/php-fpm.d/zz-pools.conf; "
-        "printf '[global]\\nerror_log = /proc/self/fd/2\\nprocess.max = 32\\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; ",
-    ], check=False)
-
-
 def php_reload(service: str, username: str, no_reload: bool = False) -> None:
     if service_running(service):
-        php_disable_default_pool(service)
-        run(["docker", "compose", "exec", "-T", service, "php-user-sync", username])
+        run(["docker", "compose", "exec", "-T", service, "php-identity-sync", username])
         if not no_reload:
             run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"])
             run([
@@ -455,16 +439,16 @@ def rebuild_supercronic_crontab(php_version: str) -> Path:
 
 def cron_reload(service: str, usernames: Iterable[str] = ()) -> None:
     if service_running(service):
+        run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *usernames])
         script = r'''
 set -eu
-php-user-sync "$@"
 cmdline="$(tr '\000' ' ' < /proc/1/cmdline || true)"
 case "$cmdline" in
   *supercronic*) kill -USR2 1 ;;
   *) echo "Supercronic is not running as PID 1 ($cmdline)" >&2; exit 42 ;;
 esac
 '''
-        cp = run(["docker", "compose", "exec", "-T", service, "sh", "-lc", script, "--", *usernames], check=False)
+        cp = run(["docker", "compose", "exec", "-T", service, "sh", "-lc", script], check=False)
         if cp.returncode == 0:
             info(f"Reloaded {service} cron with SIGUSR2")
         elif cp.returncode == 42:
@@ -683,13 +667,20 @@ def create_database(app_name: str, suffix: str, mysql_service: str) -> str | Non
     return db_full_name
 
 
-def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, uid: int | None = None, no_mysql: bool = False, mysql_password: str | None = None, mysql_service: str | None = None, no_reload: bool = False) -> dict[str, Any]:
+def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, uid: int | None = None, public_dir: str | None = None, no_mysql: bool = False, mysql_password: str | None = None, mysql_service: str | None = None, no_reload: bool = False) -> dict[str, Any]:
     app_name = validate(app_name, APP_NAME_RE, "app_name")
     php_version = validate(php_version, PHP_VERSION_RE, "PHP version")
     mysql_service = validate(mysql_service or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
     app_uid = allocate_uid(app_name, uid, db)
     php_service = php_service_for(php_version)
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
+    app = db["apps"].setdefault(app_name, {"name": app_name})
+    public_dir = validate_public_dir(public_dir if public_dir is not None else str(app.get("public_dir", "")))
+    app["uid"] = app_uid
+    app["public_dir"] = public_dir
+    app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
+    app["php_version"] = php_version
+    app["php_service"] = php_service
 
     mkdir(app_home(app_name) / "logs", 0o770)
     mkdir(app_www(app_name))
@@ -709,17 +700,14 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     write_template(php_version_config_dir(php_version) / "users.d" / f"{app_name}.env", PHP_TEMPLATE_DIR / "user.env.template", {
         "USERNAME": app_name,
         "UID": app_uid,
+        "GID": app_uid,
+        "PUBLIC_DIR": public_dir,
     }, generated=True)
     write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
         "USERNAME": app_name,
         "SOCKET_GROUP_NAME": socket_group_name,
         "PHP_VERSION": php_version,
     }, generated=True)
-    try:
-        app_home(app_name).chmod(0o750)
-    except PermissionError:
-        warn(f"could not chmod home/{app_name}")
-
     info(f"Created PHP {php_version} app identity: {app_name} uid={app_uid}")
     info(f"Home: vibeops/{rel(app_home(app_name))}")
     info(f"Pool: vibeops/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{app_name}.conf')}")
@@ -732,15 +720,8 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     if not no_mysql:
         mysql_created, credential_path = create_mysql_user(app_name, mysql_password, mysql_service)
 
-    app = db["apps"].setdefault(app_name, {"name": app_name})
-    app["uid"] = app_uid
     app["home"] = rel(app_home(app_name))
-    public_dir = validate_public_dir(app.get("public_dir", ""))
-    app["public_dir"] = public_dir
-    app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
     app["root"] = rel(app_document_root(app_name, public_dir))
-    app["php_version"] = php_version
-    app["php_service"] = php_service
     versions = set(app.get("php_versions", []))
     versions.add(php_version)
     app["php_versions"] = sorted(versions)
@@ -823,9 +804,12 @@ def render_app_identity(app: dict[str, Any]) -> None:
     mkdir(PHP_SOCKET_DIR / php_service)
     mkdir(PHP_LOG_DIR / php_service)
     render_php_fallback(php_version)
+    public_dir = validate_public_dir(str(app.get("public_dir", "")))
     write_template(php_version_config_dir(php_version) / "users.d" / f"{app_name}.env", PHP_TEMPLATE_DIR / "user.env.template", {
         "USERNAME": app_name,
         "UID": uid,
+        "GID": uid,
+        "PUBLIC_DIR": public_dir,
     }, generated=True)
     write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
         "USERNAME": app_name,
@@ -835,7 +819,7 @@ def render_app_identity(app: dict[str, Any]) -> None:
     app["uid"] = uid
     app["php_service"] = php_service
     app["home"] = rel(app_home(app_name))
-    public_dir = validate_public_dir(str(app.get("public_dir", "")))
+    app["public_dir"] = public_dir
     app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
     app["root"] = rel(app_document_root(app_name, public_dir))
 

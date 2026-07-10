@@ -12,4 +12,5 @@ from vibeops.proxy_commands import *  # noqa: F403
 from vibeops.cron_commands import *  # noqa: F403
 from vibeops.tls_commands import *  # noqa: F403
 from vibeops.runtime_commands import *  # noqa: F403
+from vibeops.permission_commands import *  # noqa: F403
 from vibeops.wizard_commands import *  # noqa: F403

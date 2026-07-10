@@ -1,0 +1,158 @@
+#!/usr/bin/env sh
+# Explicit, app-bounded filesystem policy repair. Never use this at container startup.
+set -eu
+
+SOCKET_GROUP_NAME="${SOCKET_GROUP_NAME:-nginxsock}"
+PHP_USERS_DIR="${PHP_USERS_DIR:-/usr/local/etc/php/users.d}"
+PHP_HOME_ROOT="${PHP_HOME_ROOT:-/home}"
+IDENTITY_SYNC="${PHP_IDENTITY_SYNC:-php-identity-sync}"
+
+checked=0
+changed=0
+failed=0
+json=false
+action=""
+app=""
+say() { if "$json"; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi; }
+fail() {
+  say "php-permissions: $*"
+  if "$json"; then
+    printf '{"app":"%s","action":"%s","checked":%s,"changed":%s,"failed":1,"clean":false}\n' "$app" "$action" "$checked" "$changed"
+  fi
+  exit 2
+}
+usage() { echo "Usage: php-permissions check <app> [--json] | php-permissions fix <app> [--recursive] [--dry-run] [--json]" >&2; exit 2; }
+
+[ "$#" -ge 2 ] || usage
+action="$1"
+app="$2"
+shift 2
+recursive=false
+dry_run=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --recursive) recursive=true ;;
+    --dry-run) dry_run=true ;;
+    --json) json=true ;;
+    *) usage ;;
+  esac
+  shift
+done
+[ "$action" = check ] || [ "$action" = fix ] || usage
+if [ "$action" = check ] && { [ "$recursive" != false ] || [ "$dry_run" != false ]; }; then usage; fi
+case "$app" in ''|*[!a-z0-9_-]*|[0-9_-]*) fail "invalid app name: $app";; esac
+
+env_file="$PHP_USERS_DIR/$app.env"
+[ -f "$env_file" ] || fail "identity file does not exist: $env_file"
+value() { awk -F= -v key="$2" '$1 == key { print substr($0, length(key) + 2); exit }' "$1"; }
+username="$(value "$env_file" USERNAME)"
+uid="$(value "$env_file" UID)"
+gid="$(value "$env_file" GID)"
+public_dir="$(value "$env_file" PUBLIC_DIR)"
+[ "$username" = "$app" ] || fail "invalid USERNAME in $env_file"
+case "$uid:$gid" in *[!0-9:]*|:*) fail "UID and GID must be numeric in $env_file";; esac
+case "$public_dir" in /*|../*|..|*/..|*/../*|*//*) fail "invalid PUBLIC_DIR in $env_file";; esac
+case "$public_dir" in *[!A-Za-z0-9._/-]*) fail "invalid PUBLIC_DIR in $env_file";; esac
+
+home="$PHP_HOME_ROOT/$app"
+www="$home/www"
+docroot="$www${public_dir:+/$public_dir}"
+case "$docroot" in "$www"|"$www"/*) ;; *) fail "document root escapes app www directory";; esac
+[ ! -L "$home" ] || fail "app home must not be a symlink: $home"
+[ ! -L "$www" ] || fail "www must not be a symlink: $www"
+[ ! -L "$docroot" ] || fail "document root must not be a symlink: $docroot"
+
+if [ "$dry_run" = false ]; then
+  "$IDENTITY_SYNC" "$app" || fail "identity synchronization failed"
+fi
+
+check_path() {
+  path="$1"; owner="$2"; group="$3"; mode="$4"
+  checked=$((checked + 1))
+  [ -e "$path" ] || { say "missing: $path"; failed=$((failed + 1)); return; }
+  actual_owner="$(stat -c '%U' "$path")"
+  actual_group="$(stat -c '%G' "$path")"
+  actual_mode="$(stat -c '%a' "$path")"
+  if [ "$actual_owner" != "$owner" ] || [ "$actual_group" != "$group" ] || [ "$actual_mode" != "$mode" ]; then
+    say "mismatch: $path owner=$actual_owner:$actual_group mode=$actual_mode (expected $owner:$group $mode)"
+    failed=$((failed + 1))
+  fi
+}
+
+apply_path() {
+  path="$1"; owner_group="$2"; mode="$3"
+  checked=$((checked + 1))
+  [ -e "$path" ] || { say "missing: $path"; failed=$((failed + 1)); return; }
+  if [ "$dry_run" = true ]; then say "would chown $owner_group $path; chmod $mode $path"; changed=$((changed + 1)); return; fi
+  chown --no-dereference "$owner_group" "$path"
+  chmod "$mode" "$path"
+  changed=$((changed + 1))
+}
+
+private_dirs() {
+  for d in .ssh .credentials .composer logs; do
+    path="$home/$d"
+    [ -e "$path" ] || continue
+    [ ! -L "$path" ] || { say "skipping symlink: $path"; continue; }
+    if [ "$action" = check ]; then check_path "$path" "$app" "$app" 700; else apply_path "$path" "$app:$app" 700; fi
+  done
+}
+
+ancestor_paths() {
+  path="$www"
+  while [ "$path" != "$docroot" ]; do
+    if [ "$action" = check ]; then check_path "$path" "$app" "$SOCKET_GROUP_NAME" 710; else apply_path "$path" "$app:$SOCKET_GROUP_NAME" 710; fi
+    next="${public_dir#*/}"
+    [ "$next" != "$public_dir" ] || break
+    part="${public_dir%%/*}"
+    public_dir="$next"
+    path="$path/$part"
+  done
+}
+
+if [ "$action" = check ]; then
+  check_path "$home" "$app" "$SOCKET_GROUP_NAME" 710
+  private_dirs
+  ancestor_paths
+  check_path "$docroot" "$app" "$SOCKET_GROUP_NAME" 2750
+else
+  apply_path "$home" "$app:$SOCKET_GROUP_NAME" 710
+  private_dirs
+  ancestor_paths
+  apply_path "$docroot" "$app:$SOCKET_GROUP_NAME" 2750
+  if [ "$recursive" = true ]; then
+    # First make the complete tree private. find -P and --no-dereference keep symlink targets untouched.
+    if [ "$dry_run" = true ]; then
+      say "would make private tree app-owned under $home"
+    else
+      find -P "$home" -type d -exec chown --no-dereference "$app:$app" {} +
+      find -P "$home" -type d -exec chmod 0700 {} +
+      find -P "$home" -type f -exec chown --no-dereference "$app:$app" {} +
+      find -P "$home" -type f -exec chmod go-rwx {} +
+    fi
+    # Reapply public policy without changing file owner execute bits.
+    if [ "$dry_run" = true ]; then
+      say "would make public tree nginx-readable under $docroot"
+    else
+      find -P "$docroot" -type d -exec chown --no-dereference "$app:$SOCKET_GROUP_NAME" {} +
+      find -P "$docroot" -type d -exec chmod 2750 {} +
+      find -P "$docroot" -type f -exec chown --no-dereference "$app:$SOCKET_GROUP_NAME" {} +
+      find -P "$docroot" -type f -exec chmod g+r,o-rwx {} +
+    fi
+    changed=$((changed + 1))
+    # Public and private top-level policies can have been overwritten by the private pass.
+    apply_path "$home" "$app:$SOCKET_GROUP_NAME" 710
+    private_dirs
+    ancestor_paths
+    apply_path "$docroot" "$app:$SOCKET_GROUP_NAME" 2750
+  fi
+fi
+
+clean=true
+[ "$failed" -eq 0 ] || clean=false
+if "$json"; then
+  printf '{"app":"%s","action":"%s","checked":%s,"changed":%s,"failed":%s,"clean":%s}\n' "$app" "$action" "$checked" "$changed" "$failed" "$clean"
+else
+  say "checked=$checked changed=$changed failed=$failed clean=$clean"
+fi
+[ "$failed" -eq 0 ] || exit 1

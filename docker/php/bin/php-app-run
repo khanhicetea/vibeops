@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "$#" -lt 3 ]; then
+  echo "Usage: php-app-run <app> <workdir> <command> [args...]" >&2
+  exit 2
+fi
+
+app="$1"
+workdir="$2"
+shift 2
+php-identity-sync "$app"
+exec php-cron-as "$app" "$workdir" "$@"

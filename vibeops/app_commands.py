@@ -21,7 +21,7 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     for domain in all_domains:
         assert_domain_free(domain, db, allow_app=app_name)
 
-    app = ensure_app_identity(app_name, php_version, db, uid=args.uid, no_mysql=args.no_mysql, mysql_password=getattr(args, "mysql_password", None), mysql_service=mysql_service, no_reload=args.no_reload)
+    app = ensure_app_identity(app_name, php_version, db, uid=args.uid, public_dir=public_dir, no_mysql=args.no_mysql, mysql_password=getattr(args, "mysql_password", None), mysql_service=mysql_service, no_reload=args.no_reload)
     if app.get("main_domain") and app.get("main_domain") != main_domain:
         die(f"App {app_name} already has main domain {app.get('main_domain')}; use app domain set-main")
     old_domains = set(app.get("domains") or [])

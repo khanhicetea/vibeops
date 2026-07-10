@@ -1,6 +1,6 @@
 [vibeops_fallback]
 user = www-data
-group = ${SOCKET_GROUP_NAME}
+group = www-data
 listen = /run/php-fpm/fallback.sock
 listen.owner = www-data
 listen.group = ${SOCKET_GROUP_NAME}

@@ -1,0 +1,82 @@
+#!/usr/bin/env sh
+set -eu
+
+SOCKET_GROUP_NAME="${SOCKET_GROUP_NAME:-nginxsock}"
+SOCKET_GID="${SOCKET_GID:-101}"
+PHP_USERS_DIR="${PHP_USERS_DIR:-/usr/local/etc/php/users.d}"
+PHP_FPM_RUN_DIR="${PHP_FPM_RUN_DIR:-/run/php-fpm}"
+
+fail() { echo "php-identity-sync: $*" >&2; exit 1; }
+
+safe_name() {
+  case "$1" in
+    ''|*[!a-z0-9_-]*|[0-9_-]* ) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+value_from_env() {
+  awk -F= -v key="$2" '$1 == key { print substr($0, length(key) + 2); exit }' "$1"
+}
+
+ensure_socket_group() {
+  if getent group "$SOCKET_GROUP_NAME" >/dev/null 2>&1; then
+    gid="$(getent group "$SOCKET_GROUP_NAME" | cut -d: -f3)"
+    [ "$gid" = "$SOCKET_GID" ] || fail "socket group $SOCKET_GROUP_NAME has GID $gid, expected $SOCKET_GID"
+  else
+    # The socket GID is intentionally allowed to duplicate an image group.
+    groupadd -o -g "$SOCKET_GID" "$SOCKET_GROUP_NAME"
+  fi
+}
+
+sync_one() {
+  file="$1"
+  [ -f "$file" ] || fail "identity file does not exist: $file"
+  username="$(value_from_env "$file" USERNAME)"
+  uid="$(value_from_env "$file" UID)"
+  gid="$(value_from_env "$file" GID)"
+  safe_name "$username" || fail "invalid USERNAME in $file"
+  case "$uid:$gid" in *[!0-9:]*|:*) fail "UID and GID must be numeric in $file";; esac
+
+  if getent group "$username" >/dev/null 2>&1; then
+    actual_gid="$(getent group "$username" | cut -d: -f3)"
+    [ "$actual_gid" = "$gid" ] || fail "group $username has GID $actual_gid, expected $gid; recreate the container"
+  else
+    if existing_group="$(getent group "$gid")"; then
+      fail "GID $gid is already used by ${existing_group%%:*}; recreate the container or choose another UID"
+    fi
+    groupadd -g "$gid" "$username"
+  fi
+
+  if id "$username" >/dev/null 2>&1; then
+    actual_uid="$(id -u "$username")"
+    actual_gid="$(id -g "$username")"
+    [ "$actual_uid" = "$uid" ] && [ "$actual_gid" = "$gid" ] || fail "user $username is $actual_uid:$actual_gid, expected $uid:$gid; recreate the container"
+  else
+    if existing_user="$(getent passwd "$uid")"; then
+      fail "UID $uid is already used by ${existing_user%%:*}; recreate the container or choose another UID"
+    fi
+    useradd -u "$uid" -g "$username" -d "/home/$username" -s /bin/sh -M "$username"
+  fi
+
+  if id -nG "$username" | tr ' ' '\n' | grep -Fx "$SOCKET_GROUP_NAME" >/dev/null; then
+    gpasswd -d "$username" "$SOCKET_GROUP_NAME"
+  fi
+}
+
+ensure_socket_group
+mkdir -p "$PHP_FPM_RUN_DIR"
+chown root:"$SOCKET_GROUP_NAME" "$PHP_FPM_RUN_DIR"
+chmod 0770 "$PHP_FPM_RUN_DIR"
+
+if [ "$#" -gt 0 ]; then
+  for username in "$@"; do
+    safe_name "$username" || fail "invalid username: $username"
+    sync_one "$PHP_USERS_DIR/$username.env"
+  done
+else
+  for file in "$PHP_USERS_DIR"/*.env; do
+    [ -e "$file" ] || continue
+    sync_one "$file"
+  done
+fi

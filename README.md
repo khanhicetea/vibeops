@@ -324,17 +324,29 @@ docker compose up -d phpXX
 ./manage.py app create myapp example.com --php 8.x
 ```
 
-## Important permission detail
+## Identity and permission management
 
-The official Debian-based Nginx image runs workers as GID `101`. PHP-FPM sockets are created with `SOCKET_GID=101` via `.env`, so Nginx can access them across containers. App files are group-readable so Nginx can serve static assets directly.
+Each app has a private Linux user and group with the same numeric UID/GID. PHP-FPM workers run as that private group; `nginxsock` (normally GID `101`) is only the shared **socket group** so Nginx can open FPM sockets and read public files. App users are not members of `nginxsock`.
 
-For very large `/home/<app_name>` directories you can disable automatic recursive ownership fixes:
+Container startup and `apply` synchronize identities but never recursively traverse app homes. Diagnose an identity issue with:
 
-```env
-FIX_HOME_OWNERSHIP=0
+```bash
+./manage.py identity sync shop
+./manage.py identity sync --all
 ```
 
-Then manage ownership yourself.
+Filesystem repair is explicit. Check first, use `--dry-run` before a large repair, and use `--json` for automation:
+
+```bash
+./manage.py permissions check shop
+./manage.py permissions check --all
+./manage.py permissions fix shop
+./manage.py permissions fix shop --recursive --dry-run
+./manage.py permissions fix shop --recursive
+./manage.py permissions check shop --json
+```
+
+A recursive repair can scan a large tree. It keeps private paths private and reapplies Nginx-readable group policy only below the selected document root. `manage.py exec` and `shell` create files as the app user; public directories inherit the Nginx-readable group policy after an explicit repair.
 
 ## MySQL databases and backups
 

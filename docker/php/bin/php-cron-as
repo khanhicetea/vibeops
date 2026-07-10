@@ -23,8 +23,8 @@ if [ ! -d "$APP_WORKDIR" ]; then
   exit 1
 fi
 
-mkdir -p "$APP_COMPOSER_HOME" 2>/dev/null || true
-chown "$APP_USER" "$APP_COMPOSER_HOME" 2>/dev/null || true
+mkdir -p "$APP_COMPOSER_HOME"
+chown "$APP_USER:$APP_USER" "$APP_COMPOSER_HOME"
 
 cd "$APP_WORKDIR"
 exec gosu "$APP_USER" env \

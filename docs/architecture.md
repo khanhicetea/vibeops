@@ -53,6 +53,18 @@ compose.d/*.yml             # loaded by ./manage.py compose
 
 Use `./manage.py compose ...` when you want all local fragments included. See `docs/customization.md` for examples, edge cases, and do/don't guidance.
 
+## Identity and permission planes
+
+Rendered `users.d/<app>.env` metadata records `USERNAME`, `UID`, matching private `GID`, and `PUBLIC_DIR`. PHP startup creates/reconciles only those Linux identities; it does not touch app homes. FPM workers use the app-private group, while the Unix socket remains group-owned by `nginxsock` for Nginx interoperability.
+
+Filesystem policy is an explicit, app-scoped operation: `./manage.py permissions check <app>` reports drift and `./manage.py permissions fix <app> [--recursive]` repairs it. Private app paths remain `app:app`; the selected document root is group-readable/traversable by Nginx. The reload lifecycle is:
+
+```text
+render -> identity sync -> php-fpm -tt -> reload
+```
+
+The non-Docker test suite validates command construction and safe validation on macOS; Linux container ownership, socket access, and Nginx access still require Linux/CI verification.
+
 ## Cron layout
 
 Cron is version-scoped to match the Docker services:

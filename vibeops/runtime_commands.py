@@ -52,7 +52,6 @@ def cmd_app_shell(args: argparse.Namespace) -> None:
 def cmd_app_exec(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
-    php_service = php_service_for(php_version)
     php_cli_service = php_cli_service_for(php_version)
     workdir = args.workdir or f"/home/{app_name}/{DOCROOT_NAME}"
     command = args.command or ["sh"]
@@ -65,16 +64,13 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
 
     if not docker_available():
         die("docker is required")
-    if service_running(php_service):
-        run(["docker", "compose", "exec", "-T", php_service, "php-user-sync", app_name], check=False)
-
     tty_args: list[str] = []
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         tty_args.append("-T")
     os.execvp("docker", [
         "docker", "compose", "run", "--rm", *tty_args,
         php_cli_service,
-        "php-cron-as", app_name, workdir,
+        app_name, workdir,
         *command,
     ])
 
@@ -196,12 +192,17 @@ def cmd_apply(args: argparse.Namespace) -> None:
     if docker_available() and service_running("nginx"):
         run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])
     nginx_reload(False)
-    php_versions = {str(app.get("php_version") or default_php_version()) for app in db.get("apps", {}).values() if isinstance(app, dict)}
-    for version in sorted(php_versions):
+    apps_by_version: dict[str, list[str]] = {}
+    for app_name, app in db.get("apps", {}).items():
+        if isinstance(app, dict):
+            version = str(app.get("php_version") or default_php_version())
+            apps_by_version.setdefault(version, []).append(app_name)
+    for version, app_names in sorted(apps_by_version.items()):
         service = php_service_for(version)
         if service_running(service):
+            run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
             run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"])
-            run(["docker", "compose", "kill", "-s", "USR2", service], check=False)
+            run(["docker", "compose", "kill", "-s", "USR2", service])
     cron_versions = {str(cron.get("php_version") or default_php_version()) for cron in db.get("crons", {}).values() if isinstance(cron, dict)}
     for version in sorted(cron_versions):
         cron_reload(php_cron_service_for(version))

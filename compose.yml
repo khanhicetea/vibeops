@@ -8,7 +8,6 @@ x-php-common: &php-common
     TZ: ${TZ:-Asia/Ho_Chi_Minh}
     SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
     SOCKET_GID: ${SOCKET_GID:-101}
-    FIX_HOME_OWNERSHIP: ${FIX_HOME_OWNERSHIP:-1}
   depends_on:
     mysql84:
       condition: service_healthy
@@ -40,7 +39,9 @@ x-php84-volumes: &php84-volumes
   - ./runtime/generated/php/versions/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./runtime/generated/php/versions/8.4/users.d:/usr/local/etc/php/users.d:ro
   - ./runtime/generated/cron/php84:/usr/local/etc/php/cron.d:ro
-  - ./docker/php/bin/php-user-sync:/usr/local/bin/php-user-sync:ro
+  - ./docker/php/bin/php-identity-sync:/usr/local/bin/php-identity-sync:ro
+  - ./docker/php/bin/php-permissions:/usr/local/bin/php-permissions:ro
+  - ./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro
   - ./docker/php/bin/php-cron-as:/usr/local/bin/php-cron-as:ro
   - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
 
@@ -52,7 +53,9 @@ x-php85-volumes: &php85-volumes
   - ./runtime/generated/php/versions/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./runtime/generated/php/versions/8.5/users.d:/usr/local/etc/php/users.d:ro
   - ./runtime/generated/cron/php85:/usr/local/etc/php/cron.d:ro
-  - ./docker/php/bin/php-user-sync:/usr/local/bin/php-user-sync:ro
+  - ./docker/php/bin/php-identity-sync:/usr/local/bin/php-identity-sync:ro
+  - ./docker/php/bin/php-permissions:/usr/local/bin/php-permissions:ro
+  - ./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro
   - ./docker/php/bin/php-cron-as:/usr/local/bin/php-cron-as:ro
   - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
 
@@ -92,7 +95,7 @@ services:
     image: *php84-image
     restart: unless-stopped
     build: *php84-build
-    command: ["sh", "-lc", "php-user-sync && exec php-fpm -F"]
+    command: ["sh", "-lc", "php-identity-sync && exec php-fpm -F"]
     volumes: *php84-volumes
 
   php85:
@@ -100,7 +103,7 @@ services:
     image: *php85-image
     restart: unless-stopped
     build: *php85-build
-    command: ["sh", "-lc", "php-user-sync && exec php-fpm -F"]
+    command: ["sh", "-lc", "php-identity-sync && exec php-fpm -F"]
     volumes: *php85-volumes
 
   # Cron services: scheduler only. manage.py reloads Supercronic with SIGUSR2 after cron changes.
@@ -109,7 +112,7 @@ services:
     image: *php84-image
     restart: unless-stopped
     build: *php84-build
-    command: ["sh", "-lc", "php-user-sync && exec php-supercronic"]
+    command: ["sh", "-lc", "php-identity-sync && exec php-supercronic"]
     volumes: *php84-volumes
 
   php85-cron:
@@ -117,7 +120,7 @@ services:
     image: *php85-image
     restart: unless-stopped
     build: *php85-build
-    command: ["sh", "-lc", "php-user-sync && exec php-supercronic"]
+    command: ["sh", "-lc", "php-identity-sync && exec php-supercronic"]
     volumes: *php85-volumes
 
   # Ephemeral CLI/shell services for deploy work. Use docker compose run --rm php85-cli ...
@@ -126,7 +129,7 @@ services:
     image: *php84-image
     profiles: ["cli"]
     build: *php84-build
-    entrypoint: ["sh", "-lc", "php-user-sync && exec \"$@\"", "--"]
+    entrypoint: ["php-app-run"]
     command: ["bash"]
     volumes: *php84-volumes
 
@@ -135,7 +138,7 @@ services:
     image: *php85-image
     profiles: ["cli"]
     build: *php85-build
-    entrypoint: ["sh", "-lc", "php-user-sync && exec \"$@\"", "--"]
+    entrypoint: ["php-app-run"]
     command: ["bash"]
     volumes: *php85-volumes
 

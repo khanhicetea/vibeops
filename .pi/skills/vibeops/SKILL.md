@@ -101,7 +101,7 @@ The vhost's `fastcgi_pass` should point to `/run/php-fpm/php84/<user>.sock` or `
 - Do not commit `.env`, live certificates/private keys, database dumps, or generated ACME account state.
 - Test Nginx config before reload: `docker compose exec -T nginx nginx -t`.
 - Test PHP-FPM config after pool changes: `docker compose exec -T php85 php-fpm -tt`.
-- For large homes, consider `FIX_HOME_OWNERSHIP=0` to avoid slow recursive ownership fixes.
+- PHP startup synchronizes identities only. Diagnose or repair app filesystem policy explicitly with `./manage.py permissions check <app>` and `./manage.py permissions fix <app> --recursive`.
 
 ## Troubleshooting shortcuts
 
