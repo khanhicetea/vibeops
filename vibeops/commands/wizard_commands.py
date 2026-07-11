@@ -5,6 +5,7 @@ import argparse
 import re
 import shlex
 import sys
+from typing import Any
 
 from vibeops.commands.app_commands import (
     cmd_app_create,
@@ -24,7 +25,7 @@ from vibeops.commands.db_commands import (
     cmd_db_restore,
 )
 from vibeops.utils.env import FPM_PROFILE_NAMES, default_fpm_profile, default_mysql_service, default_php_version
-from vibeops.utils.errors import die, info, warn
+from vibeops.utils.errors import StackError, die, info, warn
 from vibeops.services.mysql import mysql_backup_dir
 from vibeops.utils.paths import rel
 from vibeops.commands.permission_commands import cmd_permissions
@@ -33,7 +34,6 @@ from vibeops.commands.runtime_commands import (
     WizardBack,
     available_php_versions,
     cmd_app_shell,
-    cmd_list,
     cmd_status,
     print_plan,
     prompt_aliases,
@@ -117,10 +117,15 @@ def wizard_create_proxy() -> None:
         cmd_proxy_create(argparse.Namespace(domain=domain, upstream=upstream, alias=aliases, aliases=None, no_reload=no_reload))
 
 
-def wizard_tls_acme() -> None:
+def wizard_tls_acme(app_name: str) -> None:
     db = load_db()
-    domains = sorted(db.get("domains", {}).keys())
-    domain = prompt_pick("Domain", domains) if domains else prompt_validated("Domain", DOMAIN_RE, "domain")
+    app = db.get("apps", {}).get(app_name)
+    if not isinstance(app, dict) or not app.get("main_domain"):
+        die(f"App {app_name} has no domain to configure")
+    domain = str(app["main_domain"])
+    tls = app.get("tls")
+    current_mode = tls.get("mode", "self-signed") if isinstance(tls, dict) else "self-signed"
+    info(f"Current TLS mode for {domain}: {current_mode}")
     off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
     no_redirect_https = False if off else not prompt_confirm("Redirect HTTP to HTTPS after ACME?", True)
     no_reload = not prompt_confirm("Reload nginx if running?", True)
@@ -129,18 +134,24 @@ def wizard_tls_acme() -> None:
         cmd_tls_acme(argparse.Namespace(domain=domain, off=off, no_redirect_https=no_redirect_https, no_reload=no_reload))
 
 
-def wizard_check_permissions() -> None:
-    app_name, _ = wizard_select_app()
-    print_plan([f"check filesystem permissions for {app_name}"])
-    info("\nEquivalent command:")
-    info(f"  ./manage.py permissions check {shlex.quote(app_name)}")
-    if prompt_confirm("Continue?", True):
+def wizard_check_permissions(app_name: str | None = None) -> None:
+    if app_name is None:
+        app_name, _ = wizard_select_app()
+    info(f"\nChecking filesystem permissions for {app_name}…")
+    info(f"Equivalent command: ./manage.py permissions check {shlex.quote(app_name)}")
+    try:
         cmd_permissions(argparse.Namespace(permission_action="check", app_name=app_name, all=False, json=False))
+    except StackError as exc:
+        warn(str(exc))
+        warn(f"Permission check failed. Suggested fix: ./manage.py permissions fix {shlex.quote(app_name)} --recursive")
+        if prompt_confirm("Fix permissions now?", False):
+            wizard_fix_permissions(app_name)
 
 
-def wizard_fix_permissions() -> None:
-    app_name, _ = wizard_select_app()
-    recursive = prompt_confirm("Repair the complete app tree recursively?", False)
+def wizard_fix_permissions(app_name: str | None = None) -> None:
+    if app_name is None:
+        app_name, _ = wizard_select_app()
+    recursive = prompt_confirm("Repair the complete app tree recursively?", True)
     command = f"./manage.py permissions fix {shlex.quote(app_name)}" + (" --recursive" if recursive else "")
     print_plan([f"repair filesystem permissions for {app_name}", "recursive: " + ("yes" if recursive else "no")])
     info("\nEquivalent command:")
@@ -163,8 +174,13 @@ def wizard_select_app(*, require_vhost: bool = False) -> tuple[str, dict[str, An
     return apps[labels.index(label)]
 
 
-def wizard_manage_domains() -> None:
-    app_name, _ = wizard_select_app(require_vhost=True)
+def wizard_manage_domains(app_name: str | None = None) -> None:
+    if app_name is None:
+        app_name, _ = wizard_select_app(require_vhost=True)
+    app = load_db().get("apps", {}).get(app_name)
+    if not isinstance(app, dict) or not app.get("main_domain"):
+        warn(f"App {app_name} has no domain. Re-run Create app to add its vhost first.")
+        return
     while True:
         info(f"\nDomains for {app_name}:")
         cmd_app_domain_list(argparse.Namespace(app_name=app_name))
@@ -172,10 +188,12 @@ def wizard_manage_domains() -> None:
         app = db["apps"][app_name]
         domains = list(dict.fromkeys(app.get("domains") or [app["main_domain"]]))
         try:
-            action = prompt_choice("Domain action", ["Add domain", "Delete domain", "Change main domain"])
+            action = prompt_choice("Domain action", ["Add domain", "Delete domain", "Change main domain", "TLS / ACME"])
             if action == "Back":
                 return
-            if action == "Add domain":
+            if action == "TLS / ACME":
+                wizard_tls_acme(app_name)
+            elif action == "Add domain":
                 domain = prompt_validated("Domain", DOMAIN_RE, "domain")
                 no_reload = not prompt_confirm("Reload nginx if running?", True)
                 print_plan([f"add {domain} to app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
@@ -207,8 +225,9 @@ def wizard_manage_domains() -> None:
             continue
 
 
-def wizard_manage_databases() -> None:
-    app_name, app = wizard_select_app()
+def wizard_manage_databases(app_name: str | None = None, app: dict[str, Any] | None = None) -> None:
+    if app_name is None or app is None:
+        app_name, app = wizard_select_app()
     while True:
         info(f"\nDatabases for {app_name}:")
         cmd_app_db_list(argparse.Namespace(app_name=app_name))
@@ -392,39 +411,22 @@ def wizard_db_restore(*, default_service: str | None = None) -> None:
     )
 
 
-def wizard_backup_restore_menu() -> None:
-    """Top-level TUI entry for database backup / restore."""
+def wizard_manage_crons(app_name: str, app: dict[str, Any]) -> None:
     while True:
-        try:
-            action = prompt_choice(
-                "Backup / restore",
-                ["Backup databases", "List backups", "Restore a backup"],
-            )
-            if action == "Back":
-                return
-            if action == "Backup databases":
-                wizard_db_backup()
-            elif action == "List backups":
-                wizard_db_list_backups()
-            else:
-                wizard_db_restore()
-        except WizardBack:
-            continue
-
-
-def wizard_manage_crons() -> None:
-    while True:
-        info("\nCron jobs:")
-        cmd_cron_list(argparse.Namespace())
+        info(f"\nCron jobs for {app_name}:")
+        cmd_cron_list(argparse.Namespace(app_name=app_name))
         db = load_db()
-        crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
+        crons = [
+            (key, cron) for key, cron in sorted(db.get("crons", {}).items())
+            if isinstance(cron, dict) and cron.get("app") == app_name
+        ]
         actions = ["Create cron job"] + (["Delete cron job"] if crons else [])
         try:
             action = prompt_choice("Cron action", actions)
             if action == "Back":
                 return
             if action == "Create cron job":
-                wizard_cron()
+                wizard_cron(app_name, app)
                 continue
             labels = [f"{key} ({cron.get('schedule', '')}: {cron.get('command', '')})" for key, cron in crons]
             selected = prompt_pick("Cron number to delete", labels)
@@ -437,18 +439,8 @@ def wizard_manage_crons() -> None:
             continue
 
 
-def wizard_cron() -> None:
-    db = load_db()
-    apps = [a for a in db.get("apps", {}).values() if isinstance(a, dict) and a.get("name")]
-    labels = [f"{a.get('name')} (php {a.get('php_version', default_php_version())})" for a in apps]
-    label = prompt_pick("App", labels) if labels else ""
-    if label:
-        app = apps[labels.index(label)]
-        app_name = str(app.get("name"))
-        php = str(app.get("php_version") or default_php_version())
-    else:
-        app_name = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
-        php = prompt_pick("PHP version", available_php_versions(), default_php_version())
+def wizard_cron(app_name: str, app: dict[str, Any]) -> None:
+    php = str(app.get("php_version") or default_php_version())
     job_name = prompt_validated("Job name", JOB_RE, "job name")
     schedule = prompt_text("Schedule", "* * * * *")
     command = prompt_text("Command", "php artisan schedule:run")
@@ -466,60 +458,45 @@ def wizard_cron() -> None:
         cmd_cron_create(argparse.Namespace(app_name=app_name, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir, timezone=timezone, output=output, timeout=timeout, lock=lock))
 
 
+def wizard_manage_app() -> None:
+    app_name, app = wizard_select_app()
+    actions = ["Domains", "Databases", "Cron jobs", "App shell", "Check permissions"]
+    while True:
+        app = load_db().get("apps", {}).get(app_name, app)
+        info(f"\nManage app: {app_name} (main: {app.get('main_domain', '-')})")
+        try:
+            action = prompt_choice("App action", actions)
+            if action == "Back":
+                return
+            if action == "Domains":
+                wizard_manage_domains(app_name)
+            elif action == "Databases":
+                wizard_manage_databases(app_name, app)
+            elif action == "Cron jobs":
+                wizard_manage_crons(app_name, app)
+            elif action == "App shell":
+                cmd_app_shell(argparse.Namespace(app_name=app_name, php=None, workdir=None, shell="bash"))
+            else:
+                wizard_check_permissions(app_name)
+        except WizardBack:
+            continue
+
+
 def cmd_wizard(args: argparse.Namespace) -> None:
     if not sys.stdin.isatty():
         die("wizard requires an interactive terminal")
-    actions = [
-        "Create app identity",
-        "Create app",
-        "Create reverse proxy",
-        "Enable/switch TLS ACME",
-        "Manage cron jobs",
-        "Manage app domains",
-        "Manage app databases",
-        "Backup / restore databases",
-        "Check app permissions",
-        "Fix app permissions",
-        "Open app shell",
-        "Show status",
-        "List apps/domains/crons",
-    ]
+    actions = ["Create app", "Manage app", "Show services status"]
     while True:
         info("\nVibeOps")
         action = prompt_choice("What do you want to do?", actions, zero="Quit")
         if action == "Quit":
             return
         try:
-            if action == "Create app identity":
-                wizard_create_user()
-            elif action == "Create app":
+            if action == "Create app":
                 wizard_create_site()
-            elif action == "Create reverse proxy":
-                wizard_create_proxy()
-            elif action == "Enable/switch TLS ACME":
-                wizard_tls_acme()
-            elif action == "Manage cron jobs":
-                wizard_manage_crons()
-            elif action == "Manage app domains":
-                wizard_manage_domains()
-            elif action == "Manage app databases":
-                wizard_manage_databases()
-            elif action == "Backup / restore databases":
-                wizard_backup_restore_menu()
-            elif action == "Check app permissions":
-                wizard_check_permissions()
-            elif action == "Fix app permissions":
-                wizard_fix_permissions()
-            elif action == "Open app shell":
-                cmd_app_shell(argparse.Namespace(app_name=None, php=None, workdir=None, shell="bash"))
-            elif action == "Show status":
-                cmd_status(argparse.Namespace(check_nginx=False))
-            elif action == "List apps/domains/crons":
-                kind = prompt_pick("List", ["apps", "domains", "crons", "all"], "apps")
-                cmd_list(argparse.Namespace(kind=kind))
+            elif action == "Manage app":
+                wizard_manage_app()
             else:
-                return
+                cmd_status(argparse.Namespace(check_nginx=False))
         except WizardBack:
             continue
-        if not prompt_confirm("Back to menu?", True):
-            return

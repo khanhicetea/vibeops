@@ -97,6 +97,90 @@ class PasswordFlagDiscourageTests(unittest.TestCase):
         self.assertIn("shell history", err.getvalue())
 
 
+class WizardMenuRefactorTests(unittest.TestCase):
+    def test_main_menu_is_focused(self) -> None:
+        from vibeops.commands import wizard_commands
+
+        with (
+            mock.patch.object(wizard_commands.sys.stdin, "isatty", return_value=True),
+            mock.patch.object(wizard_commands, "prompt_choice", return_value="Quit") as choice,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.cmd_wizard(mock.Mock())
+
+        self.assertEqual(
+            choice.call_args.args[1],
+            ["Create app", "Manage app", "Show services status"],
+        )
+        self.assertEqual(choice.call_args.kwargs["zero"], "Quit")
+
+    def test_manage_app_menu_passes_selected_app_to_scoped_manager(self) -> None:
+        from vibeops.commands import wizard_commands
+
+        app = {"name": "shop", "main_domain": "shop.example.com", "php_version": "8.5"}
+        with (
+            mock.patch.object(wizard_commands, "wizard_select_app", return_value=("shop", app)),
+            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
+            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Domains", "Back"]) as choice,
+            mock.patch.object(wizard_commands, "wizard_manage_domains") as domains,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_app()
+
+        self.assertEqual(
+            choice.call_args_list[0].args[1],
+            ["Domains", "Databases", "Cron jobs", "App shell", "Check permissions"],
+        )
+        domains.assert_called_once_with("shop")
+
+    def test_tls_acme_is_inside_app_domains_menu(self) -> None:
+        from vibeops.commands import wizard_commands
+
+        app = {"name": "shop", "main_domain": "shop.example.com", "domains": ["shop.example.com"]}
+        with (
+            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
+            mock.patch.object(wizard_commands, "cmd_app_domain_list"),
+            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["TLS / ACME", "Back"]) as choice,
+            mock.patch.object(wizard_commands, "wizard_tls_acme") as tls,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_domains("shop")
+
+        self.assertIn("TLS / ACME", choice.call_args_list[0].args[1])
+        tls.assert_called_once_with("shop")
+
+    def test_backup_and_restore_are_inside_app_database_menu(self) -> None:
+        from vibeops.commands import wizard_commands
+
+        app = {"name": "shop", "mysql_service": "mysql84"}
+        with (
+            mock.patch.object(wizard_commands, "cmd_app_db_list"),
+            mock.patch.object(wizard_commands, "prompt_choice", return_value="Back") as choice,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_databases("shop", app)
+
+        actions = choice.call_args.args[1]
+        self.assertIn("Backup app databases", actions)
+        self.assertIn("Restore a backup", actions)
+
+    def test_failed_permission_check_suggests_and_offers_fix(self) -> None:
+        from vibeops.commands import wizard_commands
+        from vibeops.utils.errors import StackError
+
+        with (
+            mock.patch.object(wizard_commands, "cmd_permissions", side_effect=StackError("permission operation failed")),
+            mock.patch.object(wizard_commands, "prompt_confirm", return_value=False) as confirm,
+            mock.patch.object(wizard_commands, "warn") as warning,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_check_permissions("shop")
+
+        messages = [call.args[0] for call in warning.call_args_list]
+        self.assertTrue(any("permissions fix shop --recursive" in message for message in messages))
+        confirm.assert_called_once_with("Fix permissions now?", False)
+
+
 class WizardUsesPromptPasswordTests(unittest.TestCase):
     def test_wizard_create_user_calls_prompt_password(self) -> None:
         from vibeops.commands import wizard_commands

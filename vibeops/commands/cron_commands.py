@@ -152,9 +152,18 @@ def cmd_cron_list(args: argparse.Namespace) -> None:
     from vibeops.ui.table import print_table
 
     db = load_db()
-    crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
+    app_name = getattr(args, "app_name", None)
+    if app_name is not None:
+        app_name = validate(app_name, APP_NAME_RE, "app_name")
+    crons = [
+        (key, cron) for key, cron in sorted(db.get("crons", {}).items())
+        if isinstance(cron, dict) and (app_name is None or cron.get("app") == app_name)
+    ]
     if not crons:
-        info("No crons in state. Create one with: ./manage.py cron create <app_name> <name> '<schedule>' '<command>'")
+        if app_name:
+            info(f"No cron jobs for {app_name}.")
+        else:
+            info("No crons in state. Create one with: ./manage.py cron create <app_name> <name> '<schedule>' '<command>'")
         return
     rows = []
     for index, (key, cron) in enumerate(crons, start=1):

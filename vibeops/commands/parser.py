@@ -206,6 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
     cron_create.add_argument("--output", choices=["docker", "file"], default="docker", help="Docker logs or a private versioned file under /home/<app>/logs")
     cron_create.set_defaults(func=cron_commands.cmd_cron_create)
     cron_list = cron_sub.add_parser("list", help="List cron jobs with selection numbers")
+    cron_list.add_argument("--app", dest="app_name", help="Only cron jobs for this app")
     cron_list.set_defaults(func=cron_commands.cmd_cron_list)
     cron_remove = cron_sub.add_parser("remove", aliases=["delete"], help="Remove an app cron job and reload Supercronic")
     cron_remove.add_argument("app_name", nargs="?", help="Cron app name")

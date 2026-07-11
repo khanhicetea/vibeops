@@ -108,7 +108,7 @@ For guided operations, run the no-dependency Python wizard:
 ./manage.py tui
 ```
 
-The wizard can create apps, app domains and databases, proxy vhosts, TLS/ACME config, cron jobs, open app shells, back up and restore MySQL dumps (plain `.sql` or gzip `.sql.gz`), and show stack status. Its domain, cron, and database managers present numbered listings for common selections, then refresh after changes. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
+The wizard keeps its main menu focused on **Create app**, **Manage app**, and **Show services status**. **Manage app** first selects an app, then exposes app-scoped domain (including TLS/ACME), database (including backup/restore), cron, shell, and permission-check actions. A failed permission check suggests and can launch an explicit repair. Managers present numbered listings, refresh after changes, preview mutating plans, and print equivalent CLI commands for common flows.
 
 For a quick dashboard without entering the wizard:
 
@@ -404,7 +404,7 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 
 `db shell` (root) uses the mounted root option file. `db shell --user <app>` reads the app credential file under `runtime/home/<app>/.credentials/` and transfers credentials into the MySQL container through a short-lived mode-600 option file created over stdin (random path under `/run`, removed after the session). App passwords are **not** placed in host `docker compose` command arguments. This protects process listings and host telemetry; the Docker daemon and container root can still observe in-container state for the duration of the shell.
 
-Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. Guided backup/restore is also available via `./manage.py wizard` / `./manage.py tui` (**Backup / restore databases**, and under **Manage app databases**).
+Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. Guided backup/restore is available via `./manage.py wizard` / `./manage.py tui` under **Manage app → Databases**.
 
 #### Backup and restore semantics
 
