@@ -229,7 +229,7 @@ runtime/generated/cron/php85/.supercronic.cron
 
 The job runs in the `php85-cron` container as the private `shop:shop` identity, from `/home/shop/www`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. The root scheduler uses the narrow `php-cron-as` helper only to validate inputs and drop privileges; it never creates, chowns, or repairs app paths. `manage.py` atomically merges `jobs/*.cron` into `.supercronic.cron`, validates a running scheduler with `supercronic -test`, and reloads PID 1 with `SIGUSR2`.
 
-Every PHP version receives a valid crontab during `render`. With no app jobs it contains an infrequent `/bin/true` job, so Supercronic remains running and the first real job never requires a container restart. Do not scale a cron service to multiple replicas, or jobs will run more than once.
+Every PHP version receives a valid crontab during `render`. It always contains a daily maintenance job, so Supercronic remains running even with no app jobs and the first real job never requires a container restart. Do not scale a cron service to multiple replicas, or jobs will run more than once.
 
 Cron supports bounded workdirs, IANA timezones, timeouts, app-scoped shared locks, and optional private file output:
 
@@ -240,7 +240,7 @@ Cron supports bounded workdirs, IANA timezones, timeouts, app-scoped shared lock
   --php 8.5 --output file
 ```
 
-Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-cron-service>-<job>.log`; a version-scoped daily logrotate job retains 14 compressed rotations without changing the live file's UID/GID. The same policy covers that version's PHP-FPM error and slow logs under the app log directory. Scheduler health and Prometheus metrics are available inside the backend network at `http://php85-cron:9746/health` and `/metrics` (similarly for PHP 8.4).
+Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-cron-service>-<job>.log`. The always-present daily logrotate job retains 14 rotations as dated archives such as `.log-2026-07-11` (with older archives compressed), without changing the live file's UID/GID. The same policy covers that version's PHP-FPM error and slow logs. Scheduler health and Prometheus metrics are available inside the backend network at `http://php85-cron:9746/health` and `/metrics` (similarly for PHP 8.4).
 
 ## Change an app's PHP version
 

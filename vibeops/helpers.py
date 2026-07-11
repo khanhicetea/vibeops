@@ -488,6 +488,8 @@ def rebuild_supercronic_crontab(php_version: str) -> Path:
     write_text_atomic(logrotate_config, f"""/home/*/logs/cron-{php_cron_service}-*.log /home/*/logs/fpm-php-{php_version}.error.log /home/*/logs/fpm-php-{php_version}.slow.log {{
     daily
     rotate 14
+    dateext
+    dateformat -%Y-%m-%d
     compress
     delaycompress
     missingok
@@ -501,16 +503,10 @@ def rebuild_supercronic_crontab(php_version: str) -> Path:
         "SHELL=/bin/sh",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "",
-        "# Rotate optional app-owned cron file logs without replacing their UID/GID.",
-        "17 3 * * * /usr/sbin/logrotate -s /var/lib/logrotate/vibeops-cron.status /usr/local/etc/php/cron.d/.logrotate.conf",
+        "# Always rotate app-owned cron output and FPM logs into dated archives.",
+        f"17 3 * * * /usr/sbin/logrotate -s /var/lib/logrotate/vibeops-{php_cron_service}.status /usr/local/etc/php/cron.d/.logrotate.conf",
         "",
     ]
-    if not job_files:
-        lines.extend([
-            "# Keep Supercronic alive and reloadable when there are no app jobs.",
-            "0 0 1 1 * /bin/true",
-            "",
-        ])
     for cron_file in job_files:
         lines.append(f"# /usr/local/etc/php/cron.d/{cron_file.name}")
         lines.append(cron_file.read_text().rstrip("\n"))

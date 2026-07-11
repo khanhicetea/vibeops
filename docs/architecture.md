@@ -76,11 +76,11 @@ runtime/generated/cron/php85/jobs/*.cron
 runtime/generated/cron/php85/.supercronic.cron
 ```
 
-`manage.py cron create` writes one job file under `jobs/`, then atomically rebuilds `.supercronic.cron`. Every configured PHP version gets a valid combined crontab; when it has no app jobs, an infrequent `/bin/true` entry keeps Supercronic running and reloadable. A running scheduler validates the new file with `supercronic -test` before receiving `SIGUSR2`.
+`manage.py cron create` writes one job file under `jobs/`, then atomically rebuilds `.supercronic.cron`. Every configured PHP version gets a valid combined crontab with an always-present daily maintenance entry, which keeps Supercronic running and reloadable even when there are no app jobs. A running scheduler validates the new file with `supercronic -test` before receiving `SIGUSR2`.
 
 Supercronic remains root only as the scheduler. Each generated entry calls `php-cron-as`, which validates an app-bounded workdir and drops to the app's private UID/GID without provisioning or permission repair. Jobs inherit `umask 0027`, app `HOME`/Composer environment, and identifying `VIBEOPS_*` variables. Same-entry overlap is suppressed by Supercronic; optional app-scoped `flock` names coordinate related jobs, and optional GNU `timeout` limits runtime.
 
-Operational output defaults to structured container stdout/stderr and Docker `local` driver rotation. File output is explicitly opt-in and writes as the app user below `/home/<app>/logs`; generated version-specific logrotate config uses `copytruncate` so rotation does not replace the app-owned live file. Supercronic exposes `/health` and `/metrics` on backend-only port 9746.
+Operational output defaults to structured container stdout/stderr and Docker `local` driver rotation. File output is explicitly opt-in and writes as the app user below `/home/<app>/logs`. The always-present daily logrotate entry retains 14 date-suffixed cron and PHP-FPM log rotations; `copytruncate` preserves the app-owned live files. Supercronic exposes `/health` and `/metrics` on backend-only port 9746.
 
 ## App model
 

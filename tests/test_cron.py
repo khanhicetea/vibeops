@@ -44,16 +44,18 @@ class CronValidationTests(unittest.TestCase):
 
 
 class CronRenderTests(unittest.TestCase):
-    def test_empty_crontab_keeps_supercronic_alive(self) -> None:
+    def test_empty_crontab_has_daily_maintenance_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.object(helpers, "CRON_RUNTIME_DIR", Path(tmp)):
             combined = helpers.rebuild_supercronic_crontab("8.5")
             content = combined.read_text()
-            self.assertIn("/bin/true", content)
-            self.assertIn("logrotate", content)
+            self.assertNotIn("/bin/true", content)
+            self.assertIn("/usr/sbin/logrotate", content)
             rotation = combined.parent / ".logrotate.conf"
             rotation_content = rotation.read_text()
             self.assertIn("cron-php85-cron-*.log", rotation_content)
             self.assertIn("fpm-php-8.5.error.log", rotation_content)
+            self.assertIn("dateext", rotation_content)
+            self.assertIn("dateformat -%Y-%m-%d", rotation_content)
 
     def test_nonempty_crontab_does_not_add_dummy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.object(helpers, "CRON_RUNTIME_DIR", Path(tmp)):
