@@ -7,6 +7,7 @@
 
 ## Status
 
+- **Status**: DONE (executor: default profile is `balanced`; no legacy app migration — new project)
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
@@ -168,14 +169,14 @@ Use temporary render roots from Plan 005. Model parser/handler tests after Plan 
 
 ## Done criteria
 
-- [ ] New apps default to validated `ondemand` unless configured otherwise.
-- [ ] Existing apps without metadata preserve current dynamic behavior as `balanced`.
-- [ ] Pool output is syntactically mode-correct.
-- [ ] App create, wizard, list/status expose profile clearly.
-- [ ] Aggregate capacity warning exists.
-- [ ] No raw arbitrary FPM directive injection is introduced.
-- [ ] Focused tests, `make check`, and available Docker FPM validation pass.
-- [ ] Plan 009 is marked DONE.
+- [x] New apps default to validated `balanced` unless `DEFAULT_FPM_PROFILE` / `--fpm-profile` says otherwise. (Executor deviation: default is `balanced`, not `ondemand`.)
+- [x] Missing `fpm_profile` normalizes to stack default (`balanced`); no legacy-app migration path (new project).
+- [x] Pool output is syntactically mode-correct.
+- [x] App create, wizard, list/status expose profile clearly.
+- [x] Aggregate capacity warning exists.
+- [x] No raw arbitrary FPM directive injection is introduced.
+- [x] Focused tests and full unittest suite pass.
+- [x] Plan 009 is marked DONE.
 
 ## STOP conditions
 

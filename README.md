@@ -153,6 +153,16 @@ The generated Nginx vhost uses the selected PHP socket plus app metadata:
 
 - `public_dir`: document root subdirectory inside `/home/<app>/www`; empty means app root.
 - `php_entrypoint`: `front-controller` only executes `/index.php` and returns 404 for other `.php` paths; `legacy` allows existing `.php` scripts. `auto` chooses `front-controller` when `public_dir` is non-empty, otherwise `legacy`.
+- `fpm_profile`: named PHP-FPM pool sizing (`ondemand`, `balanced`, `throughput`). New apps default to `DEFAULT_FPM_PROFILE` (usually `balanced`). Re-run `app create` with `--fpm-profile` to change; omit the flag to keep a recorded profile.
+
+```bash
+# Low-traffic / many apps on one PHP version (no idle workers):
+./manage.py app create blog blog.example.com --fpm-profile ondemand
+# Higher concurrency (still bounded; size host RAM and PHP_FPM_PROCESS_MAX):
+./manage.py app create api api.example.com --fpm-profile throughput
+```
+
+Trade-offs: `ondemand` saves memory when idle but pays a cold-start cost; `balanced` keeps a few spare workers (default); `throughput` pre-spawns more workers for busier apps. Observe worker RSS and request latency before raising profiles. Each PHP container also has a global `process.max` (default 32, build arg `PHP_FPM_PROCESS_MAX`); `./manage.py status` warns when the sum of configured `pm.max_children` on one version exceeds that cap.
 
 ```nginx
 # default / WordPress-style

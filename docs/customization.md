@@ -108,6 +108,8 @@ Use `manage.py` commands to mutate `runtime/state/stack.json`:
 
 ```bash
 ./manage.py app create shop shop.example.com app --php 8.5 --public-dir public
+# Optional pool sizing: ondemand | balanced (default) | throughput
+./manage.py app create quiet quiet.example.com --fpm-profile ondemand
 ./manage.py app domain add shop www.shop.example.com
 ./manage.py proxy create api.example.com http://127.0.0.1:3000
 ./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run' --php 8.5
@@ -115,7 +117,12 @@ Use `manage.py` commands to mutate `runtime/state/stack.json`:
 ./manage.py apply
 ```
 
-Do not directly edit generated Nginx, PHP-FPM, or cron files for these changes.
+Stack defaults for new apps live in `.env`:
+
+- `DEFAULT_FPM_PROFILE=balanced` — named FPM pool profile when `--fpm-profile` is omitted on create.
+- `PHP_FPM_PROCESS_MAX=32` — global FPM process cap baked into PHP images (`docker compose build php84 php85` after changing).
+
+Do not edit generated pool files to tune workers. Choose a profile, re-render/apply, and measure RSS/latency. Do not directly edit generated Nginx, PHP-FPM, or cron files for these changes.
 
 ### 4. Runtime custom directory
 

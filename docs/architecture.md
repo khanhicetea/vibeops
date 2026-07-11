@@ -116,6 +116,8 @@ runtime/home/<app_name>/
 
 All domains on an app share the same code tree under `/home/<app_name>/www` and `/run/php-fpm/<php_service>/<app_name>.sock`. The app's `public_dir` metadata selects the Nginx document root inside that tree: empty string means `/home/<app_name>/www` (WordPress/default), while `public` means `/home/<app_name>/www/public` (Laravel/Symfony). The app's `php_entrypoint` metadata controls PHP routing: `front-controller` only executes `/index.php` and 404s other `.php` paths, while `legacy` keeps direct PHP script execution for older apps. `auto` defaults to `front-controller` when `public_dir` is non-empty. Separate codebases should be separate apps.
 
+App state stores a named `fpm_profile` (`ondemand`, `balanced`, or `throughput`). Render expands that name into mode-correct PHP-FPM pool directives from a single registry in `vibeops/helpers.py` — not arbitrary operator-supplied pool fragments. New apps take `DEFAULT_FPM_PROFILE` from `.env` (default `balanced`). Each PHP image also sets global `process.max` (default 32 via build arg `PHP_FPM_PROCESS_MAX`); per-pool `max_children` is additionally bounded by that cap, and status reports when configured capacity on one PHP version exceeds it.
+
 ## MySQL recovery model
 
 - **Durable by default:** InnoDB data for each major lives in a named Docker volume (`mysql84-data`, etc.). Container recreate keeps data; `docker compose down -v` destroys it.
