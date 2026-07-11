@@ -11,7 +11,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Collection
 
 from vibeops.app_commands import cmd_app_list, ensure_app, resolve_app_php_version
 from vibeops.cron_commands import render_cron_job
@@ -437,83 +437,116 @@ def recover_abandoned_transactions(
             f"vibeops/{rel(txn_dir)}; inspect journal.json before continuing"
         )
 
-def validate_generated_services(db: dict[str, Any]) -> None:
+# Logical service groups that can be selectively validated/reloaded after a
+# full generation. Domain/proxy/TLS changes only need nginx; identity/pool
+# changes need php; cron job changes need cron. Full apply uses all three.
+SERVICE_TARGETS_ALL = frozenset({"nginx", "php", "cron"})
+SERVICE_TARGETS_NGINX = frozenset({"nginx"})
+
+
+def normalize_service_targets(targets: Collection[str] | None) -> frozenset[str]:
+    """Return a validated frozenset of service targets (default: all)."""
+    if targets is None:
+        return SERVICE_TARGETS_ALL
+    allowed = SERVICE_TARGETS_ALL
+    resolved = frozenset(targets)
+    unknown = resolved - allowed
+    if unknown:
+        die(f"Unknown service target(s): {', '.join(sorted(unknown))}; expected one of {', '.join(sorted(allowed))}")
+    if not resolved:
+        die("service_targets must not be empty")
+    return resolved
+
+
+def validate_generated_services(db: dict[str, Any], *, services: Collection[str] | None = None) -> None:
     """Validate promoted config against running services. No reload signals."""
-    if docker_available() and service_running("nginx"):
+    want = normalize_service_targets(services)
+
+    if "nginx" in want and docker_available() and service_running("nginx"):
         run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])
 
-    apps_by_version: dict[str, list[str]] = {}
-    for app_name, app in db.get("apps", {}).items():
-        if isinstance(app, dict):
-            version = str(app.get("php_version") or default_php_version())
-            apps_by_version.setdefault(version, []).append(app_name)
-    for version, app_names in sorted(apps_by_version.items()):
-        service = php_service_for(version)
-        if service_running(service):
-            run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
-            run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"], capture=True)
+    if "php" in want:
+        apps_by_version: dict[str, list[str]] = {}
+        for app_name, app in db.get("apps", {}).items():
+            if isinstance(app, dict):
+                version = str(app.get("php_version") or default_php_version())
+                apps_by_version.setdefault(version, []).append(app_name)
+        for version, app_names in sorted(apps_by_version.items()):
+            service = php_service_for(version)
+            if service_running(service):
+                run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
+                run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"], capture=True)
 
-    cron_versions = set(available_php_versions())
-    cron_versions.update(
-        str(cron.get("php_version") or default_php_version())
-        for cron in db.get("crons", {}).values()
-        if isinstance(cron, dict)
-    )
-    for version in sorted(cron_versions):
-        service = php_cron_service_for(version)
-        crontab = "/usr/local/etc/php/cron.d/.supercronic.cron"
-        if service_running(service):
-            run(["docker", "compose", "exec", "-T", service, "supercronic", "-test", crontab])
-        else:
-            php_service = service.removesuffix("-cron")
-            if service_running(php_service):
-                run(["docker", "compose", "exec", "-T", php_service, "supercronic", "-test", crontab])
+    if "cron" in want:
+        cron_versions = set(available_php_versions())
+        cron_versions.update(
+            str(cron.get("php_version") or default_php_version())
+            for cron in db.get("crons", {}).values()
+            if isinstance(cron, dict)
+        )
+        for version in sorted(cron_versions):
+            service = php_cron_service_for(version)
+            crontab = "/usr/local/etc/php/cron.d/.supercronic.cron"
+            if service_running(service):
+                run(["docker", "compose", "exec", "-T", service, "supercronic", "-test", crontab])
+            else:
+                php_service = service.removesuffix("-cron")
+                if service_running(php_service):
+                    run(["docker", "compose", "exec", "-T", php_service, "supercronic", "-test", crontab])
 
-def reload_generated_services(db: dict[str, Any]) -> None:
+
+def reload_generated_services(db: dict[str, Any], *, services: Collection[str] | None = None) -> None:
     """Signal services after successful validation. Does not roll back files on failure."""
-    if service_running("nginx"):
-        run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-s", "reload"])
-        info("Reloaded nginx")
-    else:
-        info("nginx container is not running; start it then run: docker compose exec nginx nginx -s reload")
+    want = normalize_service_targets(services)
 
-    apps_by_version: dict[str, list[str]] = {}
-    for app_name, app in db.get("apps", {}).items():
-        if isinstance(app, dict):
-            version = str(app.get("php_version") or default_php_version())
-            apps_by_version.setdefault(version, []).append(app_name)
-    for version, app_names in sorted(apps_by_version.items()):
-        service = php_service_for(version)
-        if service_running(service):
-            try:
-                run([
-                    "docker", "compose", "exec", "-T", service, "sh", "-lc",
-                    "kill -USR2 1",
-                ], capture=True)
-                info(f"Reloaded {service}")
-            except Exception as exc:
-                warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
+    if "nginx" in want:
+        if service_running("nginx"):
+            run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-s", "reload"])
+            info("Reloaded nginx")
+        else:
+            info("nginx container is not running; start it then run: docker compose exec nginx nginx -s reload")
 
-    cron_versions = set(available_php_versions())
-    cron_versions.update(
-        str(cron.get("php_version") or default_php_version())
-        for cron in db.get("crons", {}).values()
-        if isinstance(cron, dict)
-    )
-    for version in sorted(cron_versions):
-        service = php_cron_service_for(version)
-        if service_running(service):
-            try:
-                run(["docker", "compose", "kill", "-s", "USR2", service])
-                info(f"Reloaded {service} cron with SIGUSR2")
-            except Exception as exc:
-                warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
+    if "php" in want:
+        apps_by_version: dict[str, list[str]] = {}
+        for app_name, app in db.get("apps", {}).items():
+            if isinstance(app, dict):
+                version = str(app.get("php_version") or default_php_version())
+                apps_by_version.setdefault(version, []).append(app_name)
+        for version, app_names in sorted(apps_by_version.items()):
+            service = php_service_for(version)
+            if service_running(service):
+                try:
+                    run([
+                        "docker", "compose", "exec", "-T", service, "sh", "-lc",
+                        "kill -USR2 1",
+                    ], capture=True)
+                    info(f"Reloaded {service}")
+                except Exception as exc:
+                    warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
+
+    if "cron" in want:
+        cron_versions = set(available_php_versions())
+        cron_versions.update(
+            str(cron.get("php_version") or default_php_version())
+            for cron in db.get("crons", {}).values()
+            if isinstance(cron, dict)
+        )
+        for version in sorted(cron_versions):
+            service = php_cron_service_for(version)
+            if service_running(service):
+                try:
+                    run(["docker", "compose", "kill", "-s", "USR2", service])
+                    info(f"Reloaded {service} cron with SIGUSR2")
+                except Exception as exc:
+                    warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
+
 
 def apply_generated_config(
     db: dict[str, Any],
     *,
     reload_services: bool = False,
     validate_services: bool = False,
+    service_targets: Collection[str] | None = None,
     live: RenderContext | None = None,
     runtime_dir: Path | None = None,
     fault_after_promotions: int | None = None,
@@ -525,7 +558,12 @@ def apply_generated_config(
     ``state lock (caller) -> stage -> promote -> validate -> reload -> finalize``
     with rollback on stage/promote/validate failure. Reload failures after
     successful validation do not roll generated files back.
+
+    ``service_targets`` limits which service groups are validated/reloaded
+    (``nginx``, ``php``, ``cron``). Default is all three. Nginx-only mutations
+    (domains, proxy, TLS) should pass ``SERVICE_TARGETS_NGINX``.
     """
+    targets = normalize_service_targets(service_targets)
     live = live or live_render_context()
     runtime_dir = runtime_dir or RUNTIME_DIR
     mkdir(runtime_dir, 0o700)
@@ -586,7 +624,7 @@ def apply_generated_config(
             journal["status"] = "validating"
             _write_journal(journal_path, journal)
             try:
-                validate_generated_services(db)
+                validate_generated_services(db, services=targets)
             except Exception:
                 rollback_from_journal(journal, live, backup_dir)
                 journal["status"] = "rolled_back"
@@ -595,7 +633,7 @@ def apply_generated_config(
 
         if reload_services:
             # Files stay at validated generation even if a reload signal fails.
-            reload_generated_services(db)
+            reload_generated_services(db, services=targets)
 
         journal["status"] = "finalized"
         _write_journal(journal_path, journal)

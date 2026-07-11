@@ -29,7 +29,7 @@ def vhost_for_domain(domain: str, db: dict[str, Any]) -> tuple[Path, dict[str, A
 
 @serialized_cron_state
 def cmd_tls_acme(args: argparse.Namespace) -> None:
-    from vibeops.runtime_commands import apply_generated_config
+    from vibeops.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
@@ -42,14 +42,20 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
         mode = "acme"
     record["tls"] = {"mode": mode, "redirect_https": mode == "acme" and not args.no_redirect_https}
     upsert_timestamp(record)
-    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
+    # TLS mode only rewrites nginx vhosts.
+    apply_generated_config(
+        db,
+        reload_services=not args.no_reload,
+        validate_services=True,
+        service_targets=SERVICE_TARGETS_NGINX,
+    )
     save_db(db)
     info(("Enabled NGINX ACME for" if mode == "acme" else "Switched to self-signed certificate for") + f" {main_domain}")
     info(f"Regenerated vhost: vibeops/{rel(conf_path)}")
 
 @serialized_cron_state
 def cmd_tls_cert(args: argparse.Namespace) -> None:
-    from vibeops.runtime_commands import apply_generated_config
+    from vibeops.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
@@ -67,7 +73,12 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
 
     record["tls"] = {"mode": "files", "cert": cert_path, "key": key_path}
     upsert_timestamp(record)
-    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
+    apply_generated_config(
+        db,
+        reload_services=not args.no_reload,
+        validate_services=True,
+        service_targets=SERVICE_TARGETS_NGINX,
+    )
     save_db(db)
     info(f"Switched {main_domain} to certificate files:")
     info(f"  cert: {cert_path}")

@@ -30,7 +30,7 @@ def render_proxy_vhost(site: dict[str, Any], ctx: RenderContext | None = None) -
 
 @serialized_cron_state
 def cmd_proxy_create(args: argparse.Namespace) -> None:
-    from vibeops.runtime_commands import apply_generated_config
+    from vibeops.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
     db = load_db()
     main_domain = validate(args.domain, DOMAIN_RE, "domain")
@@ -56,7 +56,13 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
     for domain in sorted(new_domains):
         db["domains"][domain] = {"kind": "proxy", "domain": main_domain}
     upsert_timestamp(site)
-    rendered = apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
+    # Proxy vhosts are nginx-only; do not bounce PHP-FPM or cron.
+    rendered = apply_generated_config(
+        db,
+        reload_services=not args.no_reload,
+        validate_services=True,
+        service_targets=SERVICE_TARGETS_NGINX,
+    )
     conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
     save_db(db)
     info(f"Created HTTP+HTTPS proxy vhost with default self-signed cert: vibeops/{rel(conf_path)}")

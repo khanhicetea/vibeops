@@ -252,10 +252,10 @@ class RenderTransactionTests(unittest.TestCase):
         db = self._app_db()
         order: list[str] = []
 
-        def validate(_db: dict) -> None:
+        def validate(_db: dict, **_kwargs) -> None:
             order.append("validate")
 
-        def reload(_db: dict) -> None:
+        def reload(_db: dict, **_kwargs) -> None:
             order.append("reload")
 
         with patch.object(runtime, "validate_generated_services", side_effect=validate), patch.object(
@@ -272,7 +272,7 @@ class RenderTransactionTests(unittest.TestCase):
 
         order.clear()
 
-        def fail_validate(_db: dict) -> None:
+        def fail_validate(_db: dict, **_kwargs) -> None:
             order.append("validate")
             raise helpers.StackError("bad config")
 
@@ -288,6 +288,59 @@ class RenderTransactionTests(unittest.TestCase):
                     reload_services=True,
                 )
         self.assertEqual(order, ["validate"])
+
+    def test_service_targets_limits_validate_and_reload(self) -> None:
+        """Nginx-only mutations must not touch PHP-FPM or cron containers."""
+        db = self._app_db()
+        seen: list[tuple[str, frozenset[str]]] = []
+
+        def validate(_db: dict, *, services=None) -> None:
+            seen.append(("validate", frozenset(services or runtime.SERVICE_TARGETS_ALL)))
+
+        def reload(_db: dict, *, services=None) -> None:
+            seen.append(("reload", frozenset(services or runtime.SERVICE_TARGETS_ALL)))
+
+        with patch.object(runtime, "validate_generated_services", side_effect=validate), patch.object(
+            runtime, "reload_generated_services", side_effect=reload
+        ):
+            runtime.apply_generated_config(
+                db,
+                live=self.live,
+                runtime_dir=self.runtime_dir,
+                validate_services=True,
+                reload_services=True,
+                service_targets=runtime.SERVICE_TARGETS_NGINX,
+            )
+        self.assertEqual(
+            seen,
+            [
+                ("validate", frozenset({"nginx"})),
+                ("reload", frozenset({"nginx"})),
+            ],
+        )
+
+    def test_nginx_only_reload_skips_php_and_cron(self) -> None:
+        db = self._app_db()
+        runs: list[list[str]] = []
+
+        def fake_run(cmd, **_kwargs):
+            runs.append(list(cmd))
+
+        with patch.object(runtime, "docker_available", return_value=True), patch.object(
+            runtime, "service_running", return_value=True
+        ), patch.object(runtime, "run", side_effect=fake_run), patch.object(
+            runtime, "available_php_versions", return_value=["8.4"]
+        ), patch.object(runtime, "info"):
+            runtime.reload_generated_services(db, services=runtime.SERVICE_TARGETS_NGINX)
+            runtime.validate_generated_services(db, services=runtime.SERVICE_TARGETS_NGINX)
+
+        joined = [" ".join(cmd) for cmd in runs]
+        self.assertTrue(any("nginx -s reload" in line or line.endswith("nginx -s reload") for line in joined))
+        self.assertTrue(any("nginx -t" in line or line.endswith("nginx -t") for line in joined))
+        self.assertFalse(any("php-fpm" in line for line in joined))
+        self.assertFalse(any("USR2" in line and "php" in line for line in joined))
+        self.assertFalse(any("supercronic" in line for line in joined))
+        self.assertFalse(any("php-identity-sync" in line for line in joined))
 
     def test_abandoned_transaction_mid_promotion_is_restored(self) -> None:
         db = self._app_db()

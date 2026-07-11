@@ -55,8 +55,24 @@ Details:
 - **Stage**: build the full candidate tree under `runtime/.render-txn-*/staging/` (same filesystem as live destinations).
 - **Promote**: per-file snapshot + temp write + `fsync` + `os.replace`; stale managed files are removed only after every candidate exists.
 - **Validate** (`apply`): `nginx -t`, `php-fpm -tt`, and `supercronic -test` for affected running services before any reload signal.
+- **Selective targets**: full `apply` validates/reloads nginx + PHP-FPM + cron. Narrow mutations still re-render the full generation for consistency when they touch generated config, but only validate/reload the service groups they change.
 - **Rollback**: on stage, promote, or validation failure, restore previous bytes and modes from the transaction backup.
 - **Reload failure**: if validation succeeded but a reload signal fails, generated files stay at the validated generation; retry the service reload (do not auto-roll back).
+
+### Reload scope by command
+
+Service signals only (not file re-render). Contract tests live in `tests/test_reload_scope.py`.
+
+| Command | nginx | php-fpm | cron | Notes |
+|---|:---:|:---:|:---:|---|
+| `app domain add/remove/set-main` | Y | — | — | vhost `server_name` only |
+| `proxy create` / `tls acme` / `tls cert` | Y | — | — | vhost TLS/upstream only |
+| `app create` | Y | Y | — | identity/pool + vhost; no cron bounce |
+| `cron create/remove/reload` | — | — | Y | only that PHP version’s cron service |
+| `app db create` / `db create` / `db user-reset` | — | — | — | MySQL + state only |
+| `db backup` / `db restore` / shell / exec | — | — | — | no service reloads (existing app) |
+| `apply` | Y | Y | Y | intentional full apply |
+| `render` | — | — | — | files only |
 - **Unmanaged files**: local files under managed globs that lack the VibeOps generated notice are left in place and reported.
 - **Abandoned transactions**: a leftover mid-promotion journal is restored on the next render/apply when the journal is deterministic.
 

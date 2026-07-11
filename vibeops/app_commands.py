@@ -193,7 +193,7 @@ def cmd_app_domain_list(args: argparse.Namespace) -> None:
 
 @serialized_cron_state
 def cmd_app_domain_add(args: argparse.Namespace) -> None:
-    from vibeops.runtime_commands import apply_generated_config
+    from vibeops.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -208,7 +208,14 @@ def cmd_app_domain_add(args: argparse.Namespace) -> None:
     app["domains"] = domains
     db["domains"][domain] = {"kind": "php", "app": app_name}
     upsert_timestamp(app)
-    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
+    # Domain aliases only change the nginx vhost server_name list; PHP pool and
+    # cron are unchanged and must not be reloaded.
+    apply_generated_config(
+        db,
+        reload_services=not args.no_reload,
+        validate_services=True,
+        service_targets=SERVICE_TARGETS_NGINX,
+    )
     save_db(db)
     info(f"Added domain {domain} to app {app_name}")
 
@@ -227,7 +234,7 @@ def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
 
 @serialized_cron_state
 def cmd_app_domain_remove(args: argparse.Namespace) -> None:
-    from vibeops.runtime_commands import apply_generated_config
+    from vibeops.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -243,13 +250,18 @@ def cmd_app_domain_remove(args: argparse.Namespace) -> None:
     app["domains"] = domains
     db.get("domains", {}).pop(domain, None)
     upsert_timestamp(app)
-    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
+    apply_generated_config(
+        db,
+        reload_services=not args.no_reload,
+        validate_services=True,
+        service_targets=SERVICE_TARGETS_NGINX,
+    )
     save_db(db)
     info(f"Removed domain {domain} from app {app_name}")
 
 @serialized_cron_state
 def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
-    from vibeops.runtime_commands import apply_generated_config
+    from vibeops.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -263,7 +275,12 @@ def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
     app["main_domain"] = domain
     app["domains"] = [domain] + [d for d in domains if d != domain]
     upsert_timestamp(app)
-    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
+    apply_generated_config(
+        db,
+        reload_services=not args.no_reload,
+        validate_services=True,
+        service_targets=SERVICE_TARGETS_NGINX,
+    )
     save_db(db)
     info(f"Set main domain for {app_name}: {domain}")
 
