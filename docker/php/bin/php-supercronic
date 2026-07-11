@@ -3,13 +3,18 @@ set -eu
 
 CRON_DIR="${PHP_CRON_DIR:-/usr/local/etc/php/cron.d}"
 COMBINED="${PHP_SUPERCRONIC_CRONTAB:-$CRON_DIR/.supercronic.cron}"
-
-mkdir -p "$CRON_DIR"
+METRICS_ADDRESS="${PHP_SUPERCRONIC_METRICS_ADDRESS:-0.0.0.0:9746}"
 
 if [ ! -s "$COMBINED" ]; then
-  echo "No Supercronic crontab found at $COMBINED; cron service is idle. Run manage.py cron create, then restart this container once."
-  exec sleep infinity
+  echo "Supercronic crontab is missing or empty: $COMBINED" >&2
+  echo "Run ./manage.py render before starting the cron service." >&2
+  exit 1
 fi
 
-echo "Starting supercronic with crontab $COMBINED"
-exec /usr/local/bin/supercronic -passthrough-logs "$COMBINED"
+/usr/local/bin/supercronic -test "$COMBINED"
+echo "Starting supercronic with crontab $COMBINED; metrics=$METRICS_ADDRESS"
+exec /usr/local/bin/supercronic \
+  -json \
+  -split-logs \
+  -prometheus-listen-address="$METRICS_ADDRESS" \
+  "$COMBINED"

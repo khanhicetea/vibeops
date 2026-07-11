@@ -10,7 +10,18 @@ app="$1"
 workdir="$2"
 shift 2
 php-identity-sync "$app"
-# Repair only policy directories here, never an existing app tree. This gives a
-# newly-created app's shell a setgid document root before it creates files.
-php-permissions fix "$app"
-exec php-cron-as "$app" "$workdir" "$@"
+
+app_home="/home/$app"
+composer_home="$app_home/.composer"
+case "$workdir" in "$app_home"|"$app_home"/*) ;; *) echo "Workdir must be inside $app_home: $workdir" >&2; exit 1;; esac
+[ -d "$workdir" ] || { echo "Workdir does not exist: $workdir" >&2; exit 1; }
+resolved_home="$(readlink -f "$app_home")"
+resolved_workdir="$(readlink -f "$workdir")"
+case "$resolved_workdir" in "$resolved_home"|"$resolved_home"/*) ;; *) echo "Resolved workdir escapes $app_home: $workdir" >&2; exit 1;; esac
+[ -d "$composer_home" ] || { echo "Composer home is missing; run: manage.py permissions fix $app" >&2; exit 1; }
+
+cd "$workdir"
+umask 0027
+exec gosu "$app" env \
+  HOME="$app_home" USER="$app" LOGNAME="$app" COMPOSER_HOME="$composer_home" \
+  "$@"

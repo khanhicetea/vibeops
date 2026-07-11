@@ -214,9 +214,17 @@ def wizard_cron() -> None:
     schedule = prompt_text("Schedule", "* * * * *")
     command = prompt_text("Command", "php artisan schedule:run")
     workdir = prompt_text("Workdir (blank = /home/<app>/www)", "", required=False) or None
-    print_plan([f"create/update cron {app_name}/{job_name}", f"schedule: {schedule}", f"command: {command}"])
+    timezone = prompt_text("Timezone (blank = stack TZ)", "", required=False) or None
+    output = prompt_choice("Output", ["docker", "file"], "docker")
+    timeout_text = prompt_text("Timeout seconds (0 = disabled)", "0")
+    try:
+        timeout = int(timeout_text)
+    except ValueError:
+        die(f"Invalid timeout: {timeout_text}")
+    lock = prompt_text("Shared lock name (blank = none)", "", required=False) or None
+    print_plan([f"create/update cron {app_name}/{job_name}", f"schedule: {schedule}", f"command: {command}", f"output: {output}"])
     if prompt_confirm("Continue?", True):
-        cmd_cron_create(argparse.Namespace(app_name=app_name, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir))
+        cmd_cron_create(argparse.Namespace(app_name=app_name, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir, timezone=timezone, output=output, timeout=timeout, lock=lock))
 
 
 def cmd_wizard(args: argparse.Namespace) -> None:

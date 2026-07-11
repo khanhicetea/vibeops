@@ -2,7 +2,7 @@ ARG PHP_VERSION=8.4
 FROM php:${PHP_VERSION}-fpm-trixie
 
 ARG TZ=Asia/Ho_Chi_Minh
-ARG SUPERCRONIC_VERSION=0.2.33
+ARG SUPERCRONIC_VERSION=0.2.47
 ARG NODE_VERSION=24.11.1
 ENV TZ=${TZ}
 
@@ -20,7 +20,9 @@ RUN set -eux; \
       openssh-client \
       openssl \
       passwd \
+      logrotate \
       tzdata \
+      util-linux \
       unzip \
       vim \
       xz-utils \
@@ -70,7 +72,7 @@ RUN set -eux; \
     node --version; \
     npm --version; \
     apt-mark auto '.*' > /dev/null; \
-    apt-mark manual $savedAptMark bash ca-certificates curl git gosu grep gzip openssh-client openssl passwd tzdata unzip vim xz-utils libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
+    apt-mark manual $savedAptMark bash ca-certificates curl git gosu grep gzip openssh-client openssl passwd logrotate tzdata util-linux unzip vim xz-utils libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
     ldd "$(php -r 'echo ini_get("extension_dir");')"/*.so \
       | awk '/=>/ { print $3 } /^\// { print $1 }' \
       | xargs -r -I '{}' sh -c 'dpkg-query -S "$1" 2>/dev/null | cut -d: -f1' sh '{}' \
@@ -82,12 +84,13 @@ RUN set -eux; \
 RUN set -eux; \
     deb_arch="$(dpkg --print-architecture)"; \
     case "$deb_arch" in \
-      amd64) supercronic_arch="amd64" ;; \
-      arm64) supercronic_arch="arm64" ;; \
+      amd64) supercronic_arch="amd64"; supercronic_sha1="712d2ece75da6f6e530192a151488578153e4e96" ;; \
+      arm64) supercronic_arch="arm64"; supercronic_sha1="93323899ddca3f1198f1796a4bf4418ed1e7982e" ;; \
       *) echo "Unsupported architecture for supercronic: $deb_arch" >&2; exit 1 ;; \
     esac; \
     curl -fsSL -o /usr/local/bin/supercronic \
       "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${supercronic_arch}"; \
+    echo "$supercronic_sha1  /usr/local/bin/supercronic" | sha1sum -c -; \
     chmod +x /usr/local/bin/supercronic
 
 COPY bin/php-identity-sync /usr/local/bin/php-identity-sync

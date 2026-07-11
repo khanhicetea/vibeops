@@ -5,6 +5,7 @@ SOCKET_GROUP_NAME="${SOCKET_GROUP_NAME:-nginxsock}"
 SOCKET_GID="${SOCKET_GID:-101}"
 PHP_USERS_DIR="${PHP_USERS_DIR:-/usr/local/etc/php/users.d}"
 PHP_FPM_RUN_DIR="${PHP_FPM_RUN_DIR:-/run/php-fpm}"
+PHP_CRON_LOCK_DIR="${PHP_CRON_LOCK_DIR:-/run/vibeops-cron-locks}"
 
 fail() { echo "php-identity-sync: $*" >&2; exit 1; }
 
@@ -62,10 +63,18 @@ sync_one() {
   if id -nG "$username" | tr ' ' '\n' | grep -Fx "$SOCKET_GROUP_NAME" >/dev/null; then
     gpasswd -d "$username" "$SOCKET_GROUP_NAME"
   fi
+
+  # Volatile app-owned lock storage avoids predictable cross-app files in /tmp.
+  # This is identity runtime state, not an app-home permission repair.
+  mkdir -p "$PHP_CRON_LOCK_DIR/$username"
+  chown "$username:$username" "$PHP_CRON_LOCK_DIR/$username"
+  chmod 0700 "$PHP_CRON_LOCK_DIR/$username"
 }
 
 ensure_socket_group
-mkdir -p "$PHP_FPM_RUN_DIR"
+mkdir -p "$PHP_FPM_RUN_DIR" "$PHP_CRON_LOCK_DIR"
+chown root:root "$PHP_CRON_LOCK_DIR"
+chmod 0711 "$PHP_CRON_LOCK_DIR"
 chown root:"$SOCKET_GROUP_NAME" "$PHP_FPM_RUN_DIR"
 chmod 0770 "$PHP_FPM_RUN_DIR"
 

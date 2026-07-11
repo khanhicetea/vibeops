@@ -140,7 +140,9 @@ def render_all(db: dict[str, Any]) -> list[Path]:
         if isinstance(site, dict) and site.get("type") == "proxy":
             site.setdefault("domain", domain)
             rendered.append(render_proxy_vhost(site))
-    cron_versions: set[str] = set()
+    # Every shipped/configured PHP version gets a valid crontab, even with no
+    # app jobs, so Supercronic always remains PID 1 and can accept SIGUSR2.
+    cron_versions: set[str] = set(php_versions)
     for cron in db.get("crons", {}).values():
         if not isinstance(cron, dict):
             continue
@@ -173,6 +175,7 @@ def cmd_compose(args: argparse.Namespace) -> None:
     os.execvp("docker", cmd)
 
 
+@serialized_cron_state
 def cmd_render(args: argparse.Namespace) -> None:
     db = load_db()
     rendered = render_all(db)
@@ -182,6 +185,7 @@ def cmd_render(args: argparse.Namespace) -> None:
         info(f"  {rel(path)}")
 
 
+@serialized_cron_state
 def cmd_apply(args: argparse.Namespace) -> None:
     db = load_db()
     rendered = render_all(db)
@@ -203,7 +207,8 @@ def cmd_apply(args: argparse.Namespace) -> None:
             run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
             run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"])
             run(["docker", "compose", "kill", "-s", "USR2", service])
-    cron_versions = {str(cron.get("php_version") or default_php_version()) for cron in db.get("crons", {}).values() if isinstance(cron, dict)}
+    cron_versions = set(available_php_versions())
+    cron_versions.update(str(cron.get("php_version") or default_php_version()) for cron in db.get("crons", {}).values() if isinstance(cron, dict))
     for version in sorted(cron_versions):
         cron_reload(php_cron_service_for(version))
 
