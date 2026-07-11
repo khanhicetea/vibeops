@@ -487,11 +487,16 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
     if service_running(service):
         run(["docker", "compose", "exec", "-T", service, "php-identity-sync", username])
         if not no_reload:
-            run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"])
-            run([
-                "docker", "compose", "exec", "-T", service, "sh", "-lc",
-                "kill -USR2 1",
-            ])
+            try:
+                # php-fpm -tt writes its full configuration dump to stderr even
+                # when validation succeeds. Keep app creation output concise.
+                run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"], capture=True)
+                run([
+                    "docker", "compose", "exec", "-T", service, "sh", "-lc",
+                    "kill -USR2 1",
+                ], capture=True)
+            except subprocess.CalledProcessError:
+                die(f"Failed to validate or reload {service}")
             info(f"Reloaded {service}")
     else:
         info(f"{service} is not running; run/restart it to create the Linux user inside that PHP container.")
