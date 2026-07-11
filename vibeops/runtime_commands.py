@@ -802,13 +802,18 @@ def _prompt_choice_numbered(
         warn("invalid selection")
 
 
+def _is_csi_final(ch: str) -> bool:
+    """True for a CSI final byte (0x40–0x7E, i.e. '@' through '~')."""
+    return len(ch) == 1 and "@" <= ch <= "~"
+
+
 def _read_menu_key() -> str:
     """Read one key from stdin in cbreak mode. Returns 'up'/'down'/'enter'/'backspace'/digit/ctrl chars."""
     ch = sys.stdin.read(1)
     if not ch:
         raise EOFError
     if ch == "\x1b":
-        # ANSI escape: arrows are ESC [ A/B (and ESC O A/B on some terminals).
+        # ANSI escape: arrows are ESC [ A/B/C/D (and ESC O A/B on some terminals).
         rest = sys.stdin.read(1)
         if rest == "[":
             code = sys.stdin.read(1)
@@ -816,8 +821,12 @@ def _read_menu_key() -> str:
                 return "up"
             if code == "B":
                 return "down"
-            # Consume remaining CSI params (e.g. modified keys) without acting.
-            while code and code not in "@-~":
+            if code in ("C", "D"):
+                # Left/right: ignore (do not hang waiting for more CSI bytes).
+                return "esc"
+            # Consume remaining intermediate CSI params until a final byte (0x40–0x7E).
+            # Note: use a range check, not `in "@-~"` (that is only three characters).
+            while code and not _is_csi_final(code):
                 code = sys.stdin.read(1)
             return "esc"
         if rest == "O":

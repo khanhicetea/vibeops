@@ -283,6 +283,32 @@ class PromptChoiceArrowTests(unittest.TestCase):
         numbered.assert_called_once()
         interactive.assert_not_called()
 
+    def test_left_right_arrows_do_not_freeze(self) -> None:
+        """Left/right CSI finals (C/D) must not block waiting for more input."""
+        from vibeops import runtime_commands
+
+        # Sequence: left (ESC[D), right (ESC[C), down, enter → select B
+        # (zero=Back at 0; start on A; down → B)
+        bytes_in = iter("\x1b[D\x1b[C\x1b[B\r")
+
+        def fake_read(n: int = 1) -> str:
+            try:
+                return "".join(next(bytes_in) for _ in range(n))
+            except StopIteration as exc:
+                raise AssertionError("read blocked past available key bytes (would freeze)") from exc
+
+        out = io.StringIO()
+        with (
+            mock.patch.object(runtime_commands.sys.stdin, "read", side_effect=fake_read),
+            mock.patch("termios.tcgetattr", return_value=object()),
+            mock.patch("termios.tcsetattr"),
+            mock.patch("tty.setcbreak"),
+            mock.patch.object(runtime_commands.sys, "stdout", out),
+            mock.patch.object(runtime_commands.sys.stdin, "fileno", return_value=0),
+        ):
+            result = runtime_commands._prompt_choice_interactive("Pick", ["A", "B"], None, "Back")
+        self.assertEqual(result, "B")
+
 
 if __name__ == "__main__":
     unittest.main()
