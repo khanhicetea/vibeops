@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from vibeops.utils.env import default_fpm_profile, default_mysql_service, default_php_version, validate_fpm_profile
+from vibeops.services.app_config import normalize_service_config
 from vibeops.utils.errors import die, warn
 from vibeops.os.fsutil import mkdir
 from vibeops.utils.paths import DB_PATH, LEGACY_DB_PATH, LEGACY_PHP_VERSIONS_DIR, NGINX_VHOST_DIR, PHP_VERSIONS_DIR, SCHEMA_VERSION, STATE_DIR, now, rel
@@ -63,6 +64,8 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
             app.setdefault("php_entrypoint", default_php_entrypoint(public_dir))
             app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
             app["fpm_profile"] = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
+            if "service_config" in app:
+                app["service_config"] = normalize_service_config(app_name, app.get("service_config"))
             if app.get("vhost"):
                 from vibeops.services.nginx import app_vhost_path
                 app["vhost"] = rel(app_vhost_path(app_name))

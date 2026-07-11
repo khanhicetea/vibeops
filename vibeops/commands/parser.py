@@ -5,6 +5,7 @@ import argparse
 
 from vibeops.commands import (
     app_commands,
+    app_config_commands,
     cron_commands,
     db_commands,
     permission_commands,
@@ -93,6 +94,22 @@ def build_parser() -> argparse.ArgumentParser:
     app_db_create.add_argument("db_suffix")
     app_db_create.add_argument("--mysql-service", help="MySQL service (defaults to the app's configured service)")
     app_db_create.set_defaults(func=app_commands.cmd_app_db_create)
+    app_config = app_sub.add_parser("config", help="Manage app-scoped service template customization")
+    app_config_sub = app_config.add_subparsers(dest="app_config_command", required=True)
+    app_config_customize = app_config_sub.add_parser("customize", help="Copy and activate an app-owned service template")
+    app_config_customize.add_argument("app_name")
+    app_config_customize.add_argument("target", choices=["vhost", "pool"])
+    app_config_customize.add_argument("--force", action="store_true", help="Replace an existing custom source with the current upstream template")
+    app_config_customize.add_argument("--no-reload", action="store_true", help="Validate but do not reload the affected service")
+    app_config_customize.set_defaults(func=app_config_commands.cmd_app_config_customize)
+    app_config_reset = app_config_sub.add_parser("reset", help="Switch back to the upstream generated template")
+    app_config_reset.add_argument("app_name")
+    app_config_reset.add_argument("target", choices=["vhost", "pool"])
+    app_config_reset.add_argument("--no-reload", action="store_true", help="Validate but do not reload the affected service")
+    app_config_reset.set_defaults(func=app_config_commands.cmd_app_config_reset)
+    app_config_status = app_config_sub.add_parser("status", help="Show app service template ownership")
+    app_config_status.add_argument("app_name")
+    app_config_status.set_defaults(func=app_config_commands.cmd_app_config_status)
 
     user = sub.add_parser("user", help="Deprecated: manage app identities")
     user_sub = user.add_subparsers(dest="user_command", required=True)

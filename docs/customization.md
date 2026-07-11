@@ -124,19 +124,60 @@ Stack defaults for new apps live in `.env`:
 
 Do not edit generated pool files to tune workers. Choose a profile, re-render/apply, and measure RSS/latency. Do not directly edit generated Nginx, PHP-FPM, or cron files for these changes.
 
-### 4. Runtime custom directory
+### 4. App-scoped vhost and pool templates
+
+Use the first-class app config commands when one app needs a complete custom Nginx vhost or PHP-FPM pool template:
+
+```bash
+./manage.py app config status shop
+./manage.py app config customize shop vhost
+./manage.py app config customize shop pool
+```
+
+The customize command copies the current upstream template into an ignored, user-owned source:
+
+```text
+runtime/custom/apps/shop/nginx/vhost.conf.template
+runtime/custom/apps/shop/php/pool.conf.template
+```
+
+It records `service_config.<target>.mode = custom` in `runtime/state/stack.json`. Subsequent renders read that custom source and stage it into the normal generated destination, so transactional promotion, rollback, and service validation continue to apply. Edit the custom source—not the generated output—then run:
+
+```bash
+./manage.py apply
+```
+
+Custom sources remain templates. Preserve the app variables and the vhost TLS marker block; custom pools must preserve the private app identity and expected Unix socket path/group/mode. A missing or invalid selected custom source fails render/apply instead of silently falling back to the upstream template.
+
+Check whether upstream changed after customization:
+
+```bash
+./manage.py app config status shop
+```
+
+Return to upstream generation without deleting the inactive custom source:
+
+```bash
+./manage.py app config reset shop vhost
+./manage.py app config reset shop pool
+```
+
+Use `--force` with `app config customize` only when you intentionally want to replace an existing custom source with the current upstream template. The same workflow is available under **Manage app → Customize** in the interactive wizard.
+
+### 5. Runtime custom directory
 
 `runtime/custom/` is reserved for local customizations that should survive upstream updates and renders.
 
-Current placeholders:
+Current layouts:
 
 ```text
-runtime/custom/nginx/
-runtime/custom/php/
-runtime/custom/mysql/
+runtime/custom/apps/<app>/   # selected automatically by app config customize
+runtime/custom/nginx/        # general local adjuncts
+runtime/custom/php/          # general local adjuncts
+runtime/custom/mysql/        # general local adjuncts
 ```
 
-Use this area for files that are mounted by your local Compose override.
+Apart from app templates selected in state, use this area for files mounted by your local Compose override.
 
 Example: mount custom PHP ini snippets:
 
@@ -376,7 +417,7 @@ This creates fallback PHP-FPM pool files in `runtime/generated/php/versions/*/po
 
 ### Local custom files are not automatically mounted
 
-`runtime/custom/` is preserved and ignored by git, but files there only affect services if you mount/include them via Compose override or upstream-supported include points.
+App templates selected through `app config customize` are rendered automatically into the normal generated mounts. Other files under `runtime/custom/` are preserved and ignored by git, but affect services only when mounted/included through a Compose override or another upstream-supported hook.
 
 ### Legacy state
 

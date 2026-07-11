@@ -17,6 +17,11 @@ from vibeops.commands.app_commands import (
     cmd_app_domain_set_main,
     cmd_user_create,
 )
+from vibeops.commands.app_config_commands import (
+    cmd_app_config_customize,
+    cmd_app_config_reset,
+    cmd_app_config_status,
+)
 from vibeops.commands.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
 from vibeops.commands.db_commands import (
     _list_final_backups,
@@ -458,9 +463,50 @@ def wizard_cron(app_name: str, app: dict[str, Any]) -> None:
         cmd_cron_create(argparse.Namespace(app_name=app_name, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir, timezone=timezone, output=output, timeout=timeout, lock=lock))
 
 
+def wizard_customize_app(app_name: str) -> None:
+    labels = {"Vhost": "vhost", "PHP-FPM pool": "pool"}
+    while True:
+        info(f"\nService configuration for {app_name}:")
+        cmd_app_config_status(argparse.Namespace(app_name=app_name))
+        try:
+            action = prompt_choice("Config action", ["Customize", "Reset to generated"])
+            if action == "Back":
+                return
+            label = prompt_pick("Service config", list(labels))
+            target = labels[label]
+            no_reload = not prompt_confirm("Reload the affected service if running?", True)
+            if action == "Customize":
+                force = False
+                db = load_db()
+                app = db.get("apps", {}).get(app_name, {})
+                service_config = app.get("service_config", {}) if isinstance(app, dict) else {}
+                record = service_config.get(target, {}) if isinstance(service_config, dict) else {}
+                if isinstance(record, dict) and record.get("mode") == "custom":
+                    force = prompt_confirm("Replace the custom source with the current upstream template?", False)
+                info("\nEquivalent command:")
+                command = f"./manage.py app config customize {shlex.quote(app_name)} {target}"
+                if force:
+                    command += " --force"
+                if no_reload:
+                    command += " --no-reload"
+                info(f"  {command}")
+                if prompt_confirm("Activate customization?", True):
+                    cmd_app_config_customize(argparse.Namespace(app_name=app_name, target=target, force=force, no_reload=no_reload))
+            else:
+                info("\nEquivalent command:")
+                command = f"./manage.py app config reset {shlex.quote(app_name)} {target}"
+                if no_reload:
+                    command += " --no-reload"
+                info(f"  {command}")
+                if prompt_confirm("Reset to the generated template?", False):
+                    cmd_app_config_reset(argparse.Namespace(app_name=app_name, target=target, no_reload=no_reload))
+        except WizardBack:
+            continue
+
+
 def wizard_manage_app() -> None:
     app_name, app = wizard_select_app()
-    actions = ["Domains", "Databases", "Cron jobs", "App shell", "Check permissions"]
+    actions = ["Domains", "Databases", "Cron jobs", "Customize", "App shell", "Check permissions"]
     while True:
         app = load_db().get("apps", {}).get(app_name, app)
         info(f"\nManage app: {app_name} (main: {app.get('main_domain', '-')})")
@@ -474,6 +520,8 @@ def wizard_manage_app() -> None:
                 wizard_manage_databases(app_name, app)
             elif action == "Cron jobs":
                 wizard_manage_crons(app_name, app)
+            elif action == "Customize":
+                wizard_customize_app(app_name)
             elif action == "App shell":
                 cmd_app_shell(argparse.Namespace(app_name=app_name, php=None, workdir=None, shell="bash"))
             else:

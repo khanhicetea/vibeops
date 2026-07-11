@@ -25,6 +25,7 @@ FOUNDATIONAL = {
     "fsutil": "os/fsutil.py",
     "process": "os/process.py",
     "compose": "services/compose.py",
+    "app_config": "services/app_config.py",
     "state": "services/state.py",
     "rendering": "services/rendering.py",
     "mysql": "services/mysql.py",
@@ -36,6 +37,7 @@ FOUNDATIONAL = {
 
 COMMAND_LAYER = {
     "app_commands",
+    "app_config_commands",
     "cron_commands",
     "db_commands",
     "permission_commands",

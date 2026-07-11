@@ -68,7 +68,7 @@ runtime/                      # mutable/generated/live data
     php/versions/             # generated PHP-FPM users/pools
     cron/php84/jobs/          # generated PHP 8.4 cron jobs
     cron/php85/jobs/          # generated PHP 8.5 cron jobs
-  custom/                     # user-owned customization hooks
+  custom/                     # user-owned hooks and app-scoped vhost/pool templates
   home/                       # /home bind mount for app homes
   run/php-fpm/php84/          # PHP 8.4 sockets
   run/php-fpm/php85/          # PHP 8.5 sockets
@@ -117,7 +117,7 @@ For a quick dashboard without entering the wizard:
 ./manage.py status --check-nginx
 ```
 
-Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`; use `./manage.py compose ...` to include all local fragments. See `docs/customization.md` for examples and edge cases.
+Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`; use `./manage.py compose ...` to include all local fragments. App vhost and PHP-FPM pool templates can be made app-owned with `./manage.py app config customize <app> vhost|pool`; see `docs/customization.md` for the ownership model, examples, and edge cases.
 
 ## Create an app
 
@@ -192,6 +192,29 @@ DB_USERNAME=shop
 REDIS_HOST=redis
 REDIS_PORT=6379
 ```
+
+## App service configuration customization
+
+Generated vhosts and PHP-FPM pools normally follow upstream templates. To take ownership of one template for a specific app:
+
+```bash
+./manage.py app config status shop
+./manage.py app config customize shop vhost
+./manage.py app config customize shop pool
+# edit the reported source under runtime/custom/apps/shop/, then:
+./manage.py apply
+```
+
+The selected custom source is recorded in `runtime/state/stack.json` and rendered transactionally into the normal `runtime/generated/` destination. Custom templates still receive app variables and must preserve required TLS markers, identity, and Unix-socket settings. They are validated by `nginx -t` or `php-fpm -tt` when the service is running.
+
+Switch back to the current upstream template without deleting the custom source:
+
+```bash
+./manage.py app config reset shop vhost
+./manage.py app config reset shop pool
+```
+
+The interactive wizard exposes the same flow under **Manage app → Customize**. `app config status` reports when a custom template was based on an older upstream template.
 
 ## App domains
 

@@ -129,9 +129,29 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args_list[0].args[1],
-            ["Domains", "Databases", "Cron jobs", "App shell", "Check permissions"],
+            ["Domains", "Databases", "Cron jobs", "Customize", "App shell", "Check permissions"],
         )
         domains.assert_called_once_with("shop")
+
+    def test_customize_menu_selects_app_scoped_vhost(self) -> None:
+        from vibeops.commands import wizard_commands
+
+        app = {"name": "shop", "service_config": {}}
+        with (
+            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
+            mock.patch.object(wizard_commands, "cmd_app_config_status"),
+            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Customize", "Back"]),
+            mock.patch.object(wizard_commands, "prompt_pick", return_value="Vhost") as pick,
+            mock.patch.object(wizard_commands, "prompt_confirm", side_effect=[True, True]),
+            mock.patch.object(wizard_commands, "cmd_app_config_customize") as customize,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_customize_app("shop")
+
+        self.assertEqual(pick.call_args.args[1], ["Vhost", "PHP-FPM pool"])
+        args = customize.call_args.args[0]
+        self.assertEqual((args.app_name, args.target), ("shop", "vhost"))
+        self.assertFalse(args.no_reload)
 
     def test_tls_acme_is_inside_app_domains_menu(self) -> None:
         from vibeops.commands import wizard_commands

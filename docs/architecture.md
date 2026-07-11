@@ -24,6 +24,8 @@ runtime/                    # local state/generated/live data
     php/versions/*/         # generated PHP-FPM users and pools
     cron/php84|php85/       # generated cron state for supercronic
   custom/                   # user-owned customization hooks/compose adjuncts
+    apps/<app>/nginx/       # optional app-owned vhost template
+    apps/<app>/php/         # optional app-owned PHP-FPM pool template
   home/                     # mounted as /home into nginx/php; app homes live at <app>/www
   run/php-fpm/php84|php85/  # PHP-FPM Unix sockets
   logs/                     # nginx/php/mysql logs
@@ -35,7 +37,7 @@ runtime/                    # local state/generated/live data
 
 ## Render/apply model
 
-`runtime/state/stack.json` is the source of truth for apps, domains, proxy vhosts, TLS mode, and cron jobs. Files under `runtime/generated/` are disposable artifacts and should not be edited directly.
+`runtime/state/stack.json` is the source of truth for apps, domains, proxy vhosts, TLS mode, app service-template ownership, and cron jobs. Files under `runtime/generated/` are disposable artifacts and should not be edited directly. An app may select a user-owned vhost or pool template under `runtime/custom/apps/<app>/`; render still stages that source into `runtime/generated/` so validation and rollback semantics remain unchanged.
 
 ```bash
 ./manage.py render          # stage + promote a complete generation into runtime/generated
@@ -117,7 +119,7 @@ Operational output defaults to structured container stdout/stderr and Docker `lo
 
 ## App model
 
-`runtime/state/stack.json` schema 5 stores PHP apps under `apps` and a stack-wide `domains` index for collision checks and TLS lookup. Each app records its selected MySQL service (`mysql_service`, plus host/port/user metadata); the default comes from `.env` `DEFAULT_MYSQL_SERVICE` unless `--mysql-service` is passed when creating the app/database. A PHP app vhost is named `runtime/generated/nginx/vhosts/app-<app_name>.conf`; proxy vhosts remain domain-keyed.
+`runtime/state/stack.json` schema 6 stores PHP apps under `apps` and a stack-wide `domains` index for collision checks and TLS lookup. Each app records its selected MySQL service (`mysql_service`, plus host/port/user metadata); the default comes from `.env` `DEFAULT_MYSQL_SERVICE` unless `--mysql-service` is passed when creating the app/database. Optional `service_config.vhost` and `service_config.pool` records select `generated` or `custom` template ownership and retain the upstream template digest used to report update availability. A PHP app vhost is named `runtime/generated/nginx/vhosts/app-<app_name>.conf`; proxy vhosts remain domain-keyed.
 
 Filesystem layout for an app:
 
@@ -173,6 +175,7 @@ commands (*_commands / parser / cli / wizard)
 | `services/compose.py` | Sole owner of Compose file selection and argv prefix |
 | `services/state.py` | `stack.json` load/save, locks, timestamps, UID allocation |
 | `services/rendering.py` | Generated headers and template-to-file writes |
+| `services/app_config.py` | App service-template ownership, custom paths, and upstream provenance |
 | `services/mysql.py` | Option files, SQL grants, DB provisioning primitives |
 | `services/php.py` | PHP service naming, identity/pool render, FPM reload |
 | `services/nginx.py` | Vhost/TLS mutation and nginx reload |

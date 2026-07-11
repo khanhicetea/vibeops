@@ -9,6 +9,7 @@ from typing import Any
 from vibeops.utils.env import default_fpm_profile, default_mysql_service, default_php_version, fpm_pool_template_values, stack_env, validate_fpm_profile
 from vibeops.utils.errors import die, info
 from vibeops.os.fsutil import mkdir
+from vibeops.services.app_config import selected_template_path
 from vibeops.services.mysql import apply_app_mysql_metadata, create_mysql_user
 from vibeops.utils.paths import DOCROOT_NAME, HOME_DIR, LEGACY_PHP_VERSIONS_DIR, PHP_LOG_DIR, PHP_SOCKET_DIR, PHP_TEMPLATE_DIR, PHP_VERSIONS_DIR, RenderContext, rel
 from vibeops.os.process import run, service_running
@@ -121,7 +122,12 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
         "PHP_VERSION": php_version,
         **fpm_pool_template_values(profile),
     }
-    write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", pool_values, generated=True)
+    write_template(
+        php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf",
+        selected_template_path(app, "pool"),
+        pool_values,
+        generated=True,
+    )
     info(f"Created PHP {php_version} app identity: {app_name} uid={app_uid}")
     info(f"Home: vibeops/{rel(app_home(app_name))}")
     info(f"Pool: vibeops/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{app_name}.conf')}")
@@ -184,7 +190,7 @@ def render_app_identity(app: dict[str, Any], ctx: RenderContext | None = None) -
         "GID": uid,
         "PUBLIC_DIR": public_dir,
     }, generated=True)
-    write_template(base / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
+    write_template(base / "pool.d" / f"{app_name}.conf", selected_template_path(app, "pool"), {
         "USERNAME": app_name,
         "SOCKET_GROUP_NAME": socket_group_name,
         "PHP_VERSION": php_version,

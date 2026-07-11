@@ -10,6 +10,7 @@ from vibeops.utils.env import default_php_version
 from vibeops.utils.errors import die, info, warn
 from vibeops.os.fsutil import write_text
 from vibeops.utils.paths import NGINX_TEMPLATE_DIR, NGINX_VHOST_DIR, RenderContext, rel
+from vibeops.services.app_config import selected_template_path
 from vibeops.services.php import container_document_root, php_service_for
 from vibeops.os.process import run, service_running
 from vibeops.services.rendering import render_template, template_text
@@ -122,7 +123,7 @@ def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> P
     php_service = app.get("php_service") or php_service_for(str(app.get("php_version") or default_php_version()))
     php_entrypoint = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
     app["php_entrypoint"] = php_entrypoint
-    render_template(NGINX_TEMPLATE_DIR / "site.conf.template", conf_path, {
+    render_template(selected_template_path(app, "vhost"), conf_path, {
         "USERNAME": app_name,
         "APP_NAME": app_name,
         "MAIN_DOMAIN": app.get("main_domain", ""),
