@@ -109,7 +109,7 @@ def wizard_create_site() -> None:
         + (f" {alias_args}" if alias_args else "")
     )
     if prompt_confirm("Continue?", True):
-        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, public_dir=public_dir, php_entrypoint="auto", fpm_profile=fpm_profile, no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
+        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, public_dir=public_dir, php_entrypoint="auto", fpm_profile=fpm_profile, access_log=None, no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
 
 
 def wizard_create_proxy() -> None:

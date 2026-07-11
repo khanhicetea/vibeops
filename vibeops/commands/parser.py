@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 
 from vibeops.commands import (
+    access_log_commands,
     app_commands,
     app_config_commands,
     cron_commands,
@@ -56,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     app_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")
     app_create.add_argument("--no-reload", action="store_true", help="Do not reload nginx/PHP-FPM")
     app_create.add_argument("--uid", type=int, help="Explicit Linux UID")
+    app_create.add_argument(
+        "--access-log",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable (or --no-access-log disable) app-scoped nginx access logging",
+    )
     app_create.set_defaults(func=app_commands.cmd_app_create)
     app_domain = app_sub.add_parser("domain", help="Manage app domains")
     app_domain_sub = app_domain.add_subparsers(dest="domain_command", required=True)
@@ -111,6 +118,32 @@ def build_parser() -> argparse.ArgumentParser:
     app_config_status = app_config_sub.add_parser("status", help="Show app service template ownership")
     app_config_status.add_argument("app_name")
     app_config_status.set_defaults(func=app_config_commands.cmd_app_config_status)
+
+    app_access_log = app_sub.add_parser("access-log", help="Enable/disable app-scoped nginx access logs")
+    app_access_log_sub = app_access_log.add_subparsers(dest="access_log_action", required=True)
+    for action, help_text in (
+        ("enable", "Write Combined access logs under runtime/logs/nginx/apps/"),
+        ("disable", "Stop writing access logs for this app (files are kept)"),
+        ("status", "Show access-log flag and log files for this app"),
+    ):
+        p = app_access_log_sub.add_parser(action, help=help_text)
+        p.add_argument("app_name")
+        if action in {"enable", "disable"}:
+            p.add_argument("--no-reload", action="store_true", help="Render but do not validate/reload nginx")
+        p.set_defaults(func=access_log_commands.cmd_app_access_log)
+
+    app_logs = app_sub.add_parser("logs", help="App log utilities")
+    app_logs_sub = app_logs.add_subparsers(dest="app_logs_command", required=True)
+    app_logs_analyze = app_logs_sub.add_parser(
+        "analyze",
+        help="Adhoc GoAccess analysis of app nginx access logs (Docker one-shot; not realtime)",
+    )
+    app_logs_analyze.add_argument("app_name")
+    app_logs_analyze.add_argument(
+        "--html",
+        help="Write a static HTML report to this path (required when not on a TTY)",
+    )
+    app_logs_analyze.set_defaults(func=access_log_commands.cmd_app_logs_analyze)
 
     user = sub.add_parser("user", help="Deprecated: manage app identities")
     user_sub = user.add_subparsers(dest="user_command", required=True)
@@ -307,6 +340,24 @@ def build_parser() -> argparse.ArgumentParser:
     apply = sub.add_parser("apply", help="Render config, then validate/reload running services")
     apply.add_argument("--no-reload", action="store_true", help="Only render files; do not reload services")
     apply.set_defaults(func=runtime_commands.cmd_apply)
+
+    logs_cmd = sub.add_parser("logs", help="Rotate and manage stack file logs")
+    logs_sub = logs_cmd.add_subparsers(dest="logs_command", required=True)
+    logs_rotate = logs_sub.add_parser(
+        "rotate",
+        help="Rotate oversized app nginx access logs (rename + nginx -s reopen; never reloads config)",
+    )
+    logs_rotate.add_argument(
+        "--force",
+        action="store_true",
+        help="Rotate live access logs even when under NGINX_ACCESS_LOG_MAX_SIZE",
+    )
+    logs_rotate.add_argument(
+        "--app",
+        dest="app_name",
+        help="Only rotate this app's access log",
+    )
+    logs_rotate.set_defaults(func=access_log_commands.cmd_logs_rotate)
 
     status = sub.add_parser("status", help="Show stack status dashboard")
     status.add_argument("--check-nginx", action="store_true", help="Run nginx -t when nginx is running")

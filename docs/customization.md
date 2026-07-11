@@ -153,6 +153,14 @@ Use `--no-reload` when the command should validate but not signal the service. F
 
 Custom sources remain templates. Preserve the app variables and the vhost TLS marker block; custom pools must preserve the private app identity and expected Unix socket path/group/mode. A missing or invalid selected custom source fails render/apply instead of silently falling back to the upstream template.
 
+If you use `./manage.py app access-log enable`, custom vhost templates must include the opt-in access log block (or equivalent) themselves — the render only sets the `ACCESS_LOG` template flag:
+
+```nginx
+{% if ACCESS_LOG %}
+    access_log /var/log/nginx/apps/${APP_NAME}.access.log vibeops_combined buffer=64k flush=30s;
+{% endif %}
+```
+
 Check whether upstream changed after customization:
 
 ```bash

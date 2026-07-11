@@ -29,6 +29,7 @@ runtime/                    # local state/generated/live data
   home/                     # mounted as /home into nginx/php; app homes live at <app>/www
   run/php-fpm/php84|php85/  # PHP-FPM Unix sockets
   logs/                     # nginx/php/mysql logs
+    nginx/apps/             # opt-in per-app Combined access logs (<app>.access.log)
     mysql57|mysql84|mysql97/ # mysqld error + slow query logs per service
   backups/mysql57|mysql84|mysql97/ # versioned logical database dumps
   certs/                    # external certificate files
@@ -68,8 +69,10 @@ Service signals only (not file re-render). Contract tests live in `tests/test_re
 | Command | nginx | php-fpm | cron | Notes |
 |---|:---:|:---:|:---:|---|
 | `app domain add/remove/set-main` | Y | — | — | vhost `server_name` only |
+| `app access-log enable/disable` | Y | — | — | vhost access_log directive only |
 | `proxy create` / `tls acme` / `tls cert` | Y | — | — | vhost TLS/upstream only |
 | `app create` | Y | Y | — | identity/pool + vhost; no cron bounce |
+| `logs rotate` | — | — | — | rename access logs + `nginx -s reopen` (no config reload) |
 | `cron create/remove/reload` | — | — | Y | only that PHP version’s cron service |
 | `app db create` / `db create` / `db user-reset` | — | — | — | MySQL + state only |
 | `db backup` / `db restore` / shell / exec | — | — | — | no service reloads (existing app) |
@@ -179,6 +182,7 @@ commands (*_commands / parser / cli / wizard)
 | `services/mysql.py` | Option files, SQL grants, DB provisioning primitives |
 | `services/php.py` | PHP service naming, identity/pool render, FPM reload |
 | `services/nginx.py` | Vhost/TLS mutation and nginx reload |
+| `services/access_log.py` | App-scoped access log paths, rename+reopen rotation, GoAccess |
 | `services/cron_runtime.py` | Cron paths, aggregate crontab rebuild, scheduler reload |
 | `ui/table.py` | Terminal table formatting |
 | `commands/*_commands.py` | CLI command handlers (stable callback names) |

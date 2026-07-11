@@ -688,6 +688,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Rendered {len(rendered)} file(s)")
 
+
 def cmd_state(args: argparse.Namespace) -> None:
     if args.state_action == "path":
         info(str(DB_PATH))

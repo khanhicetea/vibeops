@@ -125,8 +125,16 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     app["public_dir"] = public_dir
     app["php_entrypoint"] = php_entrypoint
     app["fpm_profile"] = fpm_profile
+    if getattr(args, "access_log", None) is not None:
+        app["access_log"] = bool(args.access_log)
+    else:
+        app.setdefault("access_log", False)
     app["root"] = rel(app_document_root(app_name, public_dir))
     mkdir(app_document_root(app_name, public_dir))
+    if app.get("access_log"):
+        from vibeops.services.access_log import ensure_access_log_dir
+
+        ensure_access_log_dir()
     for old_domain in old_domains - set(all_domains):
         owner = db.get("domains", {}).get(old_domain)
         if owner and owner.get("kind") == "php" and owner.get("app") == app_name:
@@ -158,6 +166,7 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     info(f"Document root: vibeops/{rel(app_document_root(app_name, public_dir))}")
     info(f"PHP entrypoint: {php_entrypoint}")
     info(f"PHP-FPM profile: {fpm_profile}")
+    info(f"Access log: {'on' if app.get('access_log') else 'off'}")
     info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service_for(php_version)}/{app_name}.sock")
     nginx_reload(args.no_reload)
 
@@ -333,11 +342,12 @@ def cmd_app_list(args: argparse.Namespace) -> None:
                 str(app.get("php_version", "") or ""),
                 str(app.get("fpm_profile", "") or ""),
                 str(app.get("php_entrypoint", "") or ""),
+                "on" if app.get("access_log") else "off",
                 str(app.get("main_domain", "") or ""),
                 domains,
             ]
         )
-    print_table(rows, headers=["APP", "PHP", "FPM", "ENTRYPOINT", "MAIN", "DOMAINS"])
+    print_table(rows, headers=["APP", "PHP", "FPM", "ENTRYPOINT", "ACCESS", "MAIN", "DOMAINS"])
 
 def cmd_app_show(args: argparse.Namespace) -> None:
     db = load_db()
@@ -366,7 +376,7 @@ def cmd_site_create(args: argparse.Namespace) -> None:
     domain = validate(args.domain, DOMAIN_RE, "domain")
     if app_name not in db.get("apps", {}) and not app_home(app_name).exists():
         warn("'site create' is deprecated; creating an app instead")
-        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, public_dir="", php_entrypoint="legacy", fpm_profile=None, no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
+        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, public_dir="", php_entrypoint="legacy", fpm_profile=None, access_log=None, no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
         cmd_app_create(ns)
         return
     app = db.get("apps", {}).get(app_name)

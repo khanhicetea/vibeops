@@ -64,6 +64,7 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
             app.setdefault("php_entrypoint", default_php_entrypoint(public_dir))
             app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
             app["fpm_profile"] = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
+            app["access_log"] = bool(app.get("access_log"))
             if "service_config" in app:
                 app["service_config"] = normalize_service_config(app_name, app.get("service_config"))
             if app.get("vhost"):

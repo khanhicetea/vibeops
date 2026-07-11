@@ -123,6 +123,11 @@ def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> P
     php_service = app.get("php_service") or php_service_for(str(app.get("php_version") or default_php_version()))
     php_entrypoint = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
     app["php_entrypoint"] = php_entrypoint
+    access_log = bool(app.get("access_log"))
+    if access_log:
+        from vibeops.services.access_log import ensure_access_log_dir
+
+        ensure_access_log_dir()
     render_template(selected_template_path(app, "vhost"), conf_path, {
         "USERNAME": app_name,
         "APP_NAME": app_name,
@@ -132,6 +137,7 @@ def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> P
         "PHP_SERVICE": php_service,
         "PHP_FRONT_CONTROLLER": php_entrypoint == "front-controller",
         "DOCUMENT_ROOT": container_document_root(app_name, public_dir),
+        "ACCESS_LOG": access_log,
     })
     apply_vhost_tls(conf_path, app)
     # State always records the live path so stack.json stays mount-stable.

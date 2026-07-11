@@ -5,6 +5,7 @@ Reload matrix (service signals only — generated files may still re-render):
 | Command                    | nginx | php-fpm | cron |
 |----------------------------|:-----:|:-------:|:----:|
 | app domain add/remove/main |  Y    |    -    |  -   |
+| app access-log enable/off  |  Y    |    -    |  -   |
 | proxy create / tls *       |  Y    |    -    |  -   |
 | app create (new identity)  |  Y    |    Y    |  -   |
 | cron create/remove/reload  |  -    |    -    |  Y   |
@@ -78,6 +79,26 @@ class ReloadScopeTests(unittest.TestCase):
                 argparse.Namespace(app_name="shop", domain="www.shop.example.com", no_reload=False)
             )
         self.assertEqual(len(calls), 1)
+
+    def test_access_log_enable_only_targets_nginx(self) -> None:
+        import vibeops.commands.access_log_commands as access_log_commands
+
+        db = _db_with_app()
+        calls, fake_apply = self._track_apply()
+        with (
+            patch.object(access_log_commands, "load_db", return_value=db),
+            patch.object(access_log_commands, "save_db"),
+            patch.object(access_log_commands, "upsert_timestamp"),
+            patch.object(access_log_commands, "info"),
+            patch.object(access_log_commands, "ensure_access_log_dir"),
+            patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+        ):
+            access_log_commands.cmd_app_access_log(
+                argparse.Namespace(access_log_action="enable", app_name="shop", no_reload=False)
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].get("service_targets"), frozenset({"nginx"}))
+        self.assertTrue(db["apps"]["shop"]["access_log"])
         self.assertTrue(calls[0].get("reload_services"))
         self.assertTrue(calls[0].get("validate_services"))
         self.assertEqual(set(calls[0].get("service_targets") or ()), {"nginx"})

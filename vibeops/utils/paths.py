@@ -28,6 +28,9 @@ NGINX_VHOST_DIR = GENERATED_DIR / "nginx" / "vhosts"
 CERTS_DIR = RUNTIME_DIR / "certs"
 PHP_SOCKET_DIR = RUNTIME_DIR / "run" / "php-fpm"
 PHP_LOG_DIR = RUNTIME_DIR / "logs" / "php"
+NGINX_LOG_DIR = RUNTIME_DIR / "logs" / "nginx"
+# App-scoped nginx access logs (only when apps.<name>.access_log is true).
+NGINX_ACCESS_LOG_DIR = NGINX_LOG_DIR / "apps"
 CRON_RUNTIME_DIR = GENERATED_DIR / "cron"
 SCHEMA_VERSION = 6
 DOCROOT_NAME = "www"

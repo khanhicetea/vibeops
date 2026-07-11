@@ -1,0 +1,197 @@
+"""App-scoped nginx access logs, rotation, and CLI wiring."""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from vibeops.commands import access_log_commands
+from vibeops.commands.parser import build_parser
+from vibeops.services import access_log, nginx
+from vibeops.utils import env
+from vibeops.utils.errors import StackError
+from vibeops.utils.paths import RenderContext
+
+
+class AccessLogRenderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.generated = self.root / "runtime" / "generated"
+        self.ctx = RenderContext(
+            generated_dir=self.generated,
+            secrets_dir=self.root / "runtime" / "secrets" / "mysql",
+        )
+        self.log_dir = self.root / "runtime" / "logs" / "nginx" / "apps"
+        self.app = {
+            "name": "shop",
+            "uid": 10001,
+            "php_version": "8.5",
+            "main_domain": "shop.test",
+            "domains": ["shop.test"],
+            "public_dir": "",
+            "php_entrypoint": "legacy",
+            "fpm_profile": "balanced",
+            "tls": {"mode": "self-signed"},
+            "access_log": False,
+        }
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_vhost_omits_access_log_when_disabled(self) -> None:
+        with patch.object(access_log, "NGINX_ACCESS_LOG_DIR", self.log_dir):
+            path = nginx.render_app_vhost(self.app, self.ctx)
+        text = path.read_text()
+        self.assertNotIn("access_log /var/log/nginx/apps/shop.access.log", text)
+
+    def test_vhost_includes_access_log_when_enabled(self) -> None:
+        self.app["access_log"] = True
+        with patch.object(access_log, "NGINX_ACCESS_LOG_DIR", self.log_dir):
+            path = nginx.render_app_vhost(self.app, self.ctx)
+        text = path.read_text()
+        self.assertEqual(text.count("access_log /var/log/nginx/apps/shop.access.log vibeops_combined buffer=64k flush=30s;"), 2)
+        self.assertTrue(self.log_dir.is_dir())
+
+
+class AccessLogRotateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.log_dir = Path(self.tmp.name) / "apps"
+        self.log_dir.mkdir(parents=True)
+        self.patches = [
+            patch.object(access_log, "NGINX_ACCESS_LOG_DIR", self.log_dir),
+            patch.object(access_log, "nginx_access_log_max_size_bytes", return_value=100),
+            patch.object(access_log, "nginx_access_log_rotate_count", return_value=2),
+            patch.object(access_log, "nginx_reopen_logs"),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self) -> None:
+        for p in reversed(self.patches):
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_rotate_skips_small_files(self) -> None:
+        live = self.log_dir / "shop.access.log"
+        live.write_text("x" * 10)
+        self.assertFalse(access_log.rotate_app_access_log("shop"))
+        self.assertTrue(live.is_file())
+
+    def test_rotate_renames_compresses_and_reopens(self) -> None:
+        live = self.log_dir / "shop.access.log"
+        live.write_text("x" * 200)
+        with patch.object(access_log, "nginx_reopen_logs") as reopen:
+            self.assertTrue(access_log.rotate_app_access_log("shop"))
+            reopen.assert_called_once()
+        self.assertFalse(live.exists())
+        archives = list(self.log_dir.glob("shop.access.log-*"))
+        self.assertEqual(len(archives), 1)
+        self.assertTrue(archives[0].name.endswith(".gz"))
+        with gzip.open(archives[0], "rt") as fh:
+            self.assertEqual(fh.read(), "x" * 200)
+
+    def test_rotate_prunes_old_archives(self) -> None:
+        for i in range(3):
+            path = self.log_dir / f"shop.access.log-2026010{i}T000000.gz"
+            path.write_bytes(b"old")
+            # Ensure mtime order
+            import os
+            import time
+
+            os.utime(path, (time.time() - 100 + i, time.time() - 100 + i))
+        live = self.log_dir / "shop.access.log"
+        live.write_text("y" * 200)
+        access_log.rotate_app_access_log("shop")
+        archives = list(self.log_dir.glob("shop.access.log-*"))
+        self.assertEqual(len(archives), 2)
+
+    def test_rotate_all_reopens_once(self) -> None:
+        for name in ("shop", "blog"):
+            (self.log_dir / f"{name}.access.log").write_text("z" * 200)
+        with patch.object(access_log, "nginx_reopen_logs") as reopen:
+            count = access_log.rotate_all_access_logs()
+        self.assertEqual(count, 2)
+        reopen.assert_called_once()
+
+
+class AccessLogEnvTests(unittest.TestCase):
+    def test_parse_byte_size(self) -> None:
+        self.assertEqual(env.parse_byte_size("100"), 100)
+        self.assertEqual(env.parse_byte_size("1K"), 1024)
+        self.assertEqual(env.parse_byte_size("100M"), 100 * 1024 * 1024)
+        self.assertEqual(env.parse_byte_size("2G"), 2 * 1024 * 1024 * 1024)
+
+    def test_parse_byte_size_rejects_junk(self) -> None:
+        with self.assertRaises(StackError):
+            env.parse_byte_size("nope")
+
+
+class AccessLogCliTests(unittest.TestCase):
+    def test_parser_wiring(self) -> None:
+        parser = build_parser()
+        enable = parser.parse_args(["app", "access-log", "enable", "shop", "--no-reload"])
+        self.assertEqual(enable.access_log_action, "enable")
+        self.assertEqual(enable.app_name, "shop")
+        self.assertTrue(enable.no_reload)
+        analyze = parser.parse_args(["app", "logs", "analyze", "shop", "--html", "/tmp/x.html"])
+        self.assertEqual(analyze.app_name, "shop")
+        self.assertEqual(analyze.html, "/tmp/x.html")
+        rotate = parser.parse_args(["logs", "rotate", "--force", "--app", "shop"])
+        self.assertTrue(rotate.force)
+        self.assertEqual(rotate.app_name, "shop")
+        create = parser.parse_args(["app", "create", "shop", "shop.test", "--access-log"])
+        self.assertTrue(create.access_log)
+        create_off = parser.parse_args(["app", "create", "shop", "shop.test", "--no-access-log"])
+        self.assertFalse(create_off.access_log)
+
+    def test_enable_only_targets_nginx(self) -> None:
+        db = {
+            "apps": {
+                "shop": {
+                    "name": "shop",
+                    "php_version": "8.5",
+                    "main_domain": "shop.test",
+                    "domains": ["shop.test"],
+                    "access_log": False,
+                }
+            }
+        }
+        calls: list[dict] = []
+
+        def fake_apply(_db, **kwargs):
+            calls.append(kwargs)
+            return []
+
+        with (
+            patch.object(access_log_commands, "load_db", return_value=db),
+            patch.object(access_log_commands, "save_db"),
+            patch.object(access_log_commands, "upsert_timestamp"),
+            patch.object(access_log_commands, "info"),
+            patch.object(access_log_commands, "ensure_access_log_dir"),
+            patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+        ):
+            access_log_commands.cmd_app_access_log(
+                argparse.Namespace(access_log_action="enable", app_name="shop", no_reload=False)
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["service_targets"], frozenset({"nginx"}))
+        self.assertTrue(calls[0]["reload_services"])
+        self.assertTrue(db["apps"]["shop"]["access_log"])
+
+    def test_logs_rotate_command_app_scope(self) -> None:
+        with patch.object(access_log_commands, "rotate_app_access_log", return_value=True) as rotate:
+            with patch.object(access_log_commands, "info"):
+                access_log_commands.cmd_logs_rotate(
+                    argparse.Namespace(force=True, app_name="shop")
+                )
+        rotate.assert_called_once_with("shop", force=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

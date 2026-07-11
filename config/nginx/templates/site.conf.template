@@ -23,6 +23,12 @@ server {
     set $base ${DOCUMENT_ROOT};
     root $base;
 
+{% if ACCESS_LOG %}
+    # App-scoped access log (opt-in via ./manage.py app access-log enable).
+    # flush=30s batches writes; rotate with ./manage.py logs rotate (reopen, not reload).
+    access_log /var/log/nginx/apps/${APP_NAME}.access.log vibeops_combined buffer=64k flush=30s;
+{% endif %}
+
     include /etc/nginx/snippets/security.conf;
     add_header Alt-Svc 'h3=":443"; ma=86400' always;
     # Enable HSTS only after the real certificate is active and verified.
@@ -64,6 +70,10 @@ server {
     set $base ${DOCUMENT_ROOT};
     set $enable_https_redirect 0;
     root $base;
+
+{% if ACCESS_LOG %}
+    access_log /var/log/nginx/apps/${APP_NAME}.access.log vibeops_combined buffer=64k flush=30s;
+{% endif %}
 
     include /etc/nginx/snippets/security.conf;
 

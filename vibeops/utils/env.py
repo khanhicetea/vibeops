@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -166,3 +167,55 @@ def fpm_capacity_warnings(db: dict[str, Any], *, process_max: int | None = None)
 
 def mysql_root_password(env: dict[str, str], service: str) -> str | None:
     return env.get(f"{service.upper()}_ROOT_PASSWORD") or env.get("MYSQL_ROOT_PASSWORD")
+
+
+# App-scoped nginx access-log retention (file logs under runtime/logs/nginx/apps/).
+DEFAULT_NGINX_ACCESS_LOG_MAX_SIZE = "100M"
+DEFAULT_NGINX_ACCESS_LOG_ROTATE = 14
+DEFAULT_GOACCESS_IMAGE = "allinurl/goaccess:latest"
+
+_BYTE_SIZE_RE = re.compile(r"^\s*(\d+)\s*([KMG](?:B)?)?\s*$", re.IGNORECASE)
+
+
+def parse_byte_size(value: str, *, field: str = "size") -> int:
+    """Parse sizes like 100M, 50m, 1G, 1024 into bytes."""
+    raw = (value or "").strip()
+    match = _BYTE_SIZE_RE.match(raw)
+    if not match:
+        die(f"Invalid {field}: {value!r}; expected an integer with optional K/M/G suffix (e.g. 100M)")
+    amount = int(match.group(1))
+    unit = (match.group(2) or "B").upper()
+    if unit in {"", "B"}:
+        multiplier = 1
+    elif unit in {"K", "KB"}:
+        multiplier = 1024
+    elif unit in {"M", "MB"}:
+        multiplier = 1024 * 1024
+    elif unit in {"G", "GB"}:
+        multiplier = 1024 * 1024 * 1024
+    else:
+        die(f"Invalid {field}: {value!r}; expected an integer with optional K/M/G suffix (e.g. 100M)")
+    return amount * multiplier
+
+
+def nginx_access_log_max_size_bytes() -> int:
+    raw = stack_env().get("NGINX_ACCESS_LOG_MAX_SIZE", DEFAULT_NGINX_ACCESS_LOG_MAX_SIZE)
+    size = parse_byte_size(raw, field="NGINX_ACCESS_LOG_MAX_SIZE")
+    if size < 1:
+        die(f"Invalid NGINX_ACCESS_LOG_MAX_SIZE: {raw!r}; must be at least 1 byte")
+    return size
+
+
+def nginx_access_log_rotate_count() -> int:
+    raw = stack_env().get("NGINX_ACCESS_LOG_ROTATE", str(DEFAULT_NGINX_ACCESS_LOG_ROTATE)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        die(f"Invalid NGINX_ACCESS_LOG_ROTATE: {raw!r}; expected a non-negative integer")
+    if value < 0:
+        die(f"Invalid NGINX_ACCESS_LOG_ROTATE: {value}; expected a non-negative integer")
+    return value
+
+
+def goaccess_image() -> str:
+    return stack_env().get("GOACCESS_IMAGE", DEFAULT_GOACCESS_IMAGE).strip() or DEFAULT_GOACCESS_IMAGE
