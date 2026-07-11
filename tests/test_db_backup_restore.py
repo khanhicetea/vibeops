@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.db_commands as db_commands
+import vibeops.commands.db_commands as db_commands
 import vibeops.helpers as helpers
 from vibeops.helpers import StackError
 

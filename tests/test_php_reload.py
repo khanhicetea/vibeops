@@ -4,8 +4,8 @@ import subprocess
 import unittest
 from unittest.mock import call, patch
 
-import vibeops.php as php
-from vibeops.errors import StackError
+import vibeops.services.php as php
+from vibeops.utils.errors import StackError
 
 
 class PhpReloadTests(unittest.TestCase):

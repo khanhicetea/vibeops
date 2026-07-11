@@ -7,15 +7,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.cron_runtime as cron_runtime
-import vibeops.env as env
+import vibeops.services.cron_runtime as cron_runtime
+import vibeops.utils.env as env
 import vibeops.helpers as helpers
-import vibeops.mysql as mysql
-import vibeops.nginx as nginx
-import vibeops.paths as paths
-import vibeops.php as php
-import vibeops.process as process
-import vibeops.runtime_commands as runtime
+import vibeops.services.mysql as mysql
+import vibeops.services.nginx as nginx
+import vibeops.utils.paths as paths
+import vibeops.services.php as php
+import vibeops.os.process as process
+import vibeops.commands.runtime_commands as runtime
 
 
 def _snapshot_tree(root: Path) -> dict[str, tuple[bytes, int]]:

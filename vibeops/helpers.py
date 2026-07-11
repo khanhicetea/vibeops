@@ -1,8 +1,8 @@
 """Deprecated compatibility re-exports for VibeOps helpers.
 
-Prefer focused modules such as ``vibeops.state``, ``vibeops.php``, and
-``vibeops.mysql``. This shim exists only for transitional imports and will
-be removed once remaining call sites migrate.
+Prefer focused modules such as ``vibeops.services.state``, ``vibeops.services.php``,
+and ``vibeops.services.mysql``. This shim exists only for transitional imports
+and will be removed once remaining call sites migrate.
 """
 from __future__ import annotations
 
@@ -12,18 +12,18 @@ from typing import Any
 # Owning modules for transitional attribute lookup. Keep this list in sync with
 # the package layout; do not add business logic here.
 _OWNER_MODULES = (
-    "errors",
-    "paths",
-    "validation",
-    "env",
-    "fsutil",
-    "process",
-    "state",
-    "rendering",
-    "mysql",
-    "php",
-    "nginx",
-    "cron_runtime",
+    "utils.errors",
+    "utils.paths",
+    "utils.validation",
+    "utils.env",
+    "os.fsutil",
+    "os.process",
+    "services.state",
+    "services.rendering",
+    "services.mysql",
+    "services.php",
+    "services.nginx",
+    "services.cron_runtime",
 )
 
 _cache: dict[str, str] | None = None

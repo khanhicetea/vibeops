@@ -6,15 +6,15 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from vibeops.cli import main
-from vibeops.errors import cli_flag_present, warn_password_cli_flag
-from vibeops.parser import build_parser
-from vibeops.runtime_commands import prompt_password
+from vibeops.commands.cli import main
+from vibeops.utils.errors import cli_flag_present, warn_password_cli_flag
+from vibeops.commands.parser import build_parser
+from vibeops.commands.runtime_commands import prompt_password
 
 
 class CliCancellationTests(unittest.TestCase):
     def test_keyboard_interrupt_returns_130_without_traceback(self) -> None:
-        with mock.patch("vibeops.cli.build_parser") as build:
+        with mock.patch("vibeops.commands.cli.build_parser") as build:
             parser = mock.Mock()
             args = mock.Mock()
             args.func = mock.Mock(side_effect=KeyboardInterrupt)
@@ -28,7 +28,7 @@ class CliCancellationTests(unittest.TestCase):
         self.assertNotIn("Traceback", err.getvalue())
 
     def test_eof_error_returns_1_without_traceback(self) -> None:
-        with mock.patch("vibeops.cli.build_parser") as build:
+        with mock.patch("vibeops.commands.cli.build_parser") as build:
             parser = mock.Mock()
             args = mock.Mock()
             args.func = mock.Mock(side_effect=EOFError)
@@ -44,7 +44,7 @@ class CliCancellationTests(unittest.TestCase):
 
 class PromptPasswordTests(unittest.TestCase):
     def test_uses_getpass_and_returns_secret(self) -> None:
-        with mock.patch("vibeops.runtime_commands.getpass.getpass", return_value="s3cret") as gp:
+        with mock.patch("vibeops.commands.runtime_commands.getpass.getpass", return_value="s3cret") as gp:
             self.assertEqual(prompt_password(), "s3cret")
             gp.assert_called_once()
             prompt = gp.call_args.args[0]
@@ -52,7 +52,7 @@ class PromptPasswordTests(unittest.TestCase):
             self.assertTrue(prompt.endswith(": "))
 
     def test_blank_means_generate(self) -> None:
-        with mock.patch("vibeops.runtime_commands.getpass.getpass", return_value=""):
+        with mock.patch("vibeops.commands.runtime_commands.getpass.getpass", return_value=""):
             self.assertIsNone(prompt_password())
 
 
@@ -99,7 +99,7 @@ class PasswordFlagDiscourageTests(unittest.TestCase):
 
 class WizardUsesPromptPasswordTests(unittest.TestCase):
     def test_wizard_create_user_calls_prompt_password(self) -> None:
-        from vibeops import wizard_commands
+        from vibeops.commands import wizard_commands
 
         with (
             mock.patch.object(wizard_commands, "prompt_validated", return_value="shop"),
@@ -126,7 +126,7 @@ def _force_numbered_choice():
 
 class PromptChoiceZeroTests(unittest.TestCase):
     def test_shows_zero_back_and_accepts_zero(self) -> None:
-        from vibeops.runtime_commands import prompt_choice
+        from vibeops.commands.runtime_commands import prompt_choice
 
         out = io.StringIO()
         with (
@@ -143,7 +143,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
         self.assertIn("Choose 0-2", inp.call_args.args[0])
 
     def test_main_menu_zero_quit(self) -> None:
-        from vibeops.runtime_commands import prompt_choice
+        from vibeops.commands.runtime_commands import prompt_choice
 
         out = io.StringIO()
         with (
@@ -156,7 +156,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
         self.assertIn("0 - Quit", out.getvalue())
 
     def test_selects_numbered_choice(self) -> None:
-        from vibeops.runtime_commands import prompt_choice
+        from vibeops.commands.runtime_commands import prompt_choice
 
         with (
             _force_numbered_choice(),
@@ -166,7 +166,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
             self.assertEqual(prompt_choice("Pick", ["A", "B", "C"]), "B")
 
     def test_prompt_pick_raises_wizard_back_on_zero(self) -> None:
-        from vibeops.runtime_commands import WizardBack, prompt_pick
+        from vibeops.commands.runtime_commands import WizardBack, prompt_pick
 
         with (
             _force_numbered_choice(),
@@ -187,7 +187,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
         default: str | None = None,
         zero: str | None = "Back",
     ):
-        from vibeops import runtime_commands
+        from vibeops.commands import runtime_commands
 
         key_iter = iter(keys)
 
@@ -240,7 +240,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
         self.assertIn("number: 10", text)
 
     def test_prompt_choice_uses_arrows_when_tty(self) -> None:
-        from vibeops import runtime_commands
+        from vibeops.commands import runtime_commands
 
         with (
             mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=True),
@@ -263,7 +263,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
         numbered.assert_not_called()
 
     def test_prompt_choice_uses_numbers_when_not_tty(self) -> None:
-        from vibeops import runtime_commands
+        from vibeops.commands import runtime_commands
 
         with (
             mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=False),
@@ -285,7 +285,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
 
     def test_left_right_arrows_do_not_freeze(self) -> None:
         """Left/right CSI finals (C/D) must not block waiting for more input."""
-        from vibeops import runtime_commands
+        from vibeops.commands import runtime_commands
 
         # Sequence: left (ESC[D), right (ESC[C), down, enter → select B
         # (zero=Back at 0; start on A; down → B)

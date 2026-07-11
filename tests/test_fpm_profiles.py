@@ -9,13 +9,13 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.env as env
+import vibeops.utils.env as env
 import vibeops.helpers as helpers
-import vibeops.paths as paths
-import vibeops.runtime_commands as runtime
-from vibeops.app_commands import resolve_app_fpm_profile
-from vibeops.parser import build_parser
-from vibeops.template import render_template_text
+import vibeops.utils.paths as paths
+import vibeops.commands.runtime_commands as runtime
+from vibeops.commands.app_commands import resolve_app_fpm_profile
+from vibeops.commands.parser import build_parser
+from vibeops.utils.template import render_template_text
 
 
 def _render_pool(profile: str, app: str = "shop") -> str:
@@ -111,7 +111,7 @@ class FpmPoolRenderTests(unittest.TestCase):
 class ResolveAndNormalizeTests(unittest.TestCase):
     def test_new_app_uses_stack_default(self) -> None:
         with patch.object(helpers, "default_fpm_profile", return_value="balanced"):
-            with patch("vibeops.app_commands.default_fpm_profile", return_value="balanced"):
+            with patch("vibeops.commands.app_commands.default_fpm_profile", return_value="balanced"):
                 self.assertEqual(resolve_app_fpm_profile({"apps": {}}, "shop", None), "balanced")
 
     def test_new_app_explicit_profile(self) -> None:
