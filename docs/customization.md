@@ -299,7 +299,7 @@ services:
     image: nginx:1.31-trixie
 ```
 
-Be careful: upstream templates/snippets may assume features from the pinned image.
+Be careful: upstream templates/snippets may assume features from the pinned image. For an opt-in image with Brotli and Zstandard static/dynamic compression, follow [nginx-br-zstd-optin.md](nginx-br-zstd-optin.md).
 
 ### Add a host-mounted directory to all PHP 8.5 services
 

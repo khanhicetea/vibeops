@@ -77,11 +77,7 @@ x-mysql-healthcheck: &mysql-healthcheck
 
 services:
   nginx:
-    image: vibeops-nginx:${NGINX_VERSION:-1.30}
-    build:
-      context: ./docker/nginx
-      args:
-        NGINX_IMAGE: nginx:${NGINX_VERSION:-1.30}-trixie
+    image: nginx:1.30-trixie
     restart: unless-stopped
     # Host network: nginx binds directly to host :80 and :443 TCP/UDP with no Docker port mapping/NAT.
     # Intended for Linux cloud servers. Docker Desktop host networking behaves differently.
