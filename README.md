@@ -385,11 +385,21 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 ./manage.py db backup
 ./manage.py db backup shop_app
 ./manage.py db backup --app shop
+./manage.py db backup --keep 14
 ./manage.py db list-backups
 ./manage.py db restore runtime/backups/mysql84/<file>.sql --yes
 ```
 
 Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major.
+
+#### Backup and restore semantics
+
+- **Atomic final dumps:** `db backup` streams `mysqldump` into a private mode-600 partial file (name suffix `.sql.partial-<token>`, never listed as a backup). On success the file is fsynced and promoted with same-filesystem `os.replace` to a unique `*.sql` name. Failed, interrupted, or empty dumps leave **no** final `.sql` and clean up the partial on ordinary failure paths.
+- **No overwrite of existing backups:** final names include a microsecond stamp (and a short random suffix if needed). Existing finalized dumps are never truncated or replaced.
+- **Batch behavior:** one stamp per backup batch; if database *N* of *M* fails, earlier finalized dumps from that batch are kept, retention is **not** applied, and the error names the safely written files.
+- **Listing / retention:** `db list-backups` and `--keep` consider only regular finalized `*.sql` files (partials and symlinks are ignored). `--keep N` requires `N >= 1` and runs only after the whole requested batch succeeds; omit `--keep` to retain all finalized dumps. `--keep 0` is rejected.
+- **Streaming restore:** `db restore` streams the dump file on stdin to `mysql` (binary-safe; not loaded fully into Python memory). Restore may overwrite objects present in the dump; it is **not** atomic at the MySQL object level.
+- **Off-box copies still required:** host-local finalized dumps are not a full disaster-recovery plan—copy `runtime/backups/<service>/` off the machine regularly.
 
 ### MySQL data and recovery
 
@@ -406,9 +416,9 @@ Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major.
 
 #### Recommended recovery path
 
-1. Schedule regular `./manage.py db backup` (host cron or manual before risky deploys)
+1. Schedule regular `./manage.py db backup` (host cron or manual before risky deploys); use `--keep N` (`N >= 1`) only when you intentionally prune old finalized dumps after a successful batch
 2. Store/copy `runtime/backups/mysql84` (and other majors you run) off-box if the host disk is not enough
-3. Restore with `./manage.py db restore <file.sql> --yes`
+3. Restore with `./manage.py db restore <file.sql> --yes` (streams the dump; may overwrite objects)
 
 #### Crash vs human error
 

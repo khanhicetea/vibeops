@@ -130,7 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
     db_backup.add_argument("database", nargs="?", help="Single database name (default: all non-system DBs)")
     db_backup.add_argument("--app", "--user", dest="app", help="All databases for this app (prefix app_*)")
     db_backup.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
-    db_backup.add_argument("--keep", type=int, help="After backup, keep only the N newest .sql files in the backup dir")
+    db_backup.add_argument(
+        "--keep",
+        type=int,
+        help="After a fully successful backup batch, keep only the N newest finalized .sql files (N >= 1)",
+    )
     db_backup.set_defaults(func=cmd_db_backup)
 
     db_restore = db_sub.add_parser("restore", help="Restore a .sql dump into a MySQL service")

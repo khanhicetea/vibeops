@@ -7,6 +7,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: LOW
@@ -152,14 +153,14 @@ Mock subprocess/Popen and use temporary backup directories. Required cases:
 
 ## Done criteria
 
-- [ ] Failed/empty dumps leave no final `.sql` file.
-- [ ] Existing backups are never truncated.
-- [ ] Final promotion is same-filesystem atomic.
-- [ ] Restore does not load full SQL into Python memory.
-- [ ] Partial files are excluded from listing/retention.
-- [ ] All DB subprocesses use Plan 006 Compose context.
-- [ ] Focused tests and `make check` pass.
-- [ ] Plan 008 is marked DONE.
+- [x] Failed/empty dumps leave no final `.sql` file.
+- [x] Existing backups are never truncated.
+- [x] Final promotion is same-filesystem atomic.
+- [x] Restore does not load full SQL into Python memory.
+- [x] Partial files are excluded from listing/retention.
+- [x] All DB subprocesses use Plan 006 Compose context.
+- [x] Focused tests and `make check` pass.
+- [x] Plan 008 is marked DONE.
 
 ## STOP conditions
 

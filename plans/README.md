@@ -15,7 +15,7 @@ The repository is a no-runtime-dependency Python management CLI for a Linux/Dock
 | 005 | Make render/apply staged and rollback-safe | P1 | L | 001, 004 | DONE |
 | 006 | Route every Docker Compose call through one context | P1 | M | 001 | TODO |
 | 007 | Replace stale VibeOps skill and deploy runbook | P1 | S | 005, 006 | TODO |
-| 008 | Make MySQL backup/restore atomic and streaming | P2 | M | 001, 006 | TODO |
+| 008 | Make MySQL backup/restore atomic and streaming | P2 | M | 001, 006 | DONE |
 | 009 | Add configurable, memory-efficient PHP-FPM profiles | P2 | M | 001, 002, 005 | TODO |
 | 010 | Remove database passwords from host command arguments | P2 | S | 001, 006 | TODO |
 | 011 | Decompose helpers and remove wildcard imports | P2 | L | 001–010 | TODO |
