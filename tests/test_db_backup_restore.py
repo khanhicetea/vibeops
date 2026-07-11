@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import os
 import subprocess
 import tempfile
@@ -44,6 +45,11 @@ class ReserveBackupPathTests(unittest.TestCase):
         path = db_commands._reserve_backup_path(self.backup_dir, stamp, "shop_app")
         self.assertEqual(path, self.backup_dir / f"{stamp}_shop_app.sql")
 
+    def test_gzip_extension_reserved(self) -> None:
+        stamp = "20260711-120000-000002"
+        path = db_commands._reserve_backup_path(self.backup_dir, stamp, "shop_app", compress=True)
+        self.assertEqual(path, self.backup_dir / f"{stamp}_shop_app.sql.gz")
+
 
 class AtomicDumpTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -68,7 +74,13 @@ class AtomicDumpTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _mock_dump_write(self, payload: bytes, returncode: int = 0):
-        def _run_stdout_to_file(cmd, *, stdout_file, check=True):
+        def _run_stdout_to_file(cmd, *, stdout_file, check=True, gzip_compress=False):
+            if gzip_compress:
+                with gzip.GzipFile(fileobj=stdout_file, mode="wb", mtime=0) as gz:
+                    gz.write(payload)
+                cp = subprocess.CompletedProcess(cmd, returncode, b"", b"dump-err\n" if returncode else b"")
+                setattr(cp, "raw_bytes", len(payload))
+                return cp
             stdout_file.write(payload)
             stdout_file.flush()
             return subprocess.CompletedProcess(cmd, returncode, b"", b"dump-err\n" if returncode else b"")
@@ -143,6 +155,39 @@ class AtomicDumpTests(unittest.TestCase):
         self.assertNotIn("MYSQL_PWD", flat)
         self.assertNotIn(" -p", f" {flat} ")
 
+    def test_gzip_dump_promotes_valid_archive(self) -> None:
+        payload = b"-- MySQL dump\nCREATE TABLE t (id INT);\n"
+        final = self.backup_dir / "20260711-120000-000000_shop_app.sql.gz"
+
+        with patch.object(db_commands, "run_stdout_to_file", side_effect=self._mock_dump_write(payload)):
+            with patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]):
+                db_commands.mysql_root_dump(
+                    ["--databases", "shop_app"],
+                    service=self.service,
+                    output_path=final,
+                    compress=True,
+                )
+
+        self.assertTrue(final.is_file())
+        with gzip.open(final, "rb") as gz:
+            self.assertEqual(gz.read(), payload)
+        self.assertEqual(final.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(list(self.backup_dir.glob("*.partial-*")), [])
+
+    def test_gzip_empty_raw_is_failure(self) -> None:
+        final = self.backup_dir / "empty.sql.gz"
+        with patch.object(db_commands, "run_stdout_to_file", side_effect=self._mock_dump_write(b"", returncode=0)):
+            with patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]):
+                with self.assertRaises(StackError) as ctx:
+                    db_commands.mysql_root_dump(
+                        ["--databases", "shop_app"],
+                        service=self.service,
+                        output_path=final,
+                        compress=True,
+                    )
+        self.assertIn("empty", str(ctx.exception).lower())
+        self.assertFalse(final.exists())
+
 
 class ListingAndRetentionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -155,8 +200,13 @@ class ListingAndRetentionTests(unittest.TestCase):
     def test_listing_ignores_partials_and_symlinks(self) -> None:
         final = self.backup_dir / "20260711-1_shop.sql"
         final.write_text("-- final\n", encoding="utf-8")
+        final_gz = self.backup_dir / "20260711-1_shop.sql.gz"
+        with gzip.open(final_gz, "wb") as gz:
+            gz.write(b"-- gz final\n")
         partial = self.backup_dir / "20260711-1_shop.sql.partial-abc"
         partial.write_text("-- partial\n", encoding="utf-8")
+        partial_gz = self.backup_dir / "20260711-1_shop.sql.gz.partial-xyz"
+        partial_gz.write_bytes(b"nope")
         target = self.backup_dir / "target.sql"
         target.write_text("-- target\n", encoding="utf-8")
         link = self.backup_dir / "link.sql"
@@ -165,9 +215,11 @@ class ListingAndRetentionTests(unittest.TestCase):
         listed = db_commands._list_final_backups(self.backup_dir)
         names = {p.name for p in listed}
         self.assertIn("20260711-1_shop.sql", names)
+        self.assertIn("20260711-1_shop.sql.gz", names)
         self.assertIn("target.sql", names)
         self.assertNotIn("link.sql", names)
         self.assertNotIn(partial.name, names)
+        self.assertNotIn(partial_gz.name, names)
 
     def test_keep_zero_rejected(self) -> None:
         with self.assertRaises(StackError) as ctx:
@@ -208,8 +260,10 @@ class BackupBatchTests(unittest.TestCase):
 
     def test_multiple_database_batch_and_retention_after_success(self) -> None:
         written_payloads: dict[str, bytes] = {}
+        compress_flags: list[bool] = []
 
-        def fake_dump(mysqldump_args, *, service, output_path):
+        def fake_dump(mysqldump_args, *, service, output_path, compress=False):
+            compress_flags.append(compress)
             content = f"-- dump {mysqldump_args[-1]}\n".encode()
             output_path.write_bytes(content)
             written_payloads[output_path.name] = content
@@ -224,6 +278,7 @@ class BackupBatchTests(unittest.TestCase):
             database=None,
             app=None,
             keep=2,
+            gzip=True,
         )
         with (
             patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
@@ -239,12 +294,14 @@ class BackupBatchTests(unittest.TestCase):
             db_commands.cmd_db_backup(args)
 
         self.assertEqual(len(written_payloads), 2)
+        self.assertTrue(all(name.endswith(".sql.gz") for name in written_payloads))
+        self.assertEqual(compress_flags, [True, True])
         self.assertEqual(retention_calls, [2])
 
     def test_mid_batch_failure_keeps_earlier_dumps_skips_retention(self) -> None:
         calls: list[str] = []
 
-        def fake_dump(mysqldump_args, *, service, output_path):
+        def fake_dump(mysqldump_args, *, service, output_path, compress=False):
             db_name = mysqldump_args[-1]
             calls.append(db_name)
             if db_name == "shop_b":
@@ -257,6 +314,7 @@ class BackupBatchTests(unittest.TestCase):
             database=None,
             app=None,
             keep=1,
+            gzip=False,
         )
         with (
             patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
@@ -312,6 +370,27 @@ class StreamingRestoreTests(unittest.TestCase):
             patch.object(db_commands, "mysql_root_exec_sql", side_effect=AssertionError("exec_sql must not be used")),
         ):
             db_commands.mysql_root_stream_sql_file(self.dump, service="mysql84")
+
+        self.assertEqual(len(streamed), 1)
+        self.assertEqual(streamed[0], self.payload)
+
+    def test_streams_gzip_backup_decompressed(self) -> None:
+        gz_path = self.root / "big.sql.gz"
+        with gzip.open(gz_path, "wb") as gz:
+            gz.write(self.payload)
+        streamed: list[bytes] = []
+
+        def fake_run_stdin_stream(cmd, *, stdin_file, check=False, capture_stdout=True):
+            streamed.append(stdin_file.read())
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with (
+            patch.object(db_commands, "service_running", return_value=True),
+            patch.object(db_commands, "mysql_root_option_file", return_value=self.option),
+            patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]),
+            patch.object(db_commands, "run_stdin_stream", side_effect=fake_run_stdin_stream),
+        ):
+            db_commands.mysql_root_stream_sql_file(gz_path, service="mysql84")
 
         self.assertEqual(len(streamed), 1)
         self.assertEqual(streamed[0], self.payload)

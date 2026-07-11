@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import fcntl
+import gzip
 import json
 import os
 import re
@@ -579,22 +580,66 @@ def run_stdout_to_file(
     *,
     stdout_file,
     check: bool = True,
+    gzip_compress: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
-    """Run *cmd* streaming stdout into an open binary file; capture bounded stderr."""
+    """Run *cmd* streaming stdout into an open binary file; capture bounded stderr.
+
+    When *gzip_compress* is true, stdout is piped through stdlib gzip into
+    *stdout_file* (still streaming; not buffered as a full dump). The returned
+    process has ``raw_bytes`` set to the uncompressed byte count written.
+    """
+    if not gzip_compress:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            stdout=stdout_file,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            _, stderr = proc.communicate()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+        stderr_b = _bounded_bytes(stderr)
+        completed = subprocess.CompletedProcess(cmd, proc.returncode or 0, b"", stderr_b)
+        if check and completed.returncode != 0:
+            err = stderr_b.decode("utf-8", errors="replace").strip()
+            raise StackError(
+                f"command failed (exit {completed.returncode}): {' '.join(cmd)}"
+                + (f": {err}" if err else "")
+            )
+        return completed
+
     proc = subprocess.Popen(
         cmd,
         cwd=str(ROOT),
-        stdout=stdout_file,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    raw_bytes = 0
+    stderr = b""
+    rc = 1
     try:
-        _, stderr = proc.communicate()
+        assert proc.stdout is not None
+        # Do not close stdout_file when the GzipFile closes.
+        with gzip.GzipFile(fileobj=stdout_file, mode="wb", mtime=0, compresslevel=6) as gz:
+            while True:
+                chunk = proc.stdout.read(256 * 1024)
+                if not chunk:
+                    break
+                raw_bytes += len(chunk)
+                gz.write(chunk)
+        stderr = proc.stderr.read() if proc.stderr else b""
+        rc = proc.wait()
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.communicate()
     stderr_b = _bounded_bytes(stderr)
-    completed = subprocess.CompletedProcess(cmd, proc.returncode or 0, b"", stderr_b)
+    completed = subprocess.CompletedProcess(cmd, rc if rc is not None else (proc.returncode or 0), b"", stderr_b)
+    # Uncompressed dump size for empty-output checks (gzip files are never 0-byte when valid).
+    setattr(completed, "raw_bytes", raw_bytes)
     if check and completed.returncode != 0:
         err = stderr_b.decode("utf-8", errors="replace").strip()
         raise StackError(

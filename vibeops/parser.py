@@ -131,19 +131,24 @@ def build_parser() -> argparse.ArgumentParser:
     db_backup.add_argument("--app", "--user", dest="app", help="All databases for this app (prefix app_*)")
     db_backup.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_backup.add_argument(
+        "--gzip",
+        action="store_true",
+        help="Stream mysqldump through gzip and write .sql.gz (atomic promote; smaller on disk)",
+    )
+    db_backup.add_argument(
         "--keep",
         type=int,
-        help="After a fully successful backup batch, keep only the N newest finalized .sql files (N >= 1)",
+        help="After a fully successful backup batch, keep only the N newest finalized .sql/.sql.gz files (N >= 1)",
     )
     db_backup.set_defaults(func=cmd_db_backup)
 
-    db_restore = db_sub.add_parser("restore", help="Restore a .sql dump into a MySQL service")
-    db_restore.add_argument("backup_file", help="Path or filename under runtime/backups/<service>/")
+    db_restore = db_sub.add_parser("restore", help="Restore a .sql or .sql.gz dump into a MySQL service")
+    db_restore.add_argument("backup_file", help="Path or filename under runtime/backups/<service>/ (.sql or .sql.gz)")
     db_restore.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_restore.add_argument("--yes", action="store_true", help="Skip interactive confirmation")
     db_restore.set_defaults(func=cmd_db_restore)
 
-    db_list_backups = db_sub.add_parser("list-backups", help="List dumps under runtime/backups/<mysql_service>/")
+    db_list_backups = db_sub.add_parser("list-backups", help="List finalized .sql/.sql.gz dumps under runtime/backups/<mysql_service>/")
     db_list_backups.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_list_backups.set_defaults(func=cmd_db_list_backups)
 

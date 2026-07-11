@@ -108,7 +108,7 @@ For guided operations, run the no-dependency Python wizard:
 ./manage.py tui
 ```
 
-The wizard can create apps, app domains and databases, proxy vhosts, TLS/ACME config, cron jobs, open app shells, and show stack status. Its domain and cron managers present numbered listings for selecting a main domain or deleting an alias/cron, then refresh the listing after changes. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
+The wizard can create apps, app domains and databases, proxy vhosts, TLS/ACME config, cron jobs, open app shells, back up and restore MySQL dumps (plain `.sql` or gzip `.sql.gz`), and show stack status. Its domain, cron, and database managers present numbered listings for common selections, then refresh after changes. It previews the plan before applying changes and prints equivalent CLI commands for common flows.
 
 For a quick dashboard without entering the wizard:
 
@@ -385,19 +385,22 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 ./manage.py db backup
 ./manage.py db backup shop_app
 ./manage.py db backup --app shop
-./manage.py db backup --keep 14
+./manage.py db backup --gzip
+./manage.py db backup --app shop --gzip --keep 14
 ./manage.py db list-backups
 ./manage.py db restore runtime/backups/mysql84/<file>.sql --yes
+./manage.py db restore runtime/backups/mysql84/<file>.sql.gz --yes
 ```
 
-Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major.
+Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. Guided backup/restore is also available via `./manage.py wizard` / `./manage.py tui` (**Backup / restore databases**, and under **Manage app databases**).
 
 #### Backup and restore semantics
 
-- **Atomic final dumps:** `db backup` streams `mysqldump` into a private mode-600 partial file (name suffix `.sql.partial-<token>`, never listed as a backup). On success the file is fsynced and promoted with same-filesystem `os.replace` to a unique `*.sql` name. Failed, interrupted, or empty dumps leave **no** final `.sql` and clean up the partial on ordinary failure paths.
+- **Atomic final dumps:** `db backup` streams `mysqldump` into a private mode-600 partial file (name suffix `.partial-<token>`, never listed as a backup). On success the file is fsynced and promoted with same-filesystem `os.replace` to a unique `*.sql` or `*.sql.gz` name. Failed, interrupted, or empty dumps leave **no** final backup and clean up the partial on ordinary failure paths.
+- **Gzip option:** `--gzip` pipes dump SQL through streaming gzip compression and writes `*.sql.gz`. Restore auto-detects `.sql.gz` and decompresses on the fly while streaming into `mysql`.
 - **No overwrite of existing backups:** final names include a microsecond stamp (and a short random suffix if needed). Existing finalized dumps are never truncated or replaced.
 - **Batch behavior:** one stamp per backup batch; if database *N* of *M* fails, earlier finalized dumps from that batch are kept, retention is **not** applied, and the error names the safely written files.
-- **Listing / retention:** `db list-backups` and `--keep` consider only regular finalized `*.sql` files (partials and symlinks are ignored). `--keep N` requires `N >= 1` and runs only after the whole requested batch succeeds; omit `--keep` to retain all finalized dumps. `--keep 0` is rejected.
+- **Listing / retention:** `db list-backups` and `--keep` consider only regular finalized `*.sql` / `*.sql.gz` files (partials and symlinks are ignored). `--keep N` requires `N >= 1` and runs only after the whole requested batch succeeds; omit `--keep` to retain all finalized dumps. `--keep 0` is rejected.
 - **Streaming restore:** `db restore` streams the dump file on stdin to `mysql` (binary-safe; not loaded fully into Python memory). Restore may overwrite objects present in the dump; it is **not** atomic at the MySQL object level.
 - **Off-box copies still required:** host-local finalized dumps are not a full disaster-recovery plan—copy `runtime/backups/<service>/` off the machine regularly.
 

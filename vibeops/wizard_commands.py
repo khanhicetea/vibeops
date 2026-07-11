@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 import sys
 
@@ -17,6 +18,12 @@ from vibeops.app_commands import (
     cmd_user_create,
 )
 from vibeops.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
+from vibeops.db_commands import (
+    _list_final_backups,
+    cmd_db_backup,
+    cmd_db_list_backups,
+    cmd_db_restore,
+)
 from vibeops.proxy_commands import cmd_proxy_create
 from vibeops.permission_commands import cmd_permissions
 from vibeops.runtime_commands import *  # noqa: F403
@@ -163,9 +170,30 @@ def wizard_manage_databases() -> None:
     while True:
         info(f"\nDatabases for {app_name}:")
         cmd_app_db_list(argparse.Namespace(app_name=app_name))
-        action = prompt_choice("Database action", ["Create database", "Back"])
+        action = prompt_choice(
+            "Database action",
+            [
+                "Create database",
+                "Backup app databases",
+                "Restore a backup",
+                "List backups",
+                "Back",
+            ],
+        )
         if action == "Back":
             return
+        if action == "Backup app databases":
+            default_service = str(app.get("mysql_service") or default_mysql_service())
+            wizard_db_backup(default_service=default_service, app_name=app_name)
+            continue
+        if action == "Restore a backup":
+            default_service = str(app.get("mysql_service") or default_mysql_service())
+            wizard_db_restore(default_service=default_service)
+            continue
+        if action == "List backups":
+            default_service = str(app.get("mysql_service") or default_mysql_service())
+            wizard_db_list_backups(default_service=default_service)
+            continue
         suffix = prompt_validated("Database suffix", DB_NAME_RE, "database suffix")
         default_service = str(app.get("mysql_service") or default_mysql_service())
         mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_service, hint="for example mysql57, mysql84, mysql97")
@@ -174,6 +202,167 @@ def wizard_manage_databases() -> None:
             cmd_app_db_create(argparse.Namespace(app_name=app_name, db_suffix=suffix, mysql_service=mysql_service))
         # Return to the top of the loop so the listing immediately reflects a new DB.
         app = load_db()["apps"][app_name]
+
+
+def wizard_db_backup(*, default_service: str | None = None, app_name: str | None = None) -> None:
+    """Interactive logical dump (plain .sql or gzip .sql.gz)."""
+    mysql_service = prompt_validated(
+        "MySQL service",
+        MYSQL_SERVICE_RE,
+        "MySQL service",
+        default_service or default_mysql_service(),
+        hint="for example mysql57, mysql84, mysql97",
+    )
+    if app_name:
+        scope = "App databases"
+        selected_app = app_name
+        database: str | None = None
+    else:
+        scope = prompt_choice(
+            "Backup scope",
+            ["All user databases", "App databases", "Single database"],
+            "All user databases",
+        )
+        selected_app = None
+        database = None
+        if scope == "App databases":
+            selected_app, _ = wizard_select_app()
+        elif scope == "Single database":
+            database = prompt_validated(
+                "Database name",
+                re.compile(r"^[A-Za-z0-9_-]+$"),
+                "database name",
+            )
+
+    use_gzip = prompt_confirm("Compress with gzip (.sql.gz)?", True)
+    keep_text = prompt_text("Keep N newest after success (blank = keep all)", "", required=False)
+    keep: int | None = None
+    if keep_text.strip():
+        try:
+            keep = int(keep_text.strip())
+        except ValueError:
+            die(f"Invalid --keep value: {keep_text}")
+
+    plan = [f"backup on {mysql_service}", f"gzip: {'yes' if use_gzip else 'no'}"]
+    if selected_app:
+        plan.append(f"app databases: {selected_app}_*")
+    elif database:
+        plan.append(f"database: {database}")
+    else:
+        plan.append("all non-system databases")
+    if keep is not None:
+        plan.append(f"retention --keep {keep}")
+    print_plan(plan)
+
+    cmd_parts = ["./manage.py", "db", "backup", "--mysql-service", mysql_service]
+    if selected_app:
+        cmd_parts.extend(["--app", selected_app])
+    elif database:
+        cmd_parts.append(database)
+    if use_gzip:
+        cmd_parts.append("--gzip")
+    if keep is not None:
+        cmd_parts.extend(["--keep", str(keep)])
+    info("\nEquivalent command:")
+    info("  " + " ".join(shlex.quote(p) for p in cmd_parts))
+
+    if not prompt_confirm("Continue?", True):
+        return
+    cmd_db_backup(
+        argparse.Namespace(
+            mysql_service=mysql_service,
+            database=database,
+            app=selected_app,
+            gzip=use_gzip,
+            keep=keep,
+        )
+    )
+
+
+def wizard_db_list_backups(*, default_service: str | None = None) -> None:
+    mysql_service = prompt_validated(
+        "MySQL service",
+        MYSQL_SERVICE_RE,
+        "MySQL service",
+        default_service or default_mysql_service(),
+        hint="for example mysql57, mysql84, mysql97",
+    )
+    info(f"\nBackups for {mysql_service}:")
+    cmd_db_list_backups(argparse.Namespace(mysql_service=mysql_service))
+
+
+def wizard_db_restore(*, default_service: str | None = None) -> None:
+    """Interactive restore of a finalized .sql or .sql.gz dump."""
+    mysql_service = prompt_validated(
+        "MySQL service",
+        MYSQL_SERVICE_RE,
+        "MySQL service",
+        default_service or default_mysql_service(),
+        hint="for example mysql57, mysql84, mysql97",
+    )
+    backup_dir = mysql_backup_dir(mysql_service)
+    files = _list_final_backups(backup_dir)
+    if not files:
+        warn(f"No finalized backups in vibeops/{rel(backup_dir)}")
+        path_text = prompt_text("Backup file path (or blank to cancel)", "", required=False)
+        if not path_text.strip():
+            return
+        backup_file = path_text.strip()
+        label = backup_file
+    else:
+        labels = []
+        for path in files:
+            st = path.stat()
+            size_kb = max(1, st.st_size // 1024) if st.st_size else 0
+            labels.append(f"{path.name} ({size_kb}K)")
+        labels.append("Enter path manually…")
+        choice = prompt_choice("Backup file", labels)
+        if choice == "Enter path manually…":
+            backup_file = prompt_text("Backup file path or filename under runtime/backups/<service>/")
+            label = backup_file
+        else:
+            path = files[labels.index(choice)]
+            backup_file = str(path)
+            label = path.name
+
+    print_plan(
+        [
+            f"restore {label} into {mysql_service}",
+            "streams dump into mysql (gzip auto-detected for .sql.gz)",
+            "objects in the dump may be overwritten — not atomic at MySQL object level",
+        ]
+    )
+    info("\nEquivalent command:")
+    info(
+        f"  ./manage.py db restore {shlex.quote(backup_file)} "
+        f"--mysql-service {shlex.quote(mysql_service)} --yes"
+    )
+    if not prompt_confirm("Restore now? This may overwrite objects.", False):
+        return
+    cmd_db_restore(
+        argparse.Namespace(
+            mysql_service=mysql_service,
+            backup_file=backup_file,
+            yes=True,
+        )
+    )
+
+
+def wizard_backup_restore_menu() -> None:
+    """Top-level TUI entry for database backup / restore."""
+    while True:
+        action = prompt_choice(
+            "Backup / restore",
+            ["Backup databases", "List backups", "Restore a backup", "Back"],
+        )
+        if action == "Back":
+            return
+        if action == "Backup databases":
+            wizard_db_backup()
+        elif action == "List backups":
+            wizard_db_list_backups()
+        else:
+            wizard_db_restore()
 
 
 def wizard_manage_crons() -> None:
@@ -238,6 +427,7 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         "Manage cron jobs",
         "Manage app domains",
         "Manage app databases",
+        "Backup / restore databases",
         "Check app permissions",
         "Fix app permissions",
         "Open app shell",
@@ -262,6 +452,8 @@ def cmd_wizard(args: argparse.Namespace) -> None:
             wizard_manage_domains()
         elif action == "Manage app databases":
             wizard_manage_databases()
+        elif action == "Backup / restore databases":
+            wizard_backup_restore_menu()
         elif action == "Check app permissions":
             wizard_check_permissions()
         elif action == "Fix app permissions":

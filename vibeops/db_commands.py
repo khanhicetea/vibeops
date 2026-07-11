@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import gzip
 import os
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from vibeops.compose import compose_command
@@ -43,13 +46,18 @@ def _list_user_databases(service: str, *, app_name: str | None = None) -> list[s
     return names
 
 
-def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str) -> Path:
-    """Return a final ``.sql`` path that does not yet exist (never truncate)."""
-    primary = backup_dir / f"{stamp}_{db_name}.sql"
+def _backup_extension(*, compress: bool) -> str:
+    return ".sql.gz" if compress else ".sql"
+
+
+def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str, *, compress: bool = False) -> Path:
+    """Return a final backup path that does not yet exist (never truncate)."""
+    ext = _backup_extension(compress=compress)
+    primary = backup_dir / f"{stamp}_{db_name}{ext}"
     if not primary.exists():
         return primary
     for _ in range(64):
-        candidate = backup_dir / f"{stamp}_{db_name}_{secrets.token_hex(3)}.sql"
+        candidate = backup_dir / f"{stamp}_{db_name}_{secrets.token_hex(3)}{ext}"
         if not candidate.exists():
             return candidate
     die(f"Could not reserve a unique backup name for {db_name} under vibeops/{rel(backup_dir)}")
@@ -69,7 +77,7 @@ def _fsync_dir(directory: Path) -> None:
 
 
 def _open_private_partial(path: Path):
-    """Create an exclusive mode-600 partial file (not matched by ``*.sql``)."""
+    """Create an exclusive mode-600 partial file (not matched as a finalized backup)."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd = os.open(str(path), flags, 0o600)
     try:
@@ -79,9 +87,27 @@ def _open_private_partial(path: Path):
     return os.fdopen(fd, "wb")
 
 
-def mysql_root_dump(mysqldump_args: list[str], *, service: str, output_path: Path) -> None:
-    """Run mysqldump into a private partial file, then atomically promote to *output_path*."""
+def _is_gzip_backup(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(".sql.gz") or name.endswith(".gz")
+
+
+def mysql_root_dump(
+    mysqldump_args: list[str],
+    *,
+    service: str,
+    output_path: Path,
+    compress: bool = False,
+) -> None:
+    """Run mysqldump into a private partial file, then atomically promote to *output_path*.
+
+    When *compress* is true, dump stdout is streamed through gzip into a ``.sql.gz`` final path.
+    """
     service = _require_mysql_service(service)
+    if compress and not str(output_path).endswith(".sql.gz"):
+        die(f"Compressed dump path must end with .sql.gz: vibeops/{rel(output_path)}")
+    if not compress and output_path.suffix != ".sql":
+        die(f"Uncompressed dump path must end with .sql: vibeops/{rel(output_path)}")
     if output_path.exists():
         die(f"Refusing to overwrite existing backup vibeops/{rel(output_path)}")
     mkdir(output_path.parent, 0o700)
@@ -103,7 +129,7 @@ def mysql_root_dump(mysqldump_args: list[str], *, service: str, output_path: Pat
     promoted = False
     try:
         with _open_private_partial(partial) as fh:
-            cp = run_stdout_to_file(cmd, stdout_file=fh, check=False)
+            cp = run_stdout_to_file(cmd, stdout_file=fh, check=False, gzip_compress=compress)
             fh.flush()
             try:
                 os.fsync(fh.fileno())
@@ -117,8 +143,15 @@ def mysql_root_dump(mysqldump_args: list[str], *, service: str, output_path: Pat
                 + (f": {err}" if err else "")
             )
 
-        if not partial.exists() or partial.stat().st_size == 0:
-            die(f"mysqldump on {service} produced empty output for vibeops/{rel(output_path)}")
+        if compress:
+            raw_bytes = int(getattr(cp, "raw_bytes", 0) or 0)
+            if raw_bytes <= 0:
+                die(f"mysqldump on {service} produced empty output for vibeops/{rel(output_path)}")
+            if not partial.exists() or partial.stat().st_size == 0:
+                die(f"gzip backup is empty for vibeops/{rel(output_path)}")
+        else:
+            if not partial.exists() or partial.stat().st_size == 0:
+                die(f"mysqldump on {service} produced empty output for vibeops/{rel(output_path)}")
 
         if output_path.exists():
             die(f"Refusing to overwrite existing backup vibeops/{rel(output_path)}")
@@ -131,16 +164,8 @@ def mysql_root_dump(mysqldump_args: list[str], *, service: str, output_path: Pat
             partial.unlink(missing_ok=True)
 
 
-def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
-    """Stream a SQL dump file into mysql without loading it into Python memory."""
-    service = _require_mysql_service(service)
-    if path.is_symlink() or not path.is_file():
-        die(f"Backup path is not a regular file: {path}")
-    size = path.stat().st_size
-    if size == 0:
-        die(f"Backup file is empty: vibeops/{rel(path)}")
-
-    cmd = compose_command(
+def _mysql_import_cmd(service: str) -> list[str]:
+    return compose_command(
         "exec",
         "-T",
         service,
@@ -148,8 +173,50 @@ def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
         "-lc",
         "mysql --defaults-extra-file=/run/secrets/vibeops-root.cnf --batch --raw",
     )
-    with path.open("rb") as fh:
-        cp = run_stdin_stream(cmd, stdin_file=fh, check=False, capture_stdout=True)
+
+
+def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
+    """Stream a SQL dump (plain or ``.sql.gz``) into mysql without loading it fully into memory."""
+    service = _require_mysql_service(service)
+    if path.is_symlink() or not path.is_file():
+        die(f"Backup path is not a regular file: {path}")
+    size = path.stat().st_size
+    if size == 0:
+        die(f"Backup file is empty: vibeops/{rel(path)}")
+
+    cmd = _mysql_import_cmd(service)
+
+    if _is_gzip_backup(path):
+        # GzipFile has no usable fileno for Popen; feed decompressed bytes through a pipe.
+        read_fd, write_fd = os.pipe()
+        feeder_errors: list[BaseException] = []
+
+        def _feed() -> None:
+            try:
+                with os.fdopen(write_fd, "wb") as out, gzip.open(path, "rb") as gz:
+                    shutil.copyfileobj(gz, out, length=256 * 1024)
+            except BrokenPipeError:
+                pass
+            except BaseException as exc:  # noqa: BLE001 — surface in parent after join
+                feeder_errors.append(exc)
+                try:
+                    os.close(write_fd)
+                except OSError:
+                    pass
+
+        thread = threading.Thread(target=_feed, name="vibeops-gz-restore", daemon=True)
+        thread.start()
+        try:
+            with os.fdopen(read_fd, "rb") as stdin_file:
+                cp = run_stdin_stream(cmd, stdin_file=stdin_file, check=False, capture_stdout=True)
+        finally:
+            thread.join(timeout=3600)
+        if feeder_errors:
+            die(f"failed reading gzip backup vibeops/{rel(path)}: {feeder_errors[0]}")
+    else:
+        with path.open("rb") as fh:
+            cp = run_stdin_stream(cmd, stdin_file=fh, check=False, capture_stdout=True)
+
     if cp.returncode != 0:
         err = (cp.stderr or cp.stdout or b"").decode("utf-8", errors="replace").strip()
         # Avoid echoing secrets; mysql may warn about CLI password usage inside the container.
@@ -254,6 +321,7 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
     mkdir(backup_dir, 0o700)
     stamp = _stamp()
     keep = _validate_keep(args.keep)
+    compress = bool(getattr(args, "gzip", False))
     targets: list[str] = []
 
     if args.database:
@@ -271,8 +339,13 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
     written: list[Path] = []
     try:
         for db_name in targets:
-            out = _reserve_backup_path(backup_dir, stamp, db_name)
-            mysql_root_dump(["--databases", db_name], service=service, output_path=out)
+            out = _reserve_backup_path(backup_dir, stamp, db_name, compress=compress)
+            mysql_root_dump(
+                ["--databases", db_name],
+                service=service,
+                output_path=out,
+                compress=compress,
+            )
             written.append(out)
             info(f"Wrote vibeops/{rel(out)}")
     except StackError:
@@ -292,8 +365,11 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
 
 
 def _is_final_sql_backup(path: Path) -> bool:
-    """True for regular finalized ``*.sql`` files (not partials, not symlinks)."""
-    if path.suffix != ".sql":
+    """True for regular finalized ``*.sql`` / ``*.sql.gz`` files (not partials, not symlinks)."""
+    name = path.name
+    if ".partial-" in name:
+        return False
+    if not (name.endswith(".sql") or name.endswith(".sql.gz")):
         return False
     if path.is_symlink():
         return False
@@ -306,7 +382,7 @@ def _is_final_sql_backup(path: Path) -> bool:
 def _list_final_backups(backup_dir: Path) -> list[Path]:
     if not backup_dir.is_dir():
         return []
-    files = [p for p in backup_dir.glob("*.sql") if _is_final_sql_backup(p)]
+    files = [p for p in backup_dir.iterdir() if _is_final_sql_backup(p)]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
@@ -360,8 +436,9 @@ def cmd_db_restore(args: argparse.Namespace) -> None:
 
     if path.stat().st_size == 0:
         die(f"Backup file is empty: vibeops/{rel(path)}")
+    kind = "gzip-compressed " if _is_gzip_backup(path) else ""
     warn(
-        f"Restoring vibeops/{rel(path)} into {service} "
+        f"Restoring {kind}vibeops/{rel(path)} into {service} "
         f"(streaming input; objects in the dump may be overwritten — not atomic at the MySQL object level)"
     )
     mysql_root_stream_sql_file(path, service=service)
