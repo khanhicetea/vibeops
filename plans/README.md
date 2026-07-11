@@ -17,7 +17,7 @@ The repository is a no-runtime-dependency Python management CLI for a Linux/Dock
 | 007 | Replace stale VibeOps skill and deploy runbook | P1 | S | 005, 006 | TODO |
 | 008 | Make MySQL backup/restore atomic and streaming | P2 | M | 001, 006 | DONE |
 | 009 | Add configurable, memory-efficient PHP-FPM profiles | P2 | M | 001, 002, 005 | DONE |
-| 010 | Remove database passwords from host command arguments | P2 | S | 001, 006 | TODO |
+| 010 | Remove database passwords from host command arguments | P2 | S | 001, 006 | DONE |
 | 011 | Decompose helpers and remove wildcard imports | P2 | L | 001–010 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)

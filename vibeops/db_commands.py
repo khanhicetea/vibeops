@@ -265,6 +265,82 @@ def cmd_db_user_reset(args: argparse.Namespace) -> None:
         save_db(db)
 
 
+def _ephemeral_client_option_path() -> str:
+    """Return a root-only in-container path for a one-shot client option file."""
+    return f"/run/vibeops-client-{secrets.token_hex(16)}.cnf"
+
+
+def _stage_ephemeral_client_option_file(service: str, remote_path: str, content: str) -> None:
+    """Write option-file *content* to *remote_path* inside *service* via stdin (mode 600)."""
+    # Path is under /run with a hex token only; still quote for the shell.
+    quoted = shlex.quote(remote_path)
+    cmd = compose_command(
+        "exec",
+        "-T",
+        service,
+        "sh",
+        "-lc",
+        f"umask 077 && cat > {quoted} && chmod 600 {quoted}",
+    )
+    cp = run(cmd, input_text=content, check=False, capture=True)
+    if cp.returncode != 0:
+        # Never echo stdin/option content or container diagnostics that might repeat it.
+        die(f"Failed to stage ephemeral MySQL client option file in {service} (exit {cp.returncode})")
+
+
+def _remove_ephemeral_client_option_file(service: str, remote_path: str) -> None:
+    """Best-effort removal of an in-container client option file; warn on failure only."""
+    quoted = shlex.quote(remote_path)
+    cmd = compose_command(
+        "exec",
+        "-T",
+        service,
+        "sh",
+        "-lc",
+        f"rm -f {quoted}",
+    )
+    try:
+        cp = run(cmd, check=False, capture=True)
+        if cp.returncode != 0:
+            warn(f"could not remove ephemeral MySQL client option file in {service}")
+    except Exception:
+        warn(f"could not remove ephemeral MySQL client option file in {service}")
+
+
+def _db_shell_app_user(service: str, username: str, password: str) -> int:
+    """Interactive mysql as *username* without putting the password in host argv.
+
+    Stages a mode-600 option file inside the already-running MySQL container over
+    stdin, runs the interactive client against that path, and removes the file in
+    ``finally``. The password never appears in host command arguments.
+    """
+    remote_path = _ephemeral_client_option_path()
+    content = mysql_client_option_file_content(user=username, password=password)
+    _stage_ephemeral_client_option_file(service, remote_path, content)
+
+    client_rc = 1
+    try:
+        quoted = shlex.quote(remote_path)
+        cp = subprocess.run(
+            compose_command(
+                "exec",
+                service,
+                "sh",
+                "-lc",
+                f"mysql --defaults-extra-file={quoted}",
+            ),
+            cwd=str(ROOT),
+            check=False,
+        )
+        client_rc = int(cp.returncode or 0)
+        return client_rc
+    except (KeyboardInterrupt, SystemExit):
+        # Preserve interrupt/exit semantics after cleanup in finally.
+        raise
+    finally:
+        _remove_ephemeral_client_option_file(service, remote_path)
+
+
 def cmd_db_shell(args: argparse.Namespace) -> None:
     service = _require_mysql_service(args.mysql_service)
     if args.user:
@@ -274,24 +350,7 @@ def cmd_db_shell(args: argparse.Namespace) -> None:
         password = creds.get("MYSQL_PASSWORD") or creds.get("DB_PASSWORD")
         if not password:
             die(f"Missing credentials for {username} on {service}: vibeops/{rel(cred_path)}")
-        # Password is passed only into the container shell env for this exec, not as host mysql argv.
-        # Docker API still receives it; acceptable for interactive DX. Prefer root shell for ops.
-        cp = subprocess.run(
-            compose_command(
-                "exec",
-                "-e",
-                f"MYSQL_USER={username}",
-                "-e",
-                f"MYSQL_PWD={password}",
-                service,
-                "sh",
-                "-lc",
-                'mysql -u"$MYSQL_USER" -p"$MYSQL_PWD"',
-            ),
-            cwd=str(ROOT),
-            check=False,
-        )
-        raise SystemExit(cp.returncode)
+        raise SystemExit(_db_shell_app_user(service, username, password))
     cp = subprocess.run(
         compose_command(
             "exec",

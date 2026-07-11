@@ -318,6 +318,44 @@ def mysql_root_option_file(service: str, ctx: RenderContext | None = None) -> Pa
     return MYSQL_SECRETS_DIR / f"{service}-root.cnf"
 
 
+def escape_mysql_option_value(value: str) -> str:
+    """Escape a value for a double-quoted MySQL option-file assignment.
+
+    MySQL option files treat ``\\`` and ``"`` specially inside double quotes.
+    Do not log or print the result when it embeds a secret.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def mysql_client_option_file_content(
+    *,
+    user: str,
+    password: str,
+    protocol: str | None = None,
+) -> str:
+    """Build a ``[client]`` MySQL option-file body for the given credentials.
+
+    User and password are always double-quoted with MySQL option escaping so
+    backslashes/quotes cannot inject extra option lines. Do not log the return value.
+    """
+    # Reject control characters that would break option-file line structure even
+    # inside quotes (MySQL has no portable escape for raw newlines in values).
+    for label, value in (("user", user), ("password", password)):
+        if any(ch in value for ch in ("\n", "\r", "\0")):
+            die(f"MySQL option-file {label} must not contain control characters")
+    lines = [
+        "[client]",
+        f'user="{escape_mysql_option_value(user)}"',
+        f'password="{escape_mysql_option_value(password)}"',
+    ]
+    if protocol:
+        # protocol is a fixed keyword (e.g. socket/tcp), never a secret.
+        if not re.fullmatch(r"[A-Za-z0-9_]+", protocol):
+            die(f"Invalid MySQL option-file protocol: {protocol}")
+        lines.append(f"protocol={protocol}")
+    return "\n".join(lines) + "\n"
+
+
 def render_mysql_root_option_files(ctx: RenderContext | None = None) -> list[Path]:
     """Write root client option files for local container administration."""
     env = stack_env()
@@ -326,10 +364,9 @@ def render_mysql_root_option_files(ctx: RenderContext | None = None) -> list[Pat
         password = mysql_root_password(env, service)
         if not password:
             continue
-        # MySQL option files accept quoted values; escape their two special chars.
-        escaped = password.replace("\\", "\\\\").replace('"', '\\"')
         path = mysql_root_option_file(service, ctx)
-        write_text_atomic(path, f'[client]\nuser=root\npassword="{escaped}"\nprotocol=socket\n', 0o600)
+        content = mysql_client_option_file_content(user="root", password=password, protocol="socket")
+        write_text_atomic(path, content, 0o600)
         rendered.append(path)
     return rendered
 

@@ -402,6 +402,8 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 ./manage.py db restore runtime/backups/mysql84/<file>.sql.gz --yes
 ```
 
+`db shell` (root) uses the mounted root option file. `db shell --user <app>` reads the app credential file under `runtime/home/<app>/.credentials/` and transfers credentials into the MySQL container through a short-lived mode-600 option file created over stdin (random path under `/run`, removed after the session). App passwords are **not** placed in host `docker compose` command arguments. This protects process listings and host telemetry; the Docker daemon and container root can still observe in-container state for the duration of the shell.
+
 Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. Guided backup/restore is also available via `./manage.py wizard` / `./manage.py tui` (**Backup / restore databases**, and under **Manage app databases**).
 
 #### Backup and restore semantics

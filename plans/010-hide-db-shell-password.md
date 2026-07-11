@@ -7,6 +7,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: S
 - **Risk**: LOW
@@ -127,13 +128,13 @@ Patch subprocess/Compose helper calls and all output functions. Recursively insp
 
 ## Done criteria
 
-- [ ] Password value never appears in host argv.
-- [ ] Password value never appears in normal/error output.
-- [ ] Temporary in-container credential is mode 600 and removed in `finally` if that design is used.
-- [ ] Interactive behavior and exit code propagation remain intact.
-- [ ] All calls honor local Compose overlays.
-- [ ] Focused tests and `make check` pass.
-- [ ] Plan 010 is marked DONE.
+- [x] Password value never appears in host argv.
+- [x] Password value never appears in normal/error output.
+- [x] Temporary in-container credential is mode 600 and removed in `finally` if that design is used.
+- [x] Interactive behavior and exit code propagation remain intact.
+- [x] All calls honor local Compose overlays.
+- [x] Focused tests and `make check` pass.
+- [x] Plan 010 is marked DONE.
 
 ## STOP conditions
 
