@@ -92,10 +92,11 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     app["php_version"] = php_version
     app["php_service"] = php_service
 
-    mkdir(app_home(app_name) / "logs", 0o770)
+    # Private dirs: app:app 700 (see php-permissions private_dirs).
+    mkdir(app_home(app_name) / "logs", 0o700)
     mkdir(app_www(app_name))
     mkdir(app_home(app_name) / ".credentials", 0o700)
-    mkdir(app_home(app_name) / ".composer")
+    mkdir(app_home(app_name) / ".composer", 0o700)
     mkdir(app_home(app_name) / ".ssh", 0o700)
     mkdir(php_version_config_dir(php_version) / "users.d")
     mkdir(php_version_config_dir(php_version) / "pool.d")

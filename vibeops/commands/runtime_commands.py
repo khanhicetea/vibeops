@@ -155,7 +155,7 @@ def render_all_into(db: dict[str, Any], ctx: RenderContext) -> list[Path]:
         if not isinstance(app, dict):
             continue
         app.setdefault("name", app_name)
-        mkdir(app_home(app_name) / "logs", 0o770)
+        mkdir(app_home(app_name) / "logs", 0o700)
         mkdir(app_www(app_name))
         render_app_identity(app, ctx)
         if app.get("main_domain"):
