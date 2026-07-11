@@ -167,7 +167,7 @@ location = /index.php { ... fastcgi_pass ... }
 location ~ \.php$ { return 404; }
 ```
 
-The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). The app's MySQL user is `shop` on that service and has prefix grants for `shop_*` databases. MySQL grants escape wildcard characters in app names before granting access, so valid app names containing `_` do not broaden privileges.
+The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). Supplying a database suffix requires the selected MySQL service to be ready; the command fails rather than recording a skipped database. `--no-mysql` cannot be combined with a database suffix. The app's MySQL user is `shop` on that service and has prefix grants for `shop_*` databases. MySQL grants escape wildcard characters in app names before granting access, so valid app names containing `_` do not broaden privileges.
 
 Credentials are written to `runtime/home/<app>/.credentials/<mysql_service>.env` (mode 600). That file contains both `MYSQL_*` and Laravel-style `DB_*` keys. The password is not printed to stdout; open the credentials file when you need it. `DB_DATABASE` / full name is `{app}_{db_suffix}` when you pass a database suffix to `app create` or `db create`.
 

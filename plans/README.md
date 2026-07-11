@@ -10,7 +10,7 @@ The repository is a no-runtime-dependency Python management CLI for a Linux/Dock
 |------|-------|----------|--------|------------|--------|
 | 001 | Establish one-command verification and CI | P1 | M | — | TODO |
 | 002 | Resolve app PHP versions without implicit migration | P1 | M | 001 | DONE |
-| 003 | Record databases only after successful creation | P1 | S | 001 | TODO |
+| 003 | Record databases only after successful creation | P1 | S | 001 | DONE |
 | 004 | Serialize all desired-state mutations | P1 | M | 001, 002, 003 | TODO |
 | 005 | Make render/apply staged and rollback-safe | P1 | L | 001, 004 | TODO |
 | 006 | Route every Docker Compose call through one context | P1 | M | 001 | TODO |

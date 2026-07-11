@@ -59,6 +59,10 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     if args.no_mysql and args.db_suffix:
         die("Cannot create a database suffix with --no-mysql")
+    # Explicit database intent must succeed or fail before local app side effects.
+    if args.db_suffix:
+        validate(args.db_suffix, DB_NAME_RE, "database suffix")
+        require_mysql_ready_for_sql(mysql_service)
     public_dir = validate_public_dir(getattr(args, "public_dir", ""))
     php_entrypoint = validate_php_entrypoint(getattr(args, "php_entrypoint", "auto"), public_dir)
     aliases = normalize_aliases(args.alias, args.aliases)
@@ -87,11 +91,10 @@ def cmd_app_create(args: argparse.Namespace) -> None:
         write_template(index_path, PHP_TEMPLATE_DIR / "index.php.template", {"MAIN_DOMAIN": main_domain, "PHP_VERSION": php_version})
 
     if args.db_suffix:
-        db_full_name = create_database(app_name, args.db_suffix, mysql_service)
-        if db_full_name and db_full_name not in app.setdefault("databases", []):
+        db_full_name = ensure_mysql_database(app_name, args.db_suffix, mysql_service)
+        if db_full_name not in app.setdefault("databases", []):
             app["databases"].append(db_full_name)
-        if db_full_name:
-            app.setdefault("database_services", {})[db_full_name] = mysql_service
+        app.setdefault("database_services", {})[db_full_name] = mysql_service
 
     conf_path = render_app_vhost(app)
     for domain in all_domains:

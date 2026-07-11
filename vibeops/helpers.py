@@ -727,15 +727,28 @@ def apply_app_mysql_metadata(app: dict[str, Any], app_name: str, mysql_service: 
         app["mysql_credentials"] = credential_path
 
 
+def require_mysql_ready_for_sql(service: str) -> str:
+    """Fail unless the MySQL service can accept root SQL administration.
+
+    Checks running state, root password configuration, and the protected client
+    option file. Does not start services or mutate Docker state.
+    """
+    service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
+    env = stack_env()
+    if not (ROOT / ".env").exists() or not service_running(service) or not mysql_root_password(env, service):
+        die(f"Cannot create database; {service} is not running, .env is missing, or root password is unset.")
+    option_file = mysql_root_option_file(service)
+    if not option_file.is_file():
+        die(f"Missing protected MySQL option file vibeops/{rel(option_file)}; run ./manage.py render")
+    return service
+
+
 def ensure_mysql_database(app_name: str, suffix: str, mysql_service: str) -> str:
-    """Create DB app_name_suffix and grant <app_name>_* privileges. Returns full name."""
-    mysql_service = validate(mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    """Create DB app_name_suffix and grant <app_name>_* privileges. Returns full name only after SQL succeeds."""
+    mysql_service = require_mysql_ready_for_sql(mysql_service)
     app_name = validate(app_name, APP_NAME_RE, "app_name")
     validate(suffix, DB_NAME_RE, "database suffix")
     db_full_name = f"{app_name}_{suffix}"
-    env = stack_env()
-    if not (ROOT / ".env").exists() or not service_running(mysql_service) or not mysql_root_password(env, mysql_service):
-        die(f"Cannot create database; {mysql_service} is not running, .env is missing, or root password is unset.")
     sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
         "DB_FULL_NAME": db_full_name,
         "USERNAME": app_name,
@@ -743,25 +756,6 @@ def ensure_mysql_database(app_name: str, suffix: str, mysql_service: str) -> str
     })
     mysql_root_exec_sql(sql, service=mysql_service)
     info(f"MySQL database on {mysql_service}: {db_full_name}")
-    return db_full_name
-
-
-def create_database(app_name: str, suffix: str, mysql_service: str) -> str | None:
-    """Best-effort database create used by app create (skips when mysql is down)."""
-    mysql_service = validate(mysql_service, MYSQL_SERVICE_RE, "MySQL service")
-    validate(suffix, DB_NAME_RE, "database suffix")
-    db_full_name = f"{app_name}_{suffix}"
-    env = stack_env()
-    if (ROOT / ".env").exists() and service_running(mysql_service) and mysql_root_password(env, mysql_service):
-        sql = template_text(MYSQL_TEMPLATE_DIR / "create-database.sql.template", {
-            "DB_FULL_NAME": db_full_name,
-            "USERNAME": app_name,
-            "DB_GRANT_PATTERN": mysql_user_database_grant_pattern(app_name),
-        })
-        mysql_root_exec_sql(sql, service=mysql_service)
-        info(f"MySQL database on {mysql_service}: {db_full_name}")
-    else:
-        info(f"Skipped database creation; {mysql_service} is not running, .env is missing, or root password is unset.")
     return db_full_name
 
 
