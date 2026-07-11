@@ -30,6 +30,7 @@ from vibeops.paths import rel
 from vibeops.permission_commands import cmd_permissions
 from vibeops.proxy_commands import cmd_proxy_create
 from vibeops.runtime_commands import (
+    WizardBack,
     available_php_versions,
     cmd_app_shell,
     cmd_list,
@@ -40,6 +41,7 @@ from vibeops.runtime_commands import (
     prompt_confirm,
     prompt_int,
     prompt_password,
+    prompt_pick,
     prompt_public_dir,
     prompt_text,
     prompt_validated,
@@ -51,7 +53,7 @@ from vibeops.validation import APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, JOB_RE, MYSQL
 
 def wizard_create_user() -> None:
     username = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
-    php = prompt_choice("PHP version", available_php_versions(), default_php_version())
+    php = prompt_pick("PHP version", available_php_versions(), default_php_version())
     uid = prompt_int("UID (blank = auto)", "", required=False)
     no_mysql = not prompt_confirm("Create/update MySQL account?", True)
     mysql_service = default_mysql_service() if no_mysql else prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97")
@@ -68,8 +70,8 @@ def wizard_create_site() -> None:
     domain = prompt_validated("Main domain", DOMAIN_RE, "domain")
     aliases = prompt_aliases()
     public_dir = prompt_public_dir()
-    php = prompt_choice("PHP version", available_php_versions(), default_php_version())
-    fpm_profile = prompt_choice(
+    php = prompt_pick("PHP version", available_php_versions(), default_php_version())
+    fpm_profile = prompt_pick(
         "PHP-FPM profile (ondemand=idle-efficient, balanced=default, throughput=higher concurrency)",
         list(FPM_PROFILE_NAMES),
         default_fpm_profile(),
@@ -118,7 +120,7 @@ def wizard_create_proxy() -> None:
 def wizard_tls_acme() -> None:
     db = load_db()
     domains = sorted(db.get("domains", {}).keys())
-    domain = prompt_choice("Domain", domains) if domains else prompt_validated("Domain", DOMAIN_RE, "domain")
+    domain = prompt_pick("Domain", domains) if domains else prompt_validated("Domain", DOMAIN_RE, "domain")
     off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
     no_redirect_https = False if off else not prompt_confirm("Redirect HTTP to HTTPS after ACME?", True)
     no_reload = not prompt_confirm("Reload nginx if running?", True)
@@ -157,7 +159,7 @@ def wizard_select_app(*, require_vhost: bool = False) -> tuple[str, dict[str, An
     if not apps:
         die("No apps with a vhost in state. Create an app first." if require_vhost else "No apps in state. Create an app first.")
     labels = [f"{name} (main: {app.get('main_domain', '-')})" for name, app in apps]
-    label = prompt_choice("App", labels)
+    label = prompt_pick("App", labels)
     return apps[labels.index(label)]
 
 
@@ -169,37 +171,40 @@ def wizard_manage_domains() -> None:
         db = load_db()
         app = db["apps"][app_name]
         domains = list(dict.fromkeys(app.get("domains") or [app["main_domain"]]))
-        action = prompt_choice("Domain action", ["Add domain", "Delete domain", "Change main domain", "Back"])
-        if action == "Back":
-            return
-        if action == "Add domain":
-            domain = prompt_validated("Domain", DOMAIN_RE, "domain")
-            no_reload = not prompt_confirm("Reload nginx if running?", True)
-            print_plan([f"add {domain} to app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
-            if prompt_confirm("Continue?", True):
-                cmd_app_domain_add(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
-        elif action == "Delete domain":
-            aliases = [domain for domain in domains if domain != app.get("main_domain")]
-            if not aliases:
-                warn("The main domain cannot be deleted. Add and select another domain as main first.")
-                continue
-            domain = prompt_choice("Domain number to delete", domains)
-            if domain == app.get("main_domain"):
-                warn("Cannot delete the main domain; change the main domain first.")
-                continue
-            no_reload = not prompt_confirm("Reload nginx if running?", True)
-            print_plan([f"remove {domain} from app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
-            if prompt_confirm("Continue?", False):
-                cmd_app_domain_remove(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
-        else:
-            domain = prompt_choice("Domain number to make main", domains, str(app.get("main_domain")))
-            if domain == app.get("main_domain"):
-                info(f"{domain} is already the main domain.")
-                continue
-            no_reload = not prompt_confirm("Reload nginx if running?", True)
-            print_plan([f"set {domain} as main domain for {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
-            if prompt_confirm("Continue?", True):
-                cmd_app_domain_set_main(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+        try:
+            action = prompt_choice("Domain action", ["Add domain", "Delete domain", "Change main domain"])
+            if action == "Back":
+                return
+            if action == "Add domain":
+                domain = prompt_validated("Domain", DOMAIN_RE, "domain")
+                no_reload = not prompt_confirm("Reload nginx if running?", True)
+                print_plan([f"add {domain} to app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+                if prompt_confirm("Continue?", True):
+                    cmd_app_domain_add(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+            elif action == "Delete domain":
+                aliases = [domain for domain in domains if domain != app.get("main_domain")]
+                if not aliases:
+                    warn("The main domain cannot be deleted. Add and select another domain as main first.")
+                    continue
+                domain = prompt_pick("Domain number to delete", domains)
+                if domain == app.get("main_domain"):
+                    warn("Cannot delete the main domain; change the main domain first.")
+                    continue
+                no_reload = not prompt_confirm("Reload nginx if running?", True)
+                print_plan([f"remove {domain} from app {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+                if prompt_confirm("Continue?", False):
+                    cmd_app_domain_remove(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+            else:
+                domain = prompt_pick("Domain number to make main", domains, str(app.get("main_domain")))
+                if domain == app.get("main_domain"):
+                    info(f"{domain} is already the main domain.")
+                    continue
+                no_reload = not prompt_confirm("Reload nginx if running?", True)
+                print_plan([f"set {domain} as main domain for {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+                if prompt_confirm("Continue?", True):
+                    cmd_app_domain_set_main(argparse.Namespace(app_name=app_name, domain=domain, no_reload=no_reload))
+        except WizardBack:
+            continue
 
 
 def wizard_manage_databases() -> None:
@@ -207,38 +212,40 @@ def wizard_manage_databases() -> None:
     while True:
         info(f"\nDatabases for {app_name}:")
         cmd_app_db_list(argparse.Namespace(app_name=app_name))
-        action = prompt_choice(
-            "Database action",
-            [
-                "Create database",
-                "Backup app databases",
-                "Restore a backup",
-                "List backups",
-                "Back",
-            ],
-        )
-        if action == "Back":
-            return
-        if action == "Backup app databases":
+        try:
+            action = prompt_choice(
+                "Database action",
+                [
+                    "Create database",
+                    "Backup app databases",
+                    "Restore a backup",
+                    "List backups",
+                ],
+            )
+            if action == "Back":
+                return
+            if action == "Backup app databases":
+                default_service = str(app.get("mysql_service") or default_mysql_service())
+                wizard_db_backup(default_service=default_service, app_name=app_name)
+                continue
+            if action == "Restore a backup":
+                default_service = str(app.get("mysql_service") or default_mysql_service())
+                wizard_db_restore(default_service=default_service)
+                continue
+            if action == "List backups":
+                default_service = str(app.get("mysql_service") or default_mysql_service())
+                wizard_db_list_backups(default_service=default_service)
+                continue
+            suffix = prompt_validated("Database suffix", DB_NAME_RE, "database suffix")
             default_service = str(app.get("mysql_service") or default_mysql_service())
-            wizard_db_backup(default_service=default_service, app_name=app_name)
+            mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_service, hint="for example mysql57, mysql84, mysql97")
+            print_plan([f"create database {app_name}_{suffix}", f"MySQL service: {mysql_service}"])
+            if prompt_confirm("Continue?", True):
+                cmd_app_db_create(argparse.Namespace(app_name=app_name, db_suffix=suffix, mysql_service=mysql_service))
+            # Return to the top of the loop so the listing immediately reflects a new DB.
+            app = load_db()["apps"][app_name]
+        except WizardBack:
             continue
-        if action == "Restore a backup":
-            default_service = str(app.get("mysql_service") or default_mysql_service())
-            wizard_db_restore(default_service=default_service)
-            continue
-        if action == "List backups":
-            default_service = str(app.get("mysql_service") or default_mysql_service())
-            wizard_db_list_backups(default_service=default_service)
-            continue
-        suffix = prompt_validated("Database suffix", DB_NAME_RE, "database suffix")
-        default_service = str(app.get("mysql_service") or default_mysql_service())
-        mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_service, hint="for example mysql57, mysql84, mysql97")
-        print_plan([f"create database {app_name}_{suffix}", f"MySQL service: {mysql_service}"])
-        if prompt_confirm("Continue?", True):
-            cmd_app_db_create(argparse.Namespace(app_name=app_name, db_suffix=suffix, mysql_service=mysql_service))
-        # Return to the top of the loop so the listing immediately reflects a new DB.
-        app = load_db()["apps"][app_name]
 
 
 def wizard_db_backup(*, default_service: str | None = None, app_name: str | None = None) -> None:
@@ -255,7 +262,7 @@ def wizard_db_backup(*, default_service: str | None = None, app_name: str | None
         selected_app = app_name
         database: str | None = None
     else:
-        scope = prompt_choice(
+        scope = prompt_pick(
             "Backup scope",
             ["All user databases", "App databases", "Single database"],
             "All user databases",
@@ -353,7 +360,7 @@ def wizard_db_restore(*, default_service: str | None = None) -> None:
             size_kb = max(1, st.st_size // 1024) if st.st_size else 0
             labels.append(f"{path.name} ({size_kb}K)")
         labels.append("Enter path manually…")
-        choice = prompt_choice("Backup file", labels)
+        choice = prompt_pick("Backup file", labels)
         if choice == "Enter path manually…":
             backup_file = prompt_text("Backup file path or filename under runtime/backups/<service>/")
             label = backup_file
@@ -388,18 +395,21 @@ def wizard_db_restore(*, default_service: str | None = None) -> None:
 def wizard_backup_restore_menu() -> None:
     """Top-level TUI entry for database backup / restore."""
     while True:
-        action = prompt_choice(
-            "Backup / restore",
-            ["Backup databases", "List backups", "Restore a backup", "Back"],
-        )
-        if action == "Back":
-            return
-        if action == "Backup databases":
-            wizard_db_backup()
-        elif action == "List backups":
-            wizard_db_list_backups()
-        else:
-            wizard_db_restore()
+        try:
+            action = prompt_choice(
+                "Backup / restore",
+                ["Backup databases", "List backups", "Restore a backup"],
+            )
+            if action == "Back":
+                return
+            if action == "Backup databases":
+                wizard_db_backup()
+            elif action == "List backups":
+                wizard_db_list_backups()
+            else:
+                wizard_db_restore()
+        except WizardBack:
+            continue
 
 
 def wizard_manage_crons() -> None:
@@ -408,40 +418,43 @@ def wizard_manage_crons() -> None:
         cmd_cron_list(argparse.Namespace())
         db = load_db()
         crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
-        actions = ["Create cron job"] + (["Delete cron job"] if crons else []) + ["Back"]
-        action = prompt_choice("Cron action", actions)
-        if action == "Back":
-            return
-        if action == "Create cron job":
-            wizard_cron()
+        actions = ["Create cron job"] + (["Delete cron job"] if crons else [])
+        try:
+            action = prompt_choice("Cron action", actions)
+            if action == "Back":
+                return
+            if action == "Create cron job":
+                wizard_cron()
+                continue
+            labels = [f"{key} ({cron.get('schedule', '')}: {cron.get('command', '')})" for key, cron in crons]
+            selected = prompt_pick("Cron number to delete", labels)
+            cron_key, cron = crons[labels.index(selected)]
+            print_plan([f"remove cron {cron_key}", f"PHP {cron.get('php_version', default_php_version())}"])
+            if prompt_confirm("Continue?", False):
+                cmd_cron_remove(argparse.Namespace(app_name=cron["app"], job_name=cron["job_name"]))
+            # Return to the top of the loop so the listing immediately reflects removal.
+        except WizardBack:
             continue
-        labels = [f"{key} ({cron.get('schedule', '')}: {cron.get('command', '')})" for key, cron in crons]
-        selected = prompt_choice("Cron number to delete", labels)
-        cron_key, cron = crons[labels.index(selected)]
-        print_plan([f"remove cron {cron_key}", f"PHP {cron.get('php_version', default_php_version())}"])
-        if prompt_confirm("Continue?", False):
-            cmd_cron_remove(argparse.Namespace(app_name=cron["app"], job_name=cron["job_name"]))
-        # Return to the top of the loop so the listing immediately reflects removal.
 
 
 def wizard_cron() -> None:
     db = load_db()
     apps = [a for a in db.get("apps", {}).values() if isinstance(a, dict) and a.get("name")]
     labels = [f"{a.get('name')} (php {a.get('php_version', default_php_version())})" for a in apps]
-    label = prompt_choice("App", labels) if labels else ""
+    label = prompt_pick("App", labels) if labels else ""
     if label:
         app = apps[labels.index(label)]
         app_name = str(app.get("name"))
         php = str(app.get("php_version") or default_php_version())
     else:
         app_name = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
-        php = prompt_choice("PHP version", available_php_versions(), default_php_version())
+        php = prompt_pick("PHP version", available_php_versions(), default_php_version())
     job_name = prompt_validated("Job name", JOB_RE, "job name")
     schedule = prompt_text("Schedule", "* * * * *")
     command = prompt_text("Command", "php artisan schedule:run")
     workdir = prompt_text("Workdir (blank = /home/<app>/www)", "", required=False) or None
     timezone = prompt_text("Timezone (blank = stack TZ)", "", required=False) or None
-    output = prompt_choice("Output", ["docker", "file"], "docker")
+    output = prompt_pick("Output", ["docker", "file"], "docker")
     timeout_text = prompt_text("Timeout seconds (0 = disabled)", "0")
     try:
         timeout = int(timeout_text)
@@ -470,39 +483,43 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         "Open app shell",
         "Show status",
         "List apps/domains/crons",
-        "Quit",
     ]
     while True:
         info("\nVibeOps")
-        action = prompt_choice("What do you want to do?", actions)
-        if action == "Create app identity":
-            wizard_create_user()
-        elif action == "Create app":
-            wizard_create_site()
-        elif action == "Create reverse proxy":
-            wizard_create_proxy()
-        elif action == "Enable/switch TLS ACME":
-            wizard_tls_acme()
-        elif action == "Manage cron jobs":
-            wizard_manage_crons()
-        elif action == "Manage app domains":
-            wizard_manage_domains()
-        elif action == "Manage app databases":
-            wizard_manage_databases()
-        elif action == "Backup / restore databases":
-            wizard_backup_restore_menu()
-        elif action == "Check app permissions":
-            wizard_check_permissions()
-        elif action == "Fix app permissions":
-            wizard_fix_permissions()
-        elif action == "Open app shell":
-            cmd_app_shell(argparse.Namespace(app_name=None, php=None, workdir=None, shell="bash"))
-        elif action == "Show status":
-            cmd_status(argparse.Namespace(check_nginx=False))
-        elif action == "List apps/domains/crons":
-            kind = prompt_choice("List", ["apps", "domains", "crons", "all"], "apps")
-            cmd_list(argparse.Namespace(kind=kind))
-        else:
+        action = prompt_choice("What do you want to do?", actions, zero="Quit")
+        if action == "Quit":
             return
+        try:
+            if action == "Create app identity":
+                wizard_create_user()
+            elif action == "Create app":
+                wizard_create_site()
+            elif action == "Create reverse proxy":
+                wizard_create_proxy()
+            elif action == "Enable/switch TLS ACME":
+                wizard_tls_acme()
+            elif action == "Manage cron jobs":
+                wizard_manage_crons()
+            elif action == "Manage app domains":
+                wizard_manage_domains()
+            elif action == "Manage app databases":
+                wizard_manage_databases()
+            elif action == "Backup / restore databases":
+                wizard_backup_restore_menu()
+            elif action == "Check app permissions":
+                wizard_check_permissions()
+            elif action == "Fix app permissions":
+                wizard_fix_permissions()
+            elif action == "Open app shell":
+                cmd_app_shell(argparse.Namespace(app_name=None, php=None, workdir=None, shell="bash"))
+            elif action == "Show status":
+                cmd_status(argparse.Namespace(check_nginx=False))
+            elif action == "List apps/domains/crons":
+                kind = prompt_pick("List", ["apps", "domains", "crons", "all"], "apps")
+                cmd_list(argparse.Namespace(kind=kind))
+            else:
+                return
+        except WizardBack:
+            continue
         if not prompt_confirm("Back to menu?", True):
             return

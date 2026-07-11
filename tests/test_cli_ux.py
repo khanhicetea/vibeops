@@ -103,7 +103,7 @@ class WizardUsesPromptPasswordTests(unittest.TestCase):
 
         with (
             mock.patch.object(wizard_commands, "prompt_validated", return_value="shop"),
-            mock.patch.object(wizard_commands, "prompt_choice", return_value="8.4"),
+            mock.patch.object(wizard_commands, "prompt_pick", return_value="8.4"),
             mock.patch.object(wizard_commands, "prompt_int", return_value=None),
             mock.patch.object(wizard_commands, "prompt_confirm", side_effect=[True, True, False]),
             mock.patch.object(wizard_commands, "prompt_password", return_value=None) as pp,
@@ -117,6 +117,43 @@ class WizardUsesPromptPasswordTests(unittest.TestCase):
             # prompt_confirm: Create MySQL? True -> not no_mysql; Reload? True; Continue? False
             pp.assert_called_once()
             create.assert_not_called()
+
+
+class PromptChoiceZeroTests(unittest.TestCase):
+    def test_shows_zero_back_and_accepts_zero(self) -> None:
+        from vibeops.runtime_commands import prompt_choice
+
+        out = io.StringIO()
+        with mock.patch("builtins.input", return_value="0") as inp, mock.patch("sys.stdout", out):
+            result = prompt_choice("Action", ["One", "Two"])
+        self.assertEqual(result, "Back")
+        text = out.getvalue()
+        self.assertIn("0 - Back", text)
+        self.assertIn("1 - One", text)
+        self.assertIn("2 - Two", text)
+        self.assertIn("Choose 0-2", inp.call_args.args[0])
+
+    def test_main_menu_zero_quit(self) -> None:
+        from vibeops.runtime_commands import prompt_choice
+
+        out = io.StringIO()
+        with mock.patch("builtins.input", return_value="0"), mock.patch("sys.stdout", out):
+            result = prompt_choice("What do you want to do?", ["Create app"], zero="Quit")
+        self.assertEqual(result, "Quit")
+        self.assertIn("0 - Quit", out.getvalue())
+
+    def test_selects_numbered_choice(self) -> None:
+        from vibeops.runtime_commands import prompt_choice
+
+        with mock.patch("builtins.input", return_value="2"), mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(prompt_choice("Pick", ["A", "B", "C"]), "B")
+
+    def test_prompt_pick_raises_wizard_back_on_zero(self) -> None:
+        from vibeops.runtime_commands import WizardBack, prompt_pick
+
+        with mock.patch("builtins.input", return_value="0"), mock.patch("sys.stdout", io.StringIO()):
+            with self.assertRaises(WizardBack):
+                prompt_pick("PHP version", ["8.4", "8.5"])
 
 
 if __name__ == "__main__":

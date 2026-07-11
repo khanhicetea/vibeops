@@ -50,19 +50,16 @@ def select_app_from_db() -> tuple[str, str]:
     if not sys.stdin.isatty():
         choices = ", ".join(str(app.get("name")) for app in apps)
         die(f"Multiple apps found in state; choose one explicitly. Apps: {choices}")
-    info("Select app:")
-    for idx, app in enumerate(apps, start=1):
-        info(f"  {idx}) {app.get('name')}  main={app.get('main_domain', '-')}  php={app.get('php_version', default_php_version())}")
-    while True:
-        raw = input("App number: ").strip()
-        try:
-            choice = int(raw)
-        except ValueError:
-            choice = 0
-        if 1 <= choice <= len(apps):
-            app = apps[choice - 1]
-            return str(app["name"]), str(app.get("php_version") or default_php_version())
-        warn("invalid selection")
+    labels = [
+        f"{app.get('name')}  main={app.get('main_domain', '-')}  php={app.get('php_version', default_php_version())}"
+        for app in apps
+    ]
+    try:
+        label = prompt_pick("Select app", labels)
+    except WizardBack:
+        die("Cancelled")
+    app = apps[labels.index(label)]
+    return str(app["name"]), str(app.get("php_version") or default_php_version())
 
 def cmd_app_shell(args: argparse.Namespace) -> None:
     if not args.app_name:
@@ -744,24 +741,62 @@ def prompt_confirm(label: str, default: bool = True) -> bool:
             return False
         warn("answer yes or no")
 
-def prompt_choice(label: str, choices: list[str], default: str | None = None) -> str:
+class WizardBack(Exception):
+    """User selected 0 (Back) in a numbered choice prompt."""
+
+
+def prompt_choice(
+    label: str,
+    choices: list[str],
+    default: str | None = None,
+    *,
+    zero: str | None = "Back",
+) -> str:
+    """Numbered choice prompt. Choices are 1..N; option 0 is reserved for *zero* (default Back).
+
+    Pass ``zero="Quit"`` for the main menu, or ``zero=None`` to hide option 0.
+    Selecting 0 returns the *zero* label string (e.g. ``"Back"`` / ``"Quit"``).
+    """
     if not choices:
         return prompt_text(label, default)
     info(label + ":")
+    if zero is not None:
+        info(f"  0 - {zero}")
     for idx, choice in enumerate(choices, start=1):
         marker = " *" if choice == default else ""
-        info(f"  {idx}) {choice}{marker}")
+        info(f"  {idx} - {choice}{marker}")
+    lo = 0 if zero is not None else 1
     while True:
-        raw = input(f"Choose 1-{len(choices)}" + (f" [{default}]" if default else "") + ": ").strip()
+        raw = input(
+            f"Choose {lo}-{len(choices)}"
+            + (f" [{default}]" if default else "")
+            + ": "
+        ).strip()
         if not raw and default:
             return default
         try:
             idx = int(raw)
         except ValueError:
-            idx = 0
+            idx = -1
+        if zero is not None and idx == 0:
+            return zero
         if 1 <= idx <= len(choices):
             return choices[idx - 1]
         warn("invalid selection")
+
+
+def prompt_pick(
+    label: str,
+    choices: list[str],
+    default: str | None = None,
+    *,
+    zero: str | None = "Back",
+) -> str:
+    """Like ``prompt_choice``, but selecting 0 raises ``WizardBack`` (cancel/back)."""
+    value = prompt_choice(label, choices, default, zero=zero)
+    if zero is not None and value == zero:
+        raise WizardBack()
+    return value
 
 def available_php_versions() -> list[str]:
     version_set: set[str] = set()
