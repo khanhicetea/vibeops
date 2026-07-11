@@ -100,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     app_config_customize.add_argument("app_name")
     app_config_customize.add_argument("target", choices=["vhost", "pool"])
     app_config_customize.add_argument("--force", action="store_true", help="Replace an existing custom source with the current upstream template")
+    app_config_customize.add_argument("--no-edit", action="store_true", help="Activate without opening VISUAL, EDITOR, or vi")
     app_config_customize.add_argument("--no-reload", action="store_true", help="Validate but do not reload the affected service")
     app_config_customize.set_defaults(func=app_config_commands.cmd_app_config_customize)
     app_config_reset = app_config_sub.add_parser("reset", help="Switch back to the upstream generated template")

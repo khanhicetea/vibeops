@@ -129,7 +129,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args_list[0].args[1],
-            ["Domains", "Databases", "Cron jobs", "Customize", "App shell", "Check permissions"],
+            ["Shell", "Databases", "Cronjobs", "Domains", "Audit File Permissions", "Customize"],
         )
         domains.assert_called_once_with("shop")
 
@@ -151,6 +151,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
         self.assertEqual(pick.call_args.args[1], ["Vhost", "PHP-FPM pool"])
         args = customize.call_args.args[0]
         self.assertEqual((args.app_name, args.target), ("shop", "vhost"))
+        self.assertFalse(args.no_edit)
         self.assertFalse(args.no_reload)
 
     def test_tls_acme_is_inside_app_domains_menu(self) -> None:

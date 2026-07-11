@@ -199,13 +199,11 @@ Generated vhosts and PHP-FPM pools normally follow upstream templates. To take o
 
 ```bash
 ./manage.py app config status shop
-./manage.py app config customize shop vhost
-./manage.py app config customize shop pool
-# edit the reported source under runtime/custom/apps/shop/, then:
-./manage.py apply
+./manage.py app config customize shop vhost  # opens VISUAL, EDITOR, or vi
+./manage.py app config customize shop pool   # saves, validates, then reloads
 ```
 
-The selected custom source is recorded in `runtime/state/stack.json` and rendered transactionally into the normal `runtime/generated/` destination. Custom templates still receive app variables and must preserve required TLS markers, identity, and Unix-socket settings. They are validated by `nginx -t` or `php-fpm -tt` when the service is running.
+The editor must exit successfully before the selected custom source is recorded in `runtime/state/stack.json`, rendered transactionally into the normal `runtime/generated/` destination, validated, and reloaded. Custom templates still receive app variables and must preserve required TLS markers, identity, and Unix-socket settings. Use `--no-edit` for automation and `--no-reload` to validate without signaling the affected service.
 
 Switch back to the current upstream template without deleting the custom source:
 

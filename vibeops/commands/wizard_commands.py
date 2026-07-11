@@ -491,7 +491,7 @@ def wizard_customize_app(app_name: str) -> None:
                     command += " --no-reload"
                 info(f"  {command}")
                 if prompt_confirm("Activate customization?", True):
-                    cmd_app_config_customize(argparse.Namespace(app_name=app_name, target=target, force=force, no_reload=no_reload))
+                    cmd_app_config_customize(argparse.Namespace(app_name=app_name, target=target, force=force, no_edit=False, no_reload=no_reload))
             else:
                 info("\nEquivalent command:")
                 command = f"./manage.py app config reset {shlex.quote(app_name)} {target}"
@@ -506,7 +506,7 @@ def wizard_customize_app(app_name: str) -> None:
 
 def wizard_manage_app() -> None:
     app_name, app = wizard_select_app()
-    actions = ["Domains", "Databases", "Cron jobs", "Customize", "App shell", "Check permissions"]
+    actions = ["Shell", "Databases", "Cronjobs", "Domains", "Audit File Permissions", "Customize"]
     while True:
         app = load_db().get("apps", {}).get(app_name, app)
         info(f"\nManage app: {app_name} (main: {app.get('main_domain', '-')})")
@@ -514,18 +514,18 @@ def wizard_manage_app() -> None:
             action = prompt_choice("App action", actions)
             if action == "Back":
                 return
-            if action == "Domains":
-                wizard_manage_domains(app_name)
+            if action == "Shell":
+                cmd_app_shell(argparse.Namespace(app_name=app_name, php=None, workdir=None, shell="bash"))
             elif action == "Databases":
                 wizard_manage_databases(app_name, app)
-            elif action == "Cron jobs":
+            elif action == "Cronjobs":
                 wizard_manage_crons(app_name, app)
-            elif action == "Customize":
-                wizard_customize_app(app_name)
-            elif action == "App shell":
-                cmd_app_shell(argparse.Namespace(app_name=app_name, php=None, workdir=None, shell="bash"))
-            else:
+            elif action == "Domains":
+                wizard_manage_domains(app_name)
+            elif action == "Audit File Permissions":
                 wizard_check_permissions(app_name)
+            else:
+                wizard_customize_app(app_name)
         except WizardBack:
             continue
 

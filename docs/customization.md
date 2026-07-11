@@ -134,18 +134,22 @@ Use the first-class app config commands when one app needs a complete custom Ngi
 ./manage.py app config customize shop pool
 ```
 
-The customize command copies the current upstream template into an ignored, user-owned source:
+The customize command copies the current upstream template into an ignored, user-owned source and opens it with `$VISUAL`, `$EDITOR`, or `vi`:
 
 ```text
 runtime/custom/apps/shop/nginx/vhost.conf.template
 runtime/custom/apps/shop/php/pool.conf.template
 ```
 
-It records `service_config.<target>.mode = custom` in `runtime/state/stack.json`. Subsequent renders read that custom source and stage it into the normal generated destination, so transactional promotion, rollback, and service validation continue to apply. Edit the custom source—not the generated output—then run:
+After the editor saves and exits successfully, the command records `service_config.<target>.mode = custom` in `runtime/state/stack.json`, stages the custom source into the normal generated destination, validates it, and reloads the affected service. A failed editor exit leaves the source as an inactive draft. Subsequent renders continue reading that custom source, so transactional promotion, rollback, and service validation still apply.
+
+For automation, skip editor launch explicitly:
 
 ```bash
-./manage.py apply
+./manage.py app config customize shop vhost --no-edit
 ```
+
+Use `--no-reload` when the command should validate but not signal the service. For later manual edits, edit the custom source—not the generated output—then run `./manage.py apply`.
 
 Custom sources remain templates. Preserve the app variables and the vhost TLS marker block; custom pools must preserve the private app identity and expected Unix socket path/group/mode. A missing or invalid selected custom source fails render/apply instead of silently falling back to the upstream template.
 

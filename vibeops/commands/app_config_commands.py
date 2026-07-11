@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
+import subprocess
+from pathlib import Path
 from typing import Any
 
 from vibeops.services.app_config import (
@@ -37,6 +41,27 @@ def _service_targets(target: str) -> frozenset[str]:
     return frozenset({"nginx" if target == "vhost" else "php"})
 
 
+def edit_custom_source(path: Path) -> None:
+    """Open a custom source with VISUAL, EDITOR, or vi and require success."""
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    try:
+        argv = shlex.split(editor)
+    except ValueError as exc:
+        die(f"Invalid editor command {editor!r}: {exc}")
+    if not argv:
+        die("VISUAL/EDITOR must not be empty")
+    info(f"Opening custom source with {editor}: vibeops/{rel(path)}")
+    try:
+        result = subprocess.run([*argv, str(path)], check=False)
+    except OSError as exc:
+        die(f"Could not start editor {argv[0]!r}: {exc}")
+    if result.returncode != 0:
+        die(
+            f"Editor exited with status {result.returncode}; customization was not activated. "
+            f"Draft preserved at vibeops/{rel(path)}"
+        )
+
+
 @serialized_cron_state
 def cmd_app_config_customize(args: argparse.Namespace) -> None:
     from vibeops.commands.runtime_commands import apply_generated_config
@@ -51,6 +76,8 @@ def cmd_app_config_customize(args: argparse.Namespace) -> None:
     )
     if not created:
         warn(f"Reusing existing custom source: vibeops/{rel(source)}")
+    if not bool(getattr(args, "no_edit", False)):
+        edit_custom_source(source)
 
     based_on = None
     if created or getattr(args, "force", False):
@@ -68,7 +95,8 @@ def cmd_app_config_customize(args: argparse.Namespace) -> None:
     )
     save_db(db)
     info(f"App {app['name']} {target} now uses custom template: vibeops/{rel(source)}")
-    info("Edit the custom source, then run ./manage.py apply")
+    if bool(getattr(args, "no_edit", False)):
+        info("Edit the custom source when ready, then run ./manage.py apply")
 
 
 @serialized_cron_state

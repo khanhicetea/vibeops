@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,7 +53,7 @@ class AppConfigCustomizationTests(unittest.TestCase):
             patch("vibeops.commands.runtime_commands.apply_generated_config") as apply,
         ):
             app_config_commands.cmd_app_config_customize(
-                argparse.Namespace(app_name="shop", target="vhost", force=False, no_reload=True)
+                argparse.Namespace(app_name="shop", target="vhost", force=False, no_edit=True, no_reload=True)
             )
         record = db["apps"]["shop"]["service_config"]["vhost"]
         self.assertEqual(record["mode"], "custom")
@@ -64,12 +65,41 @@ class AppConfigCustomizationTests(unittest.TestCase):
 
     def test_cli_exposes_headless_config_commands(self) -> None:
         parser = build_parser()
-        customize = parser.parse_args(["app", "config", "customize", "shop", "vhost", "--no-reload"])
+        customize = parser.parse_args(["app", "config", "customize", "shop", "vhost", "--no-edit", "--no-reload"])
         self.assertEqual(customize.app_name, "shop")
         self.assertEqual(customize.target, "vhost")
+        self.assertTrue(customize.no_edit)
         self.assertTrue(customize.no_reload)
         status = parser.parse_args(["app", "config", "status", "shop"])
         self.assertEqual(status.app_name, "shop")
+
+    def test_editor_uses_visual_and_requires_success(self) -> None:
+        source = self.root / "custom.conf"
+        source.write_text("draft\n")
+        with (
+            patch.dict("os.environ", {"VISUAL": "code --wait", "EDITOR": "nano"}, clear=False),
+            patch.object(app_config_commands.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run,
+            patch.object(app_config_commands, "info"),
+        ):
+            app_config_commands.edit_custom_source(source)
+        run.assert_called_once_with(["code", "--wait", str(source)], check=False)
+
+    def test_failed_editor_does_not_activate_customization(self) -> None:
+        db = {"apps": {"shop": dict(self.app)}}
+        with (
+            patch.object(app_config_commands, "load_db", return_value=db),
+            patch.object(app_config_commands, "edit_custom_source", side_effect=StackError("editor failed")),
+            patch.object(app_config_commands, "save_db") as save,
+            patch("vibeops.commands.runtime_commands.apply_generated_config") as apply,
+        ):
+            with self.assertRaisesRegex(StackError, "editor failed"):
+                app_config_commands.cmd_app_config_customize(
+                    argparse.Namespace(app_name="shop", target="pool", force=False, no_edit=False, no_reload=False)
+                )
+        self.assertNotIn("service_config", db["apps"]["shop"])
+        apply.assert_not_called()
+        save.assert_not_called()
+        self.assertTrue(app_config.custom_template_path("shop", "pool").is_file())
 
     def test_install_preserves_existing_source_unless_forced(self) -> None:
         path, created = app_config.install_custom_template("shop", "vhost")
