@@ -76,16 +76,17 @@ def cron_render_values(cron: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def render_cron_job(cron: dict[str, Any]) -> Path:
+def render_cron_job(cron: dict[str, Any], ctx: RenderContext | None = None) -> Path:
     values = cron_render_values(cron)
     php_version = str(values["PHP_VERSION"])
     app_name = str(values["APP_NAME"])
     job_name = str(values["JOB_NAME"])
-    cron_path = cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
-    mkdir(cron_jobs_dir_for(php_version))
+    cron_path = cron_jobs_dir_for(php_version, ctx) / f"{safe_app_part(app_name)}-{job_name}.cron"
+    mkdir(cron_jobs_dir_for(php_version, ctx))
     write_template(cron_path, PHP_TEMPLATE_DIR / "cron.cron.template", values, 0o644, generated=True)
     cron["php_service"] = values["PHP_SERVICE"]
-    cron["file"] = rel(cron_path)
+    # State records the live path so stack.json stays mount-stable.
+    cron["file"] = rel(cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron")
     return cron_path
 
 

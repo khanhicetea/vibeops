@@ -11,6 +11,7 @@ compose.local.yml
 compose.d/*.yml
 
 # Runtime state, generated config, customization, and mutable data
+/runtime/.render-txn-*/
 /runtime/state/*
 !/runtime/state/.gitkeep
 

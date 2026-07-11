@@ -96,10 +96,12 @@ def cmd_app_create(args: argparse.Namespace) -> None:
             app["databases"].append(db_full_name)
         app.setdefault("database_services", {})[db_full_name] = mysql_service
 
-    conf_path = render_app_vhost(app)
     for domain in all_domains:
         db["domains"][domain] = {"kind": "php", "app": app_name}
     upsert_timestamp(app)
+    from vibeops.runtime_commands import apply_generated_config
+    apply_generated_config(db, reload_services=False, validate_services=False)
+    conf_path = app_vhost_path(app_name)
     save_db(db)
     # App creation is the one safe time to repair the entire (small) initial tree.
     # Later deploys must opt into a recursive repair explicitly.
@@ -142,7 +144,10 @@ def cmd_app_domain_list(args: argparse.Namespace) -> None:
         info(f"{index}) {domain}{main}")
 
 
+@serialized_cron_state
 def cmd_app_domain_add(args: argparse.Namespace) -> None:
+    from vibeops.runtime_commands import apply_generated_config
+
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     domain = validate(args.domain, DOMAIN_RE, "domain")
@@ -155,11 +160,10 @@ def cmd_app_domain_add(args: argparse.Namespace) -> None:
         domains.append(domain)
     app["domains"] = domains
     db["domains"][domain] = {"kind": "php", "app": app_name}
-    render_app_vhost(app)
     upsert_timestamp(app)
+    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
     save_db(db)
     info(f"Added domain {domain} to app {app_name}")
-    nginx_reload(args.no_reload)
 
 
 def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
@@ -176,7 +180,10 @@ def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
     return validate(args.domain, DOMAIN_RE, "domain")
 
 
+@serialized_cron_state
 def cmd_app_domain_remove(args: argparse.Namespace) -> None:
+    from vibeops.runtime_commands import apply_generated_config
+
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     app = db.get("apps", {}).get(app_name)
@@ -190,14 +197,16 @@ def cmd_app_domain_remove(args: argparse.Namespace) -> None:
         die(f"Domain {domain} is not on app {app_name}")
     app["domains"] = domains
     db.get("domains", {}).pop(domain, None)
-    render_app_vhost(app)
     upsert_timestamp(app)
+    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
     save_db(db)
     info(f"Removed domain {domain} from app {app_name}")
-    nginx_reload(args.no_reload)
 
 
+@serialized_cron_state
 def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
+    from vibeops.runtime_commands import apply_generated_config
+
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     app = db.get("apps", {}).get(app_name)
@@ -209,11 +218,10 @@ def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
         die(f"Domain {domain} is not on app {app_name}; add it first")
     app["main_domain"] = domain
     app["domains"] = [domain] + [d for d in domains if d != domain]
-    render_app_vhost(app)
     upsert_timestamp(app)
+    apply_generated_config(db, reload_services=not args.no_reload, validate_services=True)
     save_db(db)
     info(f"Set main domain for {app_name}: {domain}")
-    nginx_reload(args.no_reload)
 
 
 def cmd_app_db_list(args: argparse.Namespace) -> None:
@@ -294,7 +302,8 @@ def cmd_site_create(args: argparse.Namespace) -> None:
         return
     app = db.get("apps", {}).get(app_name)
     if isinstance(app, dict) and domain in (app.get("domains") or []):
-        render_app_vhost(app)
+        from vibeops.runtime_commands import apply_generated_config
+        apply_generated_config(db, reload_services=False, validate_services=False)
         save_db(db)
         info(f"Regenerated app vhost for {app_name}")
         return

@@ -87,7 +87,8 @@ cd vibeops
 cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD
 
-./manage.py render
+./manage.py render   # stage full generation, then promote into runtime/generated
+# ./manage.py apply  # same as render, then validate + reload running services
 
 docker compose build php84 php85 php84-cron php85-cron
 # mysql84 is the default MySQL service.
@@ -368,7 +369,9 @@ A recursive repair can scan a large tree. It keeps private paths private and rea
 
 Logical dumps go under `runtime/backups/<mysql_service>/` (mounted at `/backups` in each MySQL container). Prefer these over ad-hoc `docker compose exec` with root passwords on the host process list.
 
-`./manage.py render` generates ignored, mode-600 root client option files under `runtime/secrets/mysql/` from the long random root password in `.env`. Each MySQL service mounts only its own file read-only at `/run/secrets/vibeops-root.cnf`; health checks and `manage.py` administrative commands use that file, so passwords are not passed in client command arguments. Re-run `./manage.py render` and recreate the affected MySQL container after changing a root password. Keep `.env` as the recovery source and never commit or copy these option files into images.
+`./manage.py render` stages a complete generation under `runtime/.render-txn-*/`, then promotes files atomically into bind-mounted destinations (`runtime/generated/`, `runtime/secrets/mysql/`). Stale managed files are removed only after the candidate set is complete; validation/reload failures roll generated files back (reload-signal failures after a successful validate leave the new generation for retry). See `docs/architecture.md` for the stage → promote → validate → rollback → reload lifecycle.
+
+It also generates ignored, mode-600 root client option files under `runtime/secrets/mysql/` from the long random root password in `.env`. Each MySQL service mounts only its own file read-only at `/run/secrets/vibeops-root.cnf`; health checks and `manage.py` administrative commands use that file, so passwords are not passed in client command arguments. Re-run `./manage.py render` and recreate the affected MySQL container after changing a root password. Keep `.env` as the recovery source and never commit or copy these option files into images.
 
 ```bash
 ./manage.py db list

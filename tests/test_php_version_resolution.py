@@ -257,33 +257,36 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(app_commands, "mkdir"),
             patch.object(app_commands, "app_document_root", return_value=Path("/tmp/home/shop/www")),
             patch.object(app_commands, "apply_app_mysql_metadata"),
-            patch.object(app_commands, "render_app_vhost", return_value=Path("/tmp/app-shop.conf")),
             patch.object(app_commands, "save_db"),
             patch.object(app_commands, "initialize_app_permissions"),
             patch.object(app_commands, "nginx_reload"),
             patch.object(app_commands, "info"),
             patch.object(app_commands, "rel", side_effect=lambda p: str(p)),
             patch.object(app_commands, "upsert_timestamp"),
+            patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-shop.conf")),
         ):
-            args = argparse.Namespace(
-                app_name="shop",
-                main_domain="shop.example.com",
-                db_suffix=None,
-                php=None,
-                mysql_service="mysql84",
-                alias=None,
-                aliases=None,
-                public_dir="",
-                php_entrypoint="auto",
-                no_index=True,
-                no_reload=True,
-                uid=None,
-                no_mysql=True,
-                mysql_password=None,
-            )
-            app_commands.cmd_app_create(args)
-            identity.assert_called_once()
-            self.assertEqual(identity.call_args[0][1], "8.5")
+            import vibeops.runtime_commands as runtime_commands
+
+            with patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-shop.conf")]):
+                args = argparse.Namespace(
+                    app_name="shop",
+                    main_domain="shop.example.com",
+                    db_suffix=None,
+                    php=None,
+                    mysql_service="mysql84",
+                    alias=None,
+                    aliases=None,
+                    public_dir="",
+                    php_entrypoint="auto",
+                    no_index=True,
+                    no_reload=True,
+                    uid=None,
+                    no_mysql=True,
+                    mysql_password=None,
+                )
+                app_commands.cmd_app_create(args)
+                identity.assert_called_once()
+                self.assertEqual(identity.call_args[0][1], "8.5")
 
     def test_new_app_omitted_uses_stack_default(self) -> None:
         db = {"apps": {}, "domains": {}, "crons": {}, "proxies": {}}
@@ -296,32 +299,35 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(app_commands, "mkdir"),
             patch.object(app_commands, "app_document_root", return_value=Path("/tmp/home/fresh/www")),
             patch.object(app_commands, "apply_app_mysql_metadata"),
-            patch.object(app_commands, "render_app_vhost", return_value=Path("/tmp/app-fresh.conf")),
             patch.object(app_commands, "save_db"),
             patch.object(app_commands, "initialize_app_permissions"),
             patch.object(app_commands, "nginx_reload"),
             patch.object(app_commands, "info"),
             patch.object(app_commands, "rel", side_effect=lambda p: str(p)),
             patch.object(app_commands, "upsert_timestamp"),
+            patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-fresh.conf")),
         ):
-            args = argparse.Namespace(
-                app_name="fresh",
-                main_domain="fresh.example.com",
-                db_suffix=None,
-                php=None,
-                mysql_service="mysql84",
-                alias=None,
-                aliases=None,
-                public_dir="",
-                php_entrypoint="auto",
-                no_index=True,
-                no_reload=True,
-                uid=None,
-                no_mysql=True,
-                mysql_password=None,
-            )
-            app_commands.cmd_app_create(args)
-            self.assertEqual(identity.call_args[0][1], "8.4")
+            import vibeops.runtime_commands as runtime_commands
+
+            with patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-fresh.conf")]):
+                args = argparse.Namespace(
+                    app_name="fresh",
+                    main_domain="fresh.example.com",
+                    db_suffix=None,
+                    php=None,
+                    mysql_service="mysql84",
+                    alias=None,
+                    aliases=None,
+                    public_dir="",
+                    php_entrypoint="auto",
+                    no_index=True,
+                    no_reload=True,
+                    uid=None,
+                    no_mysql=True,
+                    mysql_password=None,
+                )
+                app_commands.cmd_app_create(args)
+                self.assertEqual(identity.call_args[0][1], "8.4")
 
     def test_app_create_explicit_migration_allowed(self) -> None:
         db = _shop_db("8.5")
@@ -333,32 +339,35 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(app_commands, "mkdir"),
             patch.object(app_commands, "app_document_root", return_value=Path("/tmp/home/shop/www")),
             patch.object(app_commands, "apply_app_mysql_metadata"),
-            patch.object(app_commands, "render_app_vhost", return_value=Path("/tmp/app-shop.conf")),
             patch.object(app_commands, "save_db"),
             patch.object(app_commands, "initialize_app_permissions"),
             patch.object(app_commands, "nginx_reload"),
             patch.object(app_commands, "info"),
             patch.object(app_commands, "rel", side_effect=lambda p: str(p)),
             patch.object(app_commands, "upsert_timestamp"),
+            patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-shop.conf")),
         ):
-            args = argparse.Namespace(
-                app_name="shop",
-                main_domain="shop.example.com",
-                db_suffix=None,
-                php="8.4",
-                mysql_service="mysql84",
-                alias=None,
-                aliases=None,
-                public_dir="",
-                php_entrypoint="auto",
-                no_index=True,
-                no_reload=True,
-                uid=None,
-                no_mysql=True,
-                mysql_password=None,
-            )
-            app_commands.cmd_app_create(args)
-            self.assertEqual(identity.call_args[0][1], "8.4")
+            import vibeops.runtime_commands as runtime_commands
+
+            with patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-shop.conf")]):
+                args = argparse.Namespace(
+                    app_name="shop",
+                    main_domain="shop.example.com",
+                    db_suffix=None,
+                    php="8.4",
+                    mysql_service="mysql84",
+                    alias=None,
+                    aliases=None,
+                    public_dir="",
+                    php_entrypoint="auto",
+                    no_index=True,
+                    no_reload=True,
+                    uid=None,
+                    no_mysql=True,
+                    mysql_password=None,
+                )
+                app_commands.cmd_app_create(args)
+                self.assertEqual(identity.call_args[0][1], "8.4")
 
 
 if __name__ == "__main__":

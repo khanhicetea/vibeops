@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator
@@ -64,6 +65,66 @@ CRON_LOCK_RE = JOB_RE
 
 class StackError(RuntimeError):
     pass
+
+
+# Managed relative paths under a generated root (used for stale cleanup).
+GENERATED_MANAGED_GLOBS = (
+    "nginx/vhosts/*.conf",
+    "php/versions/*/users.d/*.env",
+    "php/versions/*/pool.d/*.conf",
+    "cron/php*/jobs/*.cron",
+    "cron/php*/.supercronic.cron",
+    "cron/php*/.logrotate.conf",
+)
+
+# Journal schema for render transactions (local, versioned).
+RENDER_TXN_JOURNAL_VERSION = 1
+RENDER_TXN_DIR_PREFIX = ".render-txn-"
+
+
+@dataclass(frozen=True)
+class RenderContext:
+    """Destination roots for generated service config and MySQL option files.
+
+    Live render uses ``runtime/generated`` and ``runtime/secrets/mysql``. Staging
+    render points these at a temporary tree under the same filesystem so
+    ``os.replace`` stays atomic during promotion.
+    """
+
+    generated_dir: Path
+    secrets_dir: Path
+
+    def nginx_vhost_dir(self) -> Path:
+        return self.generated_dir / "nginx" / "vhosts"
+
+    def php_versions_dir(self) -> Path:
+        return self.generated_dir / "php" / "versions"
+
+    def php_version_config_dir(self, version: str) -> Path:
+        return self.php_versions_dir() / version
+
+    def cron_runtime_dir(self) -> Path:
+        return self.generated_dir / "cron"
+
+    def cron_dir_for(self, version: str) -> Path:
+        return self.cron_runtime_dir() / php_service_for(version)
+
+    def cron_jobs_dir_for(self, version: str) -> Path:
+        return self.cron_dir_for(version) / "jobs"
+
+    def app_vhost_path(self, app_name: str) -> Path:
+        return self.nginx_vhost_dir() / f"app-{app_name}.conf"
+
+    def proxy_vhost_path(self, domain: str) -> Path:
+        return self.nginx_vhost_dir() / f"{domain}.conf"
+
+    def mysql_root_option_file(self, service: str) -> Path:
+        service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
+        return self.secrets_dir / f"{service}-root.cnf"
+
+
+def live_render_context() -> RenderContext:
+    return RenderContext(generated_dir=GENERATED_DIR, secrets_dir=MYSQL_SECRETS_DIR)
 
 
 def now() -> str:
@@ -131,12 +192,14 @@ def mysql_root_password(env: dict[str, str], service: str) -> str | None:
     return env.get(f"{service.upper()}_ROOT_PASSWORD") or env.get("MYSQL_ROOT_PASSWORD")
 
 
-def mysql_root_option_file(service: str) -> Path:
+def mysql_root_option_file(service: str, ctx: RenderContext | None = None) -> Path:
+    if ctx is not None:
+        return ctx.mysql_root_option_file(service)
     service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
     return MYSQL_SECRETS_DIR / f"{service}-root.cnf"
 
 
-def render_mysql_root_option_files() -> list[Path]:
+def render_mysql_root_option_files(ctx: RenderContext | None = None) -> list[Path]:
     """Write root client option files for local container administration."""
     env = stack_env()
     rendered: list[Path] = []
@@ -146,7 +209,7 @@ def render_mysql_root_option_files() -> list[Path]:
             continue
         # MySQL option files accept quoted values; escape their two special chars.
         escaped = password.replace("\\", "\\\\").replace('"', '\\"')
-        path = mysql_root_option_file(service)
+        path = mysql_root_option_file(service, ctx)
         write_text_atomic(path, f'[client]\nuser=root\npassword="{escaped}"\nprotocol=socket\n', 0o600)
         rendered.append(path)
     return rendered
@@ -164,16 +227,20 @@ def php_cli_service_for(version: str) -> str:
     return php_service_for(version) + "-cli"
 
 
-def php_version_config_dir(version: str) -> Path:
+def php_version_config_dir(version: str, ctx: RenderContext | None = None) -> Path:
+    if ctx is not None:
+        return ctx.php_version_config_dir(version)
     return PHP_VERSIONS_DIR / version
 
 
-def cron_dir_for(version: str) -> Path:
+def cron_dir_for(version: str, ctx: RenderContext | None = None) -> Path:
+    if ctx is not None:
+        return ctx.cron_dir_for(version)
     return CRON_RUNTIME_DIR / php_service_for(version)
 
 
-def cron_jobs_dir_for(version: str) -> Path:
-    return cron_dir_for(version) / "jobs"
+def cron_jobs_dir_for(version: str, ctx: RenderContext | None = None) -> Path:
+    return cron_dir_for(version, ctx) / "jobs"
 
 
 def empty_db() -> dict[str, Any]:
@@ -350,12 +417,19 @@ def template_text(path: Path, values: dict[str, Any]) -> str:
 def generated_header_for(path: Path) -> str:
     # PHP 8.5's FPM INI parser rejects leading '#' comments in pool files.
     # Use ';' only for generated php-fpm pool fragments; keep '#' for nginx,
-    # shell env, SQL, and cron files.
+    # shell env, SQL, and cron files. Path-based (not live-root) so staging works.
+    if path.parent.name == "pool.d" and path.suffix == ".conf":
+        return PHP_FPM_GENERATED_HEADER
+    return GENERATED_HEADER
+
+
+def content_looks_generated(path: Path) -> bool:
+    """True when a file carries the VibeOps generated notice (managed marker)."""
     try:
-        path.resolve().relative_to(PHP_VERSIONS_DIR.resolve())
-    except ValueError:
-        return GENERATED_HEADER
-    return PHP_FPM_GENERATED_HEADER if path.parent.name == "pool.d" and path.suffix == ".conf" else GENERATED_HEADER
+        head = path.read_text(errors="replace")[:400]
+    except OSError:
+        return False
+    return GENERATED_NOTICE in head
 
 
 def write_template(path: Path, template: Path, values: dict[str, Any], mode: int | None = None, *, generated: bool = False) -> None:
@@ -502,8 +576,8 @@ def php_reload(service: str, username: str, no_reload: bool = False) -> None:
         info(f"{service} is not running; run/restart it to create the Linux user inside that PHP container.")
 
 
-def rebuild_supercronic_crontab(php_version: str) -> Path:
-    cron_dir = cron_dir_for(php_version)
+def rebuild_supercronic_crontab(php_version: str, ctx: RenderContext | None = None) -> Path:
+    cron_dir = cron_dir_for(php_version, ctx)
     mkdir(cron_dir)
     combined = cron_dir / ".supercronic.cron"
     logrotate_config = cron_dir / ".logrotate.conf"
@@ -521,7 +595,7 @@ def rebuild_supercronic_crontab(php_version: str) -> Path:
     su root root
 }}
 """)
-    job_files = sorted(cron_jobs_dir_for(php_version).glob("*.cron"))
+    job_files = sorted(cron_jobs_dir_for(php_version, ctx).glob("*.cron"))
     lines = [
         "SHELL=/bin/sh",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -679,7 +753,9 @@ def container_document_root(app_name: str, public_dir: str | None = "") -> str:
     return f"{base}/{public_dir}" if public_dir else base
 
 
-def app_vhost_path(app_name: str) -> Path:
+def app_vhost_path(app_name: str, ctx: RenderContext | None = None) -> Path:
+    if ctx is not None:
+        return ctx.app_vhost_path(app_name)
     return NGINX_VHOST_DIR / f"app-{app_name}.conf"
 
 
@@ -876,34 +952,42 @@ def set_https_redirect(conf_path: Path, enabled: bool, *, quiet: bool = False) -
             info(("Enabled" if enabled else "Disabled") + f" HTTP to HTTPS redirect in vibeops/{rel(conf_path)}")
 
 
-def render_php_fallback(php_version: str) -> Path:
+def render_php_fallback(php_version: str, ctx: RenderContext | None = None) -> Path:
     php_version = validate(php_version, PHP_VERSION_RE, "PHP version")
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
-    mkdir(php_version_config_dir(php_version) / "pool.d")
-    fallback_path = php_version_config_dir(php_version) / "pool.d" / "zz-fallback.conf"
+    base = php_version_config_dir(php_version, ctx)
+    mkdir(base / "pool.d")
+    fallback_path = base / "pool.d" / "zz-fallback.conf"
     write_template(fallback_path, PHP_TEMPLATE_DIR / "fallback.conf.template", {"SOCKET_GROUP_NAME": socket_group_name}, generated=True)
     return fallback_path
 
 
-def render_app_identity(app: dict[str, Any]) -> None:
+def render_app_identity(app: dict[str, Any], ctx: RenderContext | None = None) -> None:
     app_name = validate(str(app.get("name", "")), APP_NAME_RE, "app_name")
     php_version = validate(str(app.get("php_version") or default_php_version()), PHP_VERSION_RE, "PHP version")
     php_service = php_service_for(php_version)
-    uid = int(app.get("uid") or read_uid_from_env(php_version_config_dir(php_version) / "users.d" / f"{app_name}.env") or read_uid_from_env(LEGACY_PHP_VERSIONS_DIR / php_version / "users.d" / f"{app_name}.env") or allocate_uid(app_name, None, {"apps": {app_name: app}}))
+    # Prefer recorded UID, then live/legacy identity files (not staging), then allocate.
+    uid = int(
+        app.get("uid")
+        or read_uid_from_env(PHP_VERSIONS_DIR / php_version / "users.d" / f"{app_name}.env")
+        or read_uid_from_env(LEGACY_PHP_VERSIONS_DIR / php_version / "users.d" / f"{app_name}.env")
+        or allocate_uid(app_name, None, {"apps": {app_name: app}})
+    )
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
-    mkdir(php_version_config_dir(php_version) / "users.d")
-    mkdir(php_version_config_dir(php_version) / "pool.d")
+    base = php_version_config_dir(php_version, ctx)
+    mkdir(base / "users.d")
+    mkdir(base / "pool.d")
     mkdir(PHP_SOCKET_DIR / php_service)
     mkdir(PHP_LOG_DIR / php_service)
-    render_php_fallback(php_version)
+    render_php_fallback(php_version, ctx)
     public_dir = validate_public_dir(str(app.get("public_dir", "")))
-    write_template(php_version_config_dir(php_version) / "users.d" / f"{app_name}.env", PHP_TEMPLATE_DIR / "user.env.template", {
+    write_template(base / "users.d" / f"{app_name}.env", PHP_TEMPLATE_DIR / "user.env.template", {
         "USERNAME": app_name,
         "UID": uid,
         "GID": uid,
         "PUBLIC_DIR": public_dir,
     }, generated=True)
-    write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
+    write_template(base / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
         "USERNAME": app_name,
         "SOCKET_GROUP_NAME": socket_group_name,
         "PHP_VERSION": php_version,
@@ -916,11 +1000,11 @@ def render_app_identity(app: dict[str, Any]) -> None:
     app["root"] = rel(app_document_root(app_name, public_dir))
 
 
-def render_app_vhost(app: dict[str, Any]) -> Path:
+def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> Path:
     app_name = str(app["name"])
     domains = [str(d) for d in (app.get("domains") or [app.get("main_domain")]) if d]
     server_names = " ".join(domains)
-    conf_path = app_vhost_path(app_name)
+    conf_path = app_vhost_path(app_name, ctx)
     public_dir = validate_public_dir(str(app.get("public_dir", "")))
     php_service = app.get("php_service") or php_service_for(str(app.get("php_version") or default_php_version()))
     php_entrypoint = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
@@ -936,5 +1020,6 @@ def render_app_vhost(app: dict[str, Any]) -> Path:
         "DOCUMENT_ROOT": container_document_root(app_name, public_dir),
     })
     apply_vhost_tls(conf_path, app)
-    app["vhost"] = rel(conf_path)
+    # State always records the live path so stack.json stays mount-stable.
+    app["vhost"] = rel(app_vhost_path(app_name))
     return conf_path

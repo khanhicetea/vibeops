@@ -38,10 +38,27 @@ runtime/                    # local state/generated/live data
 `runtime/state/stack.json` is the source of truth for apps, domains, proxy vhosts, TLS mode, and cron jobs. Files under `runtime/generated/` are disposable artifacts and should not be edited directly.
 
 ```bash
-./manage.py render          # regenerate runtime/generated from state
-./manage.py apply           # render, then validate/reload running services
+./manage.py render          # stage + promote a complete generation into runtime/generated
+./manage.py apply           # render, validate running services, then reload
 ./manage.py state migrate   # move/upgrade legacy ./stack.json
 ```
+
+Render and apply are transactional. Top-level bind-mounted directories (`runtime/generated/`, `runtime/secrets/mysql/`) stay in place; only file contents are replaced atomically. Lifecycle:
+
+```text
+state lock -> stage complete generation -> atomic per-file promotion -> validate all -> reload -> finalize
+                                                    \-> rollback on failure
+```
+
+Details:
+
+- **Stage**: build the full candidate tree under `runtime/.render-txn-*/staging/` (same filesystem as live destinations).
+- **Promote**: per-file snapshot + temp write + `fsync` + `os.replace`; stale managed files are removed only after every candidate exists.
+- **Validate** (`apply`): `nginx -t`, `php-fpm -tt`, and `supercronic -test` for affected running services before any reload signal.
+- **Rollback**: on stage, promote, or validation failure, restore previous bytes and modes from the transaction backup.
+- **Reload failure**: if validation succeeded but a reload signal fails, generated files stay at the validated generation; retry the service reload (do not auto-roll back).
+- **Unmanaged files**: local files under managed globs that lack the VibeOps generated notice are left in place and reported.
+- **Abandoned transactions**: a leftover mid-promotion journal is restored on the next render/apply when the journal is deterministic.
 
 Users should customize Docker Compose with ignored override files instead of editing `compose.yml`:
 
@@ -60,7 +77,7 @@ Rendered `users.d/<app>.env` metadata records `USERNAME`, `UID`, matching privat
 Filesystem policy is app-scoped: app creation initializes its small tree, while `./manage.py permissions check <app>` reports drift and `./manage.py permissions fix <app> [--recursive]` repairs existing trees explicitly. Private app paths remain `app:app`; the selected document root is setgid and group-readable/traversable by Nginx. CLI and cron commands run with the app's private UID/GID and `umask 0027`, so new public files inherit the Nginx-readable group. The reload lifecycle is:
 
 ```text
-render -> identity sync -> php-fpm -tt -> reload
+stage -> promote -> identity sync -> php-fpm -tt (validate all) -> reload
 ```
 
 The non-Docker test suite validates command construction and safe validation on macOS; Linux container ownership, socket access, and Nginx access still require Linux/CI verification.

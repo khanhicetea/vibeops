@@ -64,13 +64,16 @@ def _create_args(
 
 def _app_create_side_effect_patches() -> list:
     """Common cmd_app_create patches after MySQL readiness succeeds."""
+    import vibeops.runtime_commands as runtime_commands
+
     return [
         patch.object(app_commands, "require_mysql_ready_for_sql", return_value="mysql84"),
         patch.object(app_commands, "assert_domain_free"),
         patch.object(app_commands, "mkdir"),
         patch.object(app_commands, "app_document_root", return_value=Path("/tmp/home/shop/www")),
         patch.object(app_commands, "apply_app_mysql_metadata"),
-        patch.object(app_commands, "render_app_vhost", return_value=Path("/tmp/app-shop.conf")),
+        patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-shop.conf")]),
+        patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-shop.conf")),
         patch.object(app_commands, "initialize_app_permissions"),
         patch.object(app_commands, "nginx_reload"),
         patch.object(app_commands, "info"),
@@ -172,22 +175,24 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             patch.object(app_commands, "ensure_mysql_database") as ensure_db,
             patch.object(app_commands, "mysql_root_exec_sql") as sql,
             patch.object(app_commands, "save_db") as save_db,
-            patch.object(app_commands, "render_app_vhost") as vhost,
             patch.object(app_commands, "write_template") as write_template,
             patch.object(app_commands, "mkdir") as mkdir,
         ):
-            with self.assertRaisesRegex(helpers.StackError, r"not running"):
-                app_commands.cmd_app_create(_create_args())
-            ready.assert_called_once_with("mysql84")
-            identity.assert_not_called()
-            ensure_db.assert_not_called()
-            sql.assert_not_called()
-            save_db.assert_not_called()
-            vhost.assert_not_called()
-            write_template.assert_not_called()
-            mkdir.assert_not_called()
-            self.assertEqual(app.get("databases"), before_databases)
-            self.assertEqual(app.get("database_services"), before_services)
+            import vibeops.runtime_commands as runtime_commands
+
+            with patch.object(runtime_commands, "apply_generated_config") as render_txn:
+                with self.assertRaisesRegex(helpers.StackError, r"not running"):
+                    app_commands.cmd_app_create(_create_args())
+                ready.assert_called_once_with("mysql84")
+                identity.assert_not_called()
+                ensure_db.assert_not_called()
+                sql.assert_not_called()
+                save_db.assert_not_called()
+                render_txn.assert_not_called()
+                write_template.assert_not_called()
+                mkdir.assert_not_called()
+                self.assertEqual(app.get("databases"), before_databases)
+                self.assertEqual(app.get("database_services"), before_services)
 
     def test_missing_root_config_leaves_database_state_unchanged(self) -> None:
         db = _empty_db()

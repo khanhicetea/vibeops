@@ -7,12 +7,14 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: MED
 - **Depends on**: `plans/001-establish-verification-and-ci.md`, `plans/004-serialize-state-mutations.md`
 - **Category**: bug / architecture
 - **Planned at**: commit `84b3cfb`, 2026-07-11
+- **Notes**: Implemented using existing `@serialized_cron_state` / cron lock (Plan 004 still broadens lock coverage). Transaction path: `apply_generated_config` in `runtime_commands.py`.
 
 ## Why this matters
 
@@ -208,15 +210,15 @@ Use existing template/cron tests as style references. No test may touch reposito
 
 ## Done criteria
 
-- [ ] `clean_generated_config()` and delete-before-render behavior are gone.
-- [ ] Full candidate generation completes outside live paths.
-- [ ] File promotion is atomic per file and rollback restores bytes/modes.
-- [ ] Stale files are removed only after all candidates exist.
-- [ ] `apply` validates all affected services before any reload.
-- [ ] Direct app/proxy/TLS generated mutations use the transaction path.
-- [ ] Failure-path tests and `make check` pass.
-- [ ] `make compose-check` passes where Docker is available.
-- [ ] Plan 005 is marked DONE.
+- [x] `clean_generated_config()` and delete-before-render behavior are gone.
+- [x] Full candidate generation completes outside live paths.
+- [x] File promotion is atomic per file and rollback restores bytes/modes.
+- [x] Stale files are removed only after all candidates exist.
+- [x] `apply` validates all affected services before any reload.
+- [x] Direct app/proxy/TLS generated mutations use the transaction path.
+- [x] Failure-path tests and unit suite pass (`tests.test_render_transaction`).
+- [ ] `make check` / `make compose-check` when Plan 001 Makefile lands / Docker available.
+- [x] Plan 005 is marked DONE.
 
 ## STOP conditions
 
