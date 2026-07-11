@@ -119,12 +119,21 @@ class WizardUsesPromptPasswordTests(unittest.TestCase):
             create.assert_not_called()
 
 
+def _force_numbered_choice():
+    """Context that forces the non-TTY number prompt path (for unit tests)."""
+    return mock.patch("sys.stdin.isatty", return_value=False)
+
+
 class PromptChoiceZeroTests(unittest.TestCase):
     def test_shows_zero_back_and_accepts_zero(self) -> None:
         from vibeops.runtime_commands import prompt_choice
 
         out = io.StringIO()
-        with mock.patch("builtins.input", return_value="0") as inp, mock.patch("sys.stdout", out):
+        with (
+            _force_numbered_choice(),
+            mock.patch("builtins.input", return_value="0") as inp,
+            mock.patch("sys.stdout", out),
+        ):
             result = prompt_choice("Action", ["One", "Two"])
         self.assertEqual(result, "Back")
         text = out.getvalue()
@@ -137,7 +146,11 @@ class PromptChoiceZeroTests(unittest.TestCase):
         from vibeops.runtime_commands import prompt_choice
 
         out = io.StringIO()
-        with mock.patch("builtins.input", return_value="0"), mock.patch("sys.stdout", out):
+        with (
+            _force_numbered_choice(),
+            mock.patch("builtins.input", return_value="0"),
+            mock.patch("sys.stdout", out),
+        ):
             result = prompt_choice("What do you want to do?", ["Create app"], zero="Quit")
         self.assertEqual(result, "Quit")
         self.assertIn("0 - Quit", out.getvalue())
@@ -145,15 +158,130 @@ class PromptChoiceZeroTests(unittest.TestCase):
     def test_selects_numbered_choice(self) -> None:
         from vibeops.runtime_commands import prompt_choice
 
-        with mock.patch("builtins.input", return_value="2"), mock.patch("sys.stdout", io.StringIO()):
+        with (
+            _force_numbered_choice(),
+            mock.patch("builtins.input", return_value="2"),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
             self.assertEqual(prompt_choice("Pick", ["A", "B", "C"]), "B")
 
     def test_prompt_pick_raises_wizard_back_on_zero(self) -> None:
         from vibeops.runtime_commands import WizardBack, prompt_pick
 
-        with mock.patch("builtins.input", return_value="0"), mock.patch("sys.stdout", io.StringIO()):
+        with (
+            _force_numbered_choice(),
+            mock.patch("builtins.input", return_value="0"),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
             with self.assertRaises(WizardBack):
                 prompt_pick("PHP version", ["8.4", "8.5"])
+
+
+class PromptChoiceArrowTests(unittest.TestCase):
+    def _run_interactive(
+        self,
+        keys: list[str],
+        choices: list[str],
+        *,
+        label: str = "Pick",
+        default: str | None = None,
+        zero: str | None = "Back",
+    ):
+        from vibeops import runtime_commands
+
+        key_iter = iter(keys)
+
+        def fake_read_key() -> str:
+            try:
+                return next(key_iter)
+            except StopIteration as exc:
+                raise EOFError from exc
+
+        out = io.StringIO()
+        with (
+            mock.patch.object(runtime_commands, "_read_menu_key", side_effect=fake_read_key),
+            mock.patch("termios.tcgetattr", return_value=object()),
+            mock.patch("termios.tcsetattr"),
+            mock.patch("tty.setcbreak"),
+            mock.patch.object(runtime_commands.sys, "stdout", out),
+            mock.patch.object(runtime_commands.sys.stdin, "fileno", return_value=0),
+        ):
+            result = runtime_commands._prompt_choice_interactive(label, choices, default, zero)
+        return result, out.getvalue()
+
+    def test_enter_selects_highlighted_default(self) -> None:
+        result, text = self._run_interactive(["enter"], ["A", "B", "C"], default="B")
+        self.assertEqual(result, "B")
+        self.assertIn("↑↓", text)
+        self.assertIn("> 2 - B", text)
+
+    def test_down_then_enter_moves_selection(self) -> None:
+        # zero=Back at index 0; default none starts on first real option (A).
+        result, _text = self._run_interactive(["down", "enter"], ["A", "B"])
+        self.assertEqual(result, "B")
+
+    def test_up_wraps_to_last(self) -> None:
+        result, _text = self._run_interactive(["up", "enter"], ["A", "B"], zero=None)
+        self.assertEqual(result, "B")
+
+    def test_digit_instant_select(self) -> None:
+        result, _text = self._run_interactive(["2"], ["A", "B", "C"])
+        self.assertEqual(result, "B")
+
+    def test_digit_zero_selects_back(self) -> None:
+        result, _text = self._run_interactive(["0"], ["A", "B"])
+        self.assertEqual(result, "Back")
+
+    def test_multi_digit_buffer_and_enter(self) -> None:
+        # 10+ choices disables instant digit select; type "10" + enter.
+        choices = [f"item{i}" for i in range(1, 12)]
+        result, text = self._run_interactive(["1", "0", "enter"], choices, zero=None)
+        self.assertEqual(result, "item10")
+        self.assertIn("number: 10", text)
+
+    def test_prompt_choice_uses_arrows_when_tty(self) -> None:
+        from vibeops import runtime_commands
+
+        with (
+            mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=True),
+            mock.patch.object(runtime_commands.sys.stdout, "isatty", return_value=True),
+            mock.patch.object(runtime_commands.sys.stdin, "fileno", return_value=0),
+            mock.patch.object(
+                runtime_commands,
+                "_prompt_choice_interactive",
+                return_value="from-arrows",
+            ) as interactive,
+            mock.patch.object(
+                runtime_commands,
+                "_prompt_choice_numbered",
+                return_value="from-numbers",
+            ) as numbered,
+        ):
+            result = runtime_commands.prompt_choice("Pick", ["A", "B"])
+        self.assertEqual(result, "from-arrows")
+        interactive.assert_called_once()
+        numbered.assert_not_called()
+
+    def test_prompt_choice_uses_numbers_when_not_tty(self) -> None:
+        from vibeops import runtime_commands
+
+        with (
+            mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=False),
+            mock.patch.object(
+                runtime_commands,
+                "_prompt_choice_numbered",
+                return_value="from-numbers",
+            ) as numbered,
+            mock.patch.object(
+                runtime_commands,
+                "_prompt_choice_interactive",
+                return_value="from-arrows",
+            ) as interactive,
+        ):
+            result = runtime_commands.prompt_choice("Pick", ["A", "B"])
+        self.assertEqual(result, "from-numbers")
+        numbered.assert_called_once()
+        interactive.assert_not_called()
 
 
 if __name__ == "__main__":
