@@ -190,7 +190,7 @@ location ~ \.php$ { return 404; }
 
 The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). Supplying a database suffix requires the selected MySQL service to be ready; the command fails rather than recording a skipped database. `--no-mysql` cannot be combined with a database suffix. The app's MySQL user is `shop` on that service and has prefix grants for `shop_*` databases. MySQL grants escape wildcard characters in app names before granting access, so valid app names containing `_` do not broaden privileges.
 
-Credentials are written to `runtime/home/<app>/.credentials/<mysql_service>.env` (mode 600). That file contains both `MYSQL_*` and Laravel-style `DB_*` keys. The password is not printed to stdout; open the credentials file when you need it. `DB_DATABASE` / full name is `{app}_{db_suffix}` when you pass a database suffix to `app create` or `db create`.
+MySQL credentials are written to `runtime/home/<app>/.credentials/<mysql_service>.env` (mode 600). Redis credentials are written separately to `runtime/home/<app>/.credentials/redis.env` (mode 600). Passwords are not printed to stdout. Shared mode is the default (`REDIS_APP_ACL=false`) and uses the stack's optional `REDIS_PASSWORD`, while retaining a per-app client prefix. Set `REDIS_APP_ACL=true` plus `REDIS_ADMIN_PASSWORD` to generate a unique user/password per app and enforce keys and Pub/Sub channels matching `<app>:*` server-side. Client-side prefix configuration is required in either mode. `DB_DATABASE` / full name is `{app}_{db_suffix}` when you pass a database suffix to `app create` or `db create`.
 
 PHP app connection values:
 
@@ -201,7 +201,13 @@ DB_DATABASE=shop_app
 DB_USERNAME=shop
 REDIS_HOST=redis
 REDIS_PORT=6379
+REDIS_USERNAME=shop
+REDIS_PASSWORD=<from redis.env>
+REDIS_DB=0
+REDIS_PREFIX=shop:
 ```
+
+In shared mode, `REDIS_USERNAME` is empty and all apps authenticate with `REDIS_PASSWORD` (or no authentication if it is empty). Modern phpredis and Predis clients support ACL usernames. In ACL mode, an older password-only integration can use `REDIS_LEGACY_PASSWORD`; this enables the shared `default` user and weakens isolation. Changing ACL mode or its initial admin/legacy settings requires recreating Redis; changing `REDIS_ADMIN_PASSWORD` after ACL initialization requires explicit ACL rotation.
 
 ## App service configuration customization
 
@@ -489,6 +495,7 @@ MySQL error and slow-query logs are under `runtime/logs/<mysql_service>/` (`erro
 - HTTP/3 (QUIC) is enabled on generated HTTPS vhosts.
 - Global `proxy_cache` and `fastcgi_cache` zones are declared for vhosts to opt in.
 - PHP, MySQL, Redis stay isolated on a Compose backend network.
+- Redis supports shared compatibility mode by default and opt-in per-app ACL isolation with `REDIS_APP_ACL=true`. Logical DB 0 and per-app client prefixes are used in both modes.
 - MySQL/Redis are not exposed with host ports by default.
 - MySQL keeps per-session sort/read buffers at server defaults so concurrent PHP connections do not multiply multi-megabyte allocations; size `innodb_buffer_pool_size` for the host instead.
 - Server defaults use utf8mb4 / utf8mb4_unicode_ci and `max_allowed_packet=64M` for dumps/migrations. First restart after redo capacity changes can take longer while redo files resize.

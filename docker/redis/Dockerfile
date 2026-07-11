@@ -2,7 +2,10 @@ FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+COPY docker-entrypoint.sh /usr/local/bin/vibeops-redis-entrypoint
+
 RUN set -eux; \
+    chmod 755 /usr/local/bin/vibeops-redis-entrypoint; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -14,4 +17,4 @@ RUN set -eux; \
 USER redis
 WORKDIR /data
 
-CMD ["redis-server"]
+ENTRYPOINT ["vibeops-redis-entrypoint"]

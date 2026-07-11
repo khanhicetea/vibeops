@@ -21,7 +21,7 @@ x-php-common: &php-common
     mysql84:
       condition: service_healthy
     redis:
-      condition: service_started
+      condition: service_healthy
   networks:
     - backend
 
@@ -247,9 +247,21 @@ services:
       context: ./docker/redis
     restart: unless-stopped
     logging: *default-logging
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_APP_ACL: ${REDIS_APP_ACL:-false}
+      REDIS_ADMIN_PASSWORD: ${REDIS_ADMIN_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_LEGACY_PASSWORD: ${REDIS_LEGACY_PASSWORD:-}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+      REDIS_MAXMEMORY_POLICY: ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ \"$$REDIS_APP_ACL\" = true ]; then REDISCLI_AUTH=\"$$REDIS_ADMIN_PASSWORD\" redis-cli --user admin ping; elif [ -n \"$$REDIS_PASSWORD\" ]; then REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping; else redis-cli ping; fi | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks:
       - backend
 

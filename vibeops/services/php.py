@@ -11,6 +11,7 @@ from vibeops.utils.errors import die, info
 from vibeops.os.fsutil import mkdir
 from vibeops.services.app_config import selected_template_path
 from vibeops.services.mysql import apply_app_mysql_metadata, create_mysql_user
+from vibeops.services.redis import apply_app_redis_metadata, ensure_redis_user
 from vibeops.utils.paths import DOCROOT_NAME, HOME_DIR, LEGACY_PHP_VERSIONS_DIR, PHP_LOG_DIR, PHP_SOCKET_DIR, PHP_TEMPLATE_DIR, PHP_VERSIONS_DIR, RenderContext, rel
 from vibeops.os.process import run, service_running
 from vibeops.services.rendering import write_template
@@ -139,6 +140,7 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     credential_path = None
     if not no_mysql:
         mysql_created, credential_path = create_mysql_user(app_name, mysql_password, mysql_service)
+    redis_created, redis_credential_path = ensure_redis_user(app_name)
 
     app["home"] = rel(app_home(app_name))
     app["root"] = rel(app_document_root(app_name, public_dir))
@@ -148,8 +150,11 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     app.setdefault("databases", [])
     app.setdefault("tls", {"mode": "self-signed"})
     apply_app_mysql_metadata(app, app_name, mysql_service, credential_path)
+    apply_app_redis_metadata(app, app_name, redis_credential_path)
     if mysql_created:
         app["mysql_user"] = True
+    if redis_created:
+        app["redis_acl_user"] = True
     upsert_timestamp(app)
     return app
 
