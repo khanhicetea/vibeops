@@ -77,6 +77,7 @@ runtime/                      # mutable/generated/live data
     mysql84/                  # mysqld error + slow query logs (per MySQL service)
   certs/                      # externally managed cert files
   backups/                    # logical dumps (mysql57/mysql84/mysql97)
+  secrets/mysql/              # generated mode-600 MySQL admin option files
 ```
 
 ## Quick start
@@ -364,6 +365,8 @@ A recursive repair can scan a large tree. It keeps private paths private and rea
 ## MySQL databases and backups
 
 Logical dumps go under `runtime/backups/<mysql_service>/` (mounted at `/backups` in each MySQL container). Prefer these over ad-hoc `docker compose exec` with root passwords on the host process list.
+
+`./manage.py render` generates ignored, mode-600 root client option files under `runtime/secrets/mysql/` from the long random root password in `.env`. Each MySQL service mounts only its own file read-only at `/run/secrets/vibeops-root.cnf`; health checks and `manage.py` administrative commands use that file, so passwords are not passed in client command arguments. Re-run `./manage.py render` and recreate the affected MySQL container after changing a root password. Keep `.env` as the recovery source and never commit or copy these option files into images.
 
 ```bash
 ./manage.py db list

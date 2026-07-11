@@ -36,6 +36,7 @@ PHP_VERSIONS_DIR = PHP_GENERATED_DIR / "versions"
 LEGACY_PHP_VERSIONS_DIR = PHP_CONFIG_DIR / "versions"
 PHP_TEMPLATE_DIR = PHP_CONFIG_DIR / "templates"
 MYSQL_TEMPLATE_DIR = CONFIG_DIR / "mysql" / "templates"
+MYSQL_SECRETS_DIR = RUNTIME_DIR / "secrets" / "mysql"
 NGINX_TEMPLATE_DIR = CONFIG_DIR / "nginx" / "templates"
 NGINX_VHOST_DIR = GENERATED_DIR / "nginx" / "vhosts"
 CERTS_DIR = RUNTIME_DIR / "certs"
@@ -128,6 +129,27 @@ def default_mysql_service() -> str:
 
 def mysql_root_password(env: dict[str, str], service: str) -> str | None:
     return env.get(f"{service.upper()}_ROOT_PASSWORD") or env.get("MYSQL_ROOT_PASSWORD")
+
+
+def mysql_root_option_file(service: str) -> Path:
+    service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
+    return MYSQL_SECRETS_DIR / f"{service}-root.cnf"
+
+
+def render_mysql_root_option_files() -> list[Path]:
+    """Write root client option files for local container administration."""
+    env = stack_env()
+    rendered: list[Path] = []
+    for service in ("mysql57", "mysql84", "mysql97"):
+        password = mysql_root_password(env, service)
+        if not password:
+            continue
+        # MySQL option files accept quoted values; escape their two special chars.
+        escaped = password.replace("\\", "\\\\").replace('"', '\\"')
+        path = mysql_root_option_file(service)
+        write_text_atomic(path, f'[client]\nuser=root\npassword="{escaped}"\nprotocol=socket\n', 0o600)
+        rendered.append(path)
+    return rendered
 
 
 def php_service_for(version: str) -> str:
@@ -376,11 +398,7 @@ SYSTEM_MYSQL_DATABASES = frozenset({"mysql", "sys", "performance_schema", "infor
 
 
 def mysql_root_exec_sql(sql: str, *, service: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run SQL as MySQL root inside the container using container env password.
-
-    Relies on MYSQL_ROOT_PASSWORD already injected by compose into the mysql service.
-    Does not pass the password on the host process command line.
-    """
+    """Run SQL as MySQL root using the protected client option file."""
     service = validate(service or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
     if not service_running(service):
         die(f"{service} service is not running")
@@ -388,7 +406,7 @@ def mysql_root_exec_sql(sql: str, *, service: str | None = None, check: bool = T
         [
             "docker", "compose", "exec", "-T", service,
             "sh", "-lc",
-            'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --batch --raw',
+            'mysql --defaults-extra-file=/run/secrets/vibeops-root.cnf --batch --raw',
         ],
         input_text=sql,
         check=False,
@@ -409,7 +427,7 @@ def mysql_admin_ping(service: str | None = None) -> bool:
         [
             "docker", "compose", "exec", "-T", service,
             "sh", "-lc",
-            'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent',
+            'mysqladmin --defaults-extra-file=/run/secrets/vibeops-root.cnf ping --silent',
         ],
         check=False,
         capture=True,

@@ -47,6 +47,9 @@ compose.d/*.yml
 /runtime/generated/cron/php*/.supercronic.cron
 /runtime/generated/cron/php*/.logrotate.conf
 
+/runtime/secrets/*
+!/runtime/secrets/.gitkeep
+
 /runtime/custom/*
 !/runtime/custom/.gitkeep
 !/runtime/custom/nginx/

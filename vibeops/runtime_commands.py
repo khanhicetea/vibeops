@@ -122,7 +122,7 @@ def clean_generated_config() -> None:
 
 def render_all(db: dict[str, Any]) -> list[Path]:
     clean_generated_config()
-    rendered: list[Path] = []
+    rendered: list[Path] = render_mysql_root_option_files()
     php_versions = set(available_php_versions())
     php_versions.update(str(app.get("php_version") or default_php_version()) for app in db.get("apps", {}).values() if isinstance(app, dict))
     for version in sorted(php_versions):

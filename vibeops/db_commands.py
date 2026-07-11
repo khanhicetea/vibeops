@@ -16,8 +16,9 @@ def _require_mysql_service(service: str) -> str:
     service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
     if not service_running(service):
         die(f"{service} service is not running")
-    if not mysql_root_password(stack_env(), service):
-        die(f"Missing root password for {service}; set {service.upper()}_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD in .env")
+    option_file = mysql_root_option_file(service)
+    if not option_file.is_file():
+        die(f"Missing protected MySQL option file vibeops/{rel(option_file)}; run ./manage.py render")
     return service
 
 
@@ -46,7 +47,7 @@ def mysql_root_dump(mysqldump_args: list[str], *, service: str, output_path: Pat
     cmd = [
         "docker", "compose", "exec", "-T", service,
         "sh", "-lc",
-        f'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --events --default-character-set=utf8mb4 {quoted}',
+        f'mysqldump --defaults-extra-file=/run/secrets/vibeops-root.cnf --single-transaction --routines --triggers --events --default-character-set=utf8mb4 {quoted}',
     ]
     with output_path.open("w", encoding="utf-8") as fh:
         cp = subprocess.run(cmd, cwd=str(ROOT), stdout=fh, stderr=subprocess.PIPE, text=True)
@@ -127,7 +128,7 @@ def cmd_db_shell(args: argparse.Namespace) -> None:
         [
             "docker", "compose", "exec", service,
             "sh", "-lc",
-            'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"',
+            'mysql --defaults-extra-file=/run/secrets/vibeops-root.cnf',
         ],
         cwd=str(ROOT),
         check=False,
