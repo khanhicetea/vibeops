@@ -3,6 +3,7 @@
 set -eu
 
 SOCKET_GROUP_NAME="${SOCKET_GROUP_NAME:-nginxsock}"
+SOCKET_GID="${SOCKET_GID:-101}"
 PHP_USERS_DIR="${PHP_USERS_DIR:-/usr/local/etc/php/users.d}"
 PHP_HOME_ROOT="${PHP_HOME_ROOT:-/home}"
 IDENTITY_SYNC="${PHP_IDENTITY_SYNC:-php-identity-sync}"
@@ -66,15 +67,17 @@ if [ "$dry_run" = false ]; then
   "$IDENTITY_SYNC" "$app" || fail "identity synchronization failed"
 fi
 
+# Compare by numeric UID/GID. SOCKET_GID may intentionally duplicate another
+# image group (groupadd -o), so name lookups via stat %G are ambiguous.
 check_path() {
-  path="$1"; owner="$2"; group="$3"; mode="$4"
+  path="$1"; expected_uid="$2"; expected_gid="$3"; mode="$4"; owner_label="$5"; group_label="$6"
   checked=$((checked + 1))
   [ -e "$path" ] || { say "missing: $path"; failed=$((failed + 1)); return; }
-  actual_owner="$(stat -c '%U' "$path")"
-  actual_group="$(stat -c '%G' "$path")"
+  actual_uid="$(stat -c '%u' "$path")"
+  actual_gid="$(stat -c '%g' "$path")"
   actual_mode="$(stat -c '%a' "$path")"
-  if [ "$actual_owner" != "$owner" ] || [ "$actual_group" != "$group" ] || [ "$actual_mode" != "$mode" ]; then
-    say "mismatch: $path owner=$actual_owner:$actual_group mode=$actual_mode (expected $owner:$group $mode)"
+  if [ "$actual_uid" != "$expected_uid" ] || [ "$actual_gid" != "$expected_gid" ] || [ "$actual_mode" != "$mode" ]; then
+    say "mismatch: $path owner=${actual_uid}:${actual_gid} mode=$actual_mode (expected ${expected_uid}:${expected_gid} $mode; ${owner_label}:${group_label})"
     failed=$((failed + 1))
   fi
 }
@@ -94,7 +97,7 @@ private_dirs() {
     path="$home/$d"
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || { say "skipping symlink: $path"; continue; }
-    if [ "$action" = check ]; then check_path "$path" "$app" "$app" 700; else apply_path "$path" "$app:$app" 700; fi
+    if [ "$action" = check ]; then check_path "$path" "$uid" "$gid" 700 "$app" "$app"; else apply_path "$path" "$app:$app" 700; fi
   done
 }
 
@@ -102,7 +105,7 @@ ancestor_paths() {
   path="$www"
   while [ "$path" != "$docroot" ]; do
     # setgid keeps newly-created public subdirectories in the shared Nginx-readable group.
-    if [ "$action" = check ]; then check_path "$path" "$app" "$SOCKET_GROUP_NAME" 2710; else apply_path "$path" "$app:$SOCKET_GROUP_NAME" 2710; fi
+    if [ "$action" = check ]; then check_path "$path" "$uid" "$SOCKET_GID" 2710 "$app" "$SOCKET_GROUP_NAME"; else apply_path "$path" "$app:$SOCKET_GROUP_NAME" 2710; fi
     next="${public_dir#*/}"
     [ "$next" != "$public_dir" ] || break
     part="${public_dir%%/*}"
@@ -112,10 +115,10 @@ ancestor_paths() {
 }
 
 if [ "$action" = check ]; then
-  check_path "$home" "$app" "$SOCKET_GROUP_NAME" 710
+  check_path "$home" "$uid" "$SOCKET_GID" 710 "$app" "$SOCKET_GROUP_NAME"
   private_dirs
   ancestor_paths
-  check_path "$docroot" "$app" "$SOCKET_GROUP_NAME" 2750
+  check_path "$docroot" "$uid" "$SOCKET_GID" 2750 "$app" "$SOCKET_GROUP_NAME"
 else
   apply_path "$home" "$app:$SOCKET_GROUP_NAME" 710
   private_dirs
