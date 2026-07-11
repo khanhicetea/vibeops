@@ -90,7 +90,7 @@ cp .env.example .env
 ./manage.py render   # stage full generation, then promote into runtime/generated
 # ./manage.py apply  # same as render, then validate + reload running services
 
-docker compose build php84 php85 php84-cron php85-cron
+docker compose build nginx php84 php85 php84-cron php85-cron
 # mysql84 is the default MySQL service.
 docker compose up -d mysql84 redis php84 php85 php84-cron php85-cron nginx
 # Optional extra majors:
@@ -476,6 +476,7 @@ MySQL error and slow-query logs are under `runtime/logs/<mysql_service>/` (`erro
 - Unix sockets between Nginx and PHP-FPM avoid local TCP overhead.
 - Versioned socket directories avoid conflicts between PHP versions.
 - Nginx serves static files directly from a read-only `/home` mount.
+- Nginx supports static precompressed (`.zst`, `.br`, `.gz`) and dynamic response compression, preferring Zstd, then Brotli, then gzip according to client support.
 - HTTP/3 (QUIC) is enabled on generated HTTPS vhosts.
 - Global `proxy_cache` and `fastcgi_cache` zones are declared for vhosts to opt in.
 - PHP, MySQL, Redis stay isolated on a Compose backend network.
