@@ -30,6 +30,7 @@ FOUNDATIONAL = {
     "cron_runtime",
     "compose",
     "template",
+    "table",
 }
 
 COMMAND_LAYER = {

@@ -15,6 +15,7 @@ from vibeops.permission_commands import initialize_app_permissions
 from vibeops.php import app_document_root, app_home, ensure_app_identity, php_service_for, php_version_config_dir
 from vibeops.rendering import write_template
 from vibeops.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from vibeops.table import print_table
 from vibeops.validation import (
     APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, MYSQL_SERVICE_RE,
     PHP_VERSION_RE, validate, validate_php_entrypoint, validate_public_dir
@@ -184,9 +185,11 @@ def cmd_app_domain_list(args: argparse.Namespace) -> None:
     if not isinstance(app, dict) or not app.get("main_domain"):
         die(f"Unknown app or app has no vhost: {app_name}")
     domains = list(dict.fromkeys(app.get("domains") or [app["main_domain"]]))
-    for index, domain in enumerate(domains, start=1):
-        main = " (main)" if domain == app.get("main_domain") else ""
-        info(f"{index}) {domain}{main}")
+    rows = [
+        [str(index), domain, "main" if domain == app.get("main_domain") else ""]
+        for index, domain in enumerate(domains, start=1)
+    ]
+    print_table(rows, headers=["#", "DOMAIN", "ROLE"])
 
 @serialized_cron_state
 def cmd_app_domain_add(args: argparse.Namespace) -> None:
@@ -275,9 +278,11 @@ def cmd_app_db_list(args: argparse.Namespace) -> None:
         info(f"No databases recorded for app {app_name}.")
         return
     services = app.get("database_services") or {}
+    rows = []
     for index, database in enumerate(databases, start=1):
         service = services.get(database) or app.get("mysql_service") or default_mysql_service()
-        info(f"{index}) {database}\tservice={service}")
+        rows.append([str(index), database, service])
+    print_table(rows, headers=["#", "DATABASE", "SERVICE"])
 
 def cmd_app_db_create(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -300,16 +305,22 @@ def cmd_app_list(args: argparse.Namespace) -> None:
     if not apps:
         info("No apps in stack.json. Create one with: ./manage.py app create <app_name> <main_domain>")
         return
+    rows: list[list[str]] = []
     for name, app in sorted(apps.items()):
         if not isinstance(app, dict):
             continue
         domains = ",".join(app.get("domains", []) or [])
-        info(
-            f"{name}\tphp={app.get('php_version', '')}\t"
-            f"fpm={app.get('fpm_profile', '')}\t"
-            f"entrypoint={app.get('php_entrypoint', '')}\t"
-            f"main={app.get('main_domain', '')}\tdomains={domains}"
+        rows.append(
+            [
+                name,
+                str(app.get("php_version", "") or ""),
+                str(app.get("fpm_profile", "") or ""),
+                str(app.get("php_entrypoint", "") or ""),
+                str(app.get("main_domain", "") or ""),
+                domains,
+            ]
         )
+    print_table(rows, headers=["APP", "PHP", "FPM", "ENTRYPOINT", "MAIN", "DOMAINS"])
 
 def cmd_app_show(args: argparse.Namespace) -> None:
     db = load_db()

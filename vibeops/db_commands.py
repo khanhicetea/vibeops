@@ -441,17 +441,21 @@ def _apply_retention(backup_dir: Path, *, keep: int) -> None:
         info(f"Removed old backup vibeops/{rel(path)}")
 
 def cmd_db_list_backups(args: argparse.Namespace) -> None:
+    from vibeops.table import print_table
+
     service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     backup_dir = mysql_backup_dir(service)
     files = _list_final_backups(backup_dir)
     if not files:
         info(f"No backups in vibeops/{rel(backup_dir)}")
         return
+    rows = []
     for path in files:
         st = path.stat()
         mtime = _dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
         size_kb = max(1, st.st_size // 1024) if st.st_size else 0
-        info(f"{mtime}\t{size_kb:>8}K\tvibeops/{rel(path)}")
+        rows.append([mtime, f"{size_kb}K", f"vibeops/{rel(path)}"])
+    print_table(rows, headers=["MODIFIED", "SIZE", "PATH"])
 
 def _resolve_backup_path(raw: str, service: str) -> Path:
     path = Path(raw)

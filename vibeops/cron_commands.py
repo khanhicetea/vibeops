@@ -149,17 +149,27 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
 
 def cmd_cron_list(args: argparse.Namespace) -> None:
+    from vibeops.table import print_table
+
     db = load_db()
     crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
     if not crons:
         info("No crons in state. Create one with: ./manage.py cron create <app_name> <name> '<schedule>' '<command>'")
         return
+    rows = []
     for index, (key, cron) in enumerate(crons, start=1):
-        info(
-            f"{index}) {key}\tphp={cron.get('php_version', '')}\t{cron.get('schedule', '')}"
-            f"\ttz={cron.get('timezone', stack_env().get('TZ', 'UTC'))}"
-            f"\toutput={cron.get('output', 'docker')}\t{cron.get('command', '')}"
+        rows.append(
+            [
+                str(index),
+                key,
+                str(cron.get("php_version", "") or ""),
+                str(cron.get("schedule", "") or ""),
+                str(cron.get("timezone", stack_env().get("TZ", "UTC")) or ""),
+                str(cron.get("output", "docker") or "docker"),
+                str(cron.get("command", "") or ""),
+            ]
         )
+    print_table(rows, headers=["#", "JOB", "PHP", "SCHEDULE", "TZ", "OUTPUT", "COMMAND"])
 
 def cmd_cron_remove(args: argparse.Namespace) -> None:
     with cron_state_lock():

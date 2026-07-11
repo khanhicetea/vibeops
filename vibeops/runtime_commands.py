@@ -35,6 +35,7 @@ from vibeops.process import docker_available, run, running_services, service_run
 from vibeops.proxy_commands import render_proxy_vhost
 from vibeops.rendering import content_looks_generated
 from vibeops.state import empty_db, load_db, save_db, serialized_cron_state
+from vibeops.table import print_table
 from vibeops.validation import APP_NAME_RE, DOMAIN_RE, validate, validate_public_dir
 
 def select_app_from_db() -> tuple[str, str]:
@@ -112,11 +113,15 @@ def cmd_list(args: argparse.Namespace) -> None:
         if not domains:
             info("No domains in state.")
             return
+        rows = []
         for domain, owner in sorted(domains.items()):
+            if not isinstance(owner, dict):
+                continue
             if owner.get("kind") == "php":
-                info(f"{domain}\tphp\tapp={owner.get('app', '')}")
+                rows.append([domain, "php", f"app={owner.get('app', '')}"])
             else:
-                info(f"{domain}\tproxy\tvhost={owner.get('domain', '')}")
+                rows.append([domain, "proxy", f"vhost={owner.get('domain', '')}"])
+        print_table(rows, headers=["DOMAIN", "KIND", "OWNER"])
     elif kind in {"users", "sites"}:
         warn(f"'list {kind}' is deprecated; use 'list apps' or 'list domains'")
         cmd_list(argparse.Namespace(kind="apps" if kind == "users" else "domains"))
@@ -125,10 +130,12 @@ def cmd_list(args: argparse.Namespace) -> None:
         if not crons:
             info("No crons in state. Create one with: ./manage.py cron create <app_name> <name> '<schedule>' '<command>'")
             return
+        rows = []
         for key, cron in sorted(crons.items()):
             if not isinstance(cron, dict):
                 continue
-            info(f"{key}\t{cron.get('schedule', '')}\t{cron.get('command', '')}")
+            rows.append([key, str(cron.get("schedule", "") or ""), str(cron.get("command", "") or "")])
+        print_table(rows, headers=["JOB", "SCHEDULE", "COMMAND"])
     else:
         print(json.dumps(db, indent=2, sort_keys=True))
 
@@ -784,27 +791,50 @@ def cmd_status(args: argparse.Namespace) -> None:
     if not docker_available():
         info("  docker: not found")
     else:
-        for service in services:
-            info(f"  {service:<10} {'running' if service in running else '-'}")
+        print_table(
+            [[service, "running" if service in running else "-"] for service in services],
+            headers=["SERVICE", "STATE"],
+            prefix="  ",
+        )
     info("\nApps:")
     apps = db.get("apps", {})
     if not apps:
         info("  none")
-    for name, app in sorted(apps.items()):
-        if not isinstance(app, dict):
-            continue
-        tls = app.get("tls", {}).get("mode", "")
-        info(
-            f"  {name:<20} php={app.get('php_version', ''):<4} "
-            f"fpm={app.get('fpm_profile', ''):<10} "
-            f"entrypoint={app.get('php_entrypoint', ''):<16} "
-            f"main={app.get('main_domain', '-')} tls={tls}"
+    else:
+        app_rows = []
+        for name, app in sorted(apps.items()):
+            if not isinstance(app, dict):
+                continue
+            tls = ""
+            tls_block = app.get("tls")
+            if isinstance(tls_block, dict):
+                tls = str(tls_block.get("mode", "") or "")
+            app_rows.append(
+                [
+                    name,
+                    str(app.get("php_version", "") or ""),
+                    str(app.get("fpm_profile", "") or ""),
+                    str(app.get("php_entrypoint", "") or ""),
+                    str(app.get("main_domain", "-") or "-"),
+                    tls,
+                ]
+            )
+        print_table(
+            app_rows,
+            headers=["APP", "PHP", "FPM", "ENTRYPOINT", "MAIN", "TLS"],
+            prefix="  ",
         )
     proxies = [s for s in db.get("sites", {}).values() if isinstance(s, dict) and s.get("type") == "proxy"]
     if proxies:
         info("\nProxies:")
+        proxy_rows = []
         for site in sorted(proxies, key=lambda s: str(s.get("domain"))):
-            info(f"  {site.get('domain', ''):<28} {site.get('upstream', '')} tls={site.get('tls', {}).get('mode', '')}")
+            tls = ""
+            tls_block = site.get("tls")
+            if isinstance(tls_block, dict):
+                tls = str(tls_block.get("mode", "") or "")
+            proxy_rows.append([str(site.get("domain", "") or ""), str(site.get("upstream", "") or ""), tls])
+        print_table(proxy_rows, headers=["DOMAIN", "UPSTREAM", "TLS"], prefix="  ")
     capacity = fpm_capacity_warnings(db)
     if capacity:
         info("\nPHP-FPM capacity:")
