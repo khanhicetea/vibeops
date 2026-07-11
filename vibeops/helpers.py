@@ -59,6 +59,35 @@ PHP_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
 DB_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 PUBLIC_DIR_RE = re.compile(r"^[A-Za-z0-9._/-]*$")
 PHP_ENTRYPOINTS = {"front-controller", "legacy"}
+# Named PHP-FPM pool profiles. Store only the name in app state; render concrete pm.*
+# directives from this registry. Do not accept arbitrary pool fragments from state.
+FPM_PROFILES: dict[str, dict[str, Any]] = {
+    "ondemand": {
+        "pm": "ondemand",
+        "max_children": 4,
+        "process_idle_timeout": "10s",
+        "max_requests": 256,
+    },
+    "balanced": {
+        "pm": "dynamic",
+        "max_children": 6,
+        "start_servers": 2,
+        "min_spare_servers": 1,
+        "max_spare_servers": 3,
+        "max_requests": 256,
+    },
+    "throughput": {
+        "pm": "dynamic",
+        "max_children": 12,
+        "start_servers": 3,
+        "min_spare_servers": 2,
+        "max_spare_servers": 6,
+        "max_requests": 512,
+    },
+}
+FPM_PROFILE_NAMES = tuple(FPM_PROFILES.keys())
+DEFAULT_FPM_PROFILE = "balanced"
+DEFAULT_PHP_FPM_PROCESS_MAX = 32
 MYSQL_SERVICE_RE = re.compile(r"^mysql[0-9]+$")
 JOB_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 CRON_LOCK_RE = JOB_RE
@@ -189,6 +218,95 @@ def default_mysql_service() -> str:
     return stack_env().get("DEFAULT_MYSQL_SERVICE", "mysql84")
 
 
+def default_fpm_profile() -> str:
+    """Stack default FPM profile for new apps (DEFAULT_FPM_PROFILE, else balanced)."""
+    raw = stack_env().get("DEFAULT_FPM_PROFILE", DEFAULT_FPM_PROFILE).strip() or DEFAULT_FPM_PROFILE
+    return validate_fpm_profile(raw)
+
+
+def validate_fpm_profile(value: str | None) -> str:
+    name = (value or "").strip().lower()
+    if name not in FPM_PROFILES:
+        known = ", ".join(FPM_PROFILE_NAMES)
+        die(f"Invalid fpm_profile: {value!r}; expected one of: {known}")
+    return name
+
+
+def fpm_profile_spec(profile: str | None) -> dict[str, Any]:
+    name = validate_fpm_profile(profile)
+    return dict(FPM_PROFILES[name])
+
+
+def fpm_profile_max_children(profile: str | None) -> int:
+    return int(fpm_profile_spec(profile)["max_children"])
+
+
+def fpm_pool_template_values(profile: str | None) -> dict[str, Any]:
+    """Flat template values for pool.conf.template from a named profile."""
+    name = validate_fpm_profile(profile)
+    spec = FPM_PROFILES[name]
+    pm = str(spec["pm"])
+    is_ondemand = pm == "ondemand"
+    values: dict[str, Any] = {
+        "FPM_PROFILE": name,
+        "PM": pm,
+        "PM_IS_ONDEMAND": is_ondemand,
+        "PM_MAX_CHILDREN": int(spec["max_children"]),
+        "PM_MAX_REQUESTS": int(spec["max_requests"]),
+    }
+    if is_ondemand:
+        values["PM_PROCESS_IDLE_TIMEOUT"] = str(spec["process_idle_timeout"])
+        # Placeholders so missing-key errors never fire if template branches change.
+        values.setdefault("PM_START_SERVERS", 0)
+        values.setdefault("PM_MIN_SPARE_SERVERS", 0)
+        values.setdefault("PM_MAX_SPARE_SERVERS", 0)
+    else:
+        values["PM_START_SERVERS"] = int(spec["start_servers"])
+        values["PM_MIN_SPARE_SERVERS"] = int(spec["min_spare_servers"])
+        values["PM_MAX_SPARE_SERVERS"] = int(spec["max_spare_servers"])
+        values.setdefault("PM_PROCESS_IDLE_TIMEOUT", "0s")
+    return values
+
+
+def php_fpm_process_max() -> int:
+    """Global PHP-FPM process.max (image default 32; overridable via PHP_FPM_PROCESS_MAX)."""
+    raw = stack_env().get("PHP_FPM_PROCESS_MAX", str(DEFAULT_PHP_FPM_PROCESS_MAX)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        die(f"Invalid PHP_FPM_PROCESS_MAX: {raw!r}; expected a positive integer")
+    if value < 1:
+        die(f"Invalid PHP_FPM_PROCESS_MAX: {value}; expected a positive integer")
+    return value
+
+
+def fpm_capacity_warnings(db: dict[str, Any], *, process_max: int | None = None) -> list[str]:
+    """Warn when sum of per-pool max_children on one PHP version exceeds process.max."""
+    cap = process_max if process_max is not None else php_fpm_process_max()
+    by_version: dict[str, list[tuple[str, str, int]]] = {}
+    for app_name, app in (db.get("apps") or {}).items():
+        if not isinstance(app, dict):
+            continue
+        version = str(app.get("php_version") or default_php_version())
+        profile = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
+        max_children = fpm_profile_max_children(profile)
+        by_version.setdefault(version, []).append((str(app_name), profile, max_children))
+    warnings: list[str] = []
+    for version in sorted(by_version):
+        rows = by_version[version]
+        total = sum(row[2] for row in rows)
+        if total > cap:
+            detail = ", ".join(f"{name}={profile}:{n}" for name, profile, n in sorted(rows))
+            service = php_service_for(version)
+            warnings.append(
+                f"PHP {version} ({service}): sum of pool pm.max_children is {total} "
+                f"across {len(rows)} app(s) but global process.max is {cap} "
+                f"({detail}). Extra workers will be refused until capacity is free; "
+                f"raise PHP_FPM_PROCESS_MAX (rebuild PHP images) or lower profiles."
+            )
+    return warnings
+
+
 def mysql_root_password(env: dict[str, str], service: str) -> str | None:
     return env.get(f"{service.upper()}_ROOT_PASSWORD") or env.get("MYSQL_ROOT_PASSWORD")
 
@@ -289,6 +407,7 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
             app["public_dir"] = public_dir
             app.setdefault("php_entrypoint", default_php_entrypoint(public_dir))
             app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
+            app["fpm_profile"] = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
             if app.get("vhost"):
                 app["vhost"] = rel(app_vhost_path(app_name))
     for domain, site in data.get("sites", {}).items():
@@ -959,7 +1078,7 @@ def ensure_mysql_database(app_name: str, suffix: str, mysql_service: str) -> str
     return db_full_name
 
 
-def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, uid: int | None = None, public_dir: str | None = None, no_mysql: bool = False, mysql_password: str | None = None, mysql_service: str | None = None, no_reload: bool = False) -> dict[str, Any]:
+def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, uid: int | None = None, public_dir: str | None = None, fpm_profile: str | None = None, no_mysql: bool = False, mysql_password: str | None = None, mysql_service: str | None = None, no_reload: bool = False) -> dict[str, Any]:
     app_name = validate(app_name, APP_NAME_RE, "app_name")
     php_version = validate(php_version, PHP_VERSION_RE, "PHP version")
     mysql_service = validate(mysql_service or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
@@ -968,9 +1087,14 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")
     app = db["apps"].setdefault(app_name, {"name": app_name})
     public_dir = validate_public_dir(public_dir if public_dir is not None else str(app.get("public_dir", "")))
+    if fpm_profile is not None:
+        profile = validate_fpm_profile(fpm_profile)
+    else:
+        profile = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
     app["uid"] = app_uid
     app["public_dir"] = public_dir
     app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
+    app["fpm_profile"] = profile
     app["php_version"] = php_version
     app["php_service"] = php_service
 
@@ -995,11 +1119,13 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
         "GID": app_uid,
         "PUBLIC_DIR": public_dir,
     }, generated=True)
-    write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", {
+    pool_values = {
         "USERNAME": app_name,
         "SOCKET_GROUP_NAME": socket_group_name,
         "PHP_VERSION": php_version,
-    }, generated=True)
+        **fpm_pool_template_values(profile),
+    }
+    write_template(php_version_config_dir(php_version) / "pool.d" / f"{app_name}.conf", PHP_TEMPLATE_DIR / "pool.conf.template", pool_values, generated=True)
     info(f"Created PHP {php_version} app identity: {app_name} uid={app_uid}")
     info(f"Home: vibeops/{rel(app_home(app_name))}")
     info(f"Pool: vibeops/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{app_name}.conf')}")
@@ -1105,6 +1231,7 @@ def render_app_identity(app: dict[str, Any], ctx: RenderContext | None = None) -
     mkdir(PHP_LOG_DIR / php_service)
     render_php_fallback(php_version, ctx)
     public_dir = validate_public_dir(str(app.get("public_dir", "")))
+    fpm_profile = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
     write_template(base / "users.d" / f"{app_name}.env", PHP_TEMPLATE_DIR / "user.env.template", {
         "USERNAME": app_name,
         "UID": uid,
@@ -1115,12 +1242,14 @@ def render_app_identity(app: dict[str, Any], ctx: RenderContext | None = None) -
         "USERNAME": app_name,
         "SOCKET_GROUP_NAME": socket_group_name,
         "PHP_VERSION": php_version,
+        **fpm_pool_template_values(fpm_profile),
     }, generated=True)
     app["uid"] = uid
     app["php_service"] = php_service
     app["home"] = rel(app_home(app_name))
     app["public_dir"] = public_dir
     app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
+    app["fpm_profile"] = fpm_profile
     app["root"] = rel(app_document_root(app_name, public_dir))
 
 

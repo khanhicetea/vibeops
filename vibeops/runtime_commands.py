@@ -801,15 +801,26 @@ def cmd_status(args: argparse.Namespace) -> None:
         if not isinstance(app, dict):
             continue
         tls = app.get("tls", {}).get("mode", "")
-        info(f"  {name:<20} php={app.get('php_version', ''):<4} entrypoint={app.get('php_entrypoint', ''):<16} main={app.get('main_domain', '-')} tls={tls}")
+        info(
+            f"  {name:<20} php={app.get('php_version', ''):<4} "
+            f"fpm={app.get('fpm_profile', ''):<10} "
+            f"entrypoint={app.get('php_entrypoint', ''):<16} "
+            f"main={app.get('main_domain', '-')} tls={tls}"
+        )
     proxies = [s for s in db.get("sites", {}).values() if isinstance(s, dict) and s.get("type") == "proxy"]
     if proxies:
         info("\nProxies:")
         for site in sorted(proxies, key=lambda s: str(s.get("domain"))):
             info(f"  {site.get('domain', ''):<28} {site.get('upstream', '')} tls={site.get('tls', {}).get('mode', '')}")
+    capacity = fpm_capacity_warnings(db)
+    if capacity:
+        info("\nPHP-FPM capacity:")
+        for message in capacity:
+            warn(f"  {message}")
     info("\nQuick checks:")
     info(f"  metadata: vibeops/{rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
     info(f"  vhosts:   vibeops/{rel(NGINX_VHOST_DIR)}")
+    info(f"  process.max (PHP-FPM global): {php_fpm_process_max()}")
     for mysql_service in ("mysql57", "mysql84", "mysql97"):
         if mysql_service in running:
             ok = mysql_admin_ping(mysql_service)

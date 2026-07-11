@@ -47,6 +47,28 @@ def resolve_app_php_version(
     return validate(str(requested), PHP_VERSION_RE, "PHP version")
 
 
+def resolve_app_fpm_profile(
+    db: dict[str, Any],
+    app_name: str,
+    requested: str | None = None,
+    *,
+    allow_new: bool = True,
+) -> str:
+    """Resolve FPM profile: explicit flag, else recorded profile, else stack default."""
+    apps = db.get("apps") if isinstance(db, dict) else None
+    existing = apps.get(app_name) if isinstance(apps, dict) else None
+    if requested is not None:
+        return validate_fpm_profile(str(requested))
+    if isinstance(existing, dict):
+        recorded = existing.get("fpm_profile")
+        if recorded is not None and str(recorded).strip() != "":
+            return validate_fpm_profile(str(recorded))
+        return default_fpm_profile()
+    if not allow_new:
+        die(f"Unknown app: {app_name}")
+    return default_fpm_profile()
+
+
 def cmd_app_create(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -65,12 +87,24 @@ def cmd_app_create(args: argparse.Namespace) -> None:
         require_mysql_ready_for_sql(mysql_service)
     public_dir = validate_public_dir(getattr(args, "public_dir", ""))
     php_entrypoint = validate_php_entrypoint(getattr(args, "php_entrypoint", "auto"), public_dir)
+    fpm_profile = resolve_app_fpm_profile(db, app_name, getattr(args, "fpm_profile", None), allow_new=True)
     aliases = normalize_aliases(args.alias, args.aliases)
     all_domains = domains_for(main_domain, aliases)
     for domain in all_domains:
         assert_domain_free(domain, db, allow_app=app_name)
 
-    app = ensure_app_identity(app_name, php_version, db, uid=args.uid, public_dir=public_dir, no_mysql=args.no_mysql, mysql_password=getattr(args, "mysql_password", None), mysql_service=mysql_service, no_reload=args.no_reload)
+    app = ensure_app_identity(
+        app_name,
+        php_version,
+        db,
+        uid=args.uid,
+        public_dir=public_dir,
+        fpm_profile=fpm_profile,
+        no_mysql=args.no_mysql,
+        mysql_password=getattr(args, "mysql_password", None),
+        mysql_service=mysql_service,
+        no_reload=args.no_reload,
+    )
     if app.get("main_domain") and app.get("main_domain") != main_domain:
         die(f"App {app_name} already has main domain {app.get('main_domain')}; use app domain set-main")
     old_domains = set(app.get("domains") or [])
@@ -78,6 +112,7 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     app["domains"] = all_domains
     app["public_dir"] = public_dir
     app["php_entrypoint"] = php_entrypoint
+    app["fpm_profile"] = fpm_profile
     app["root"] = rel(app_document_root(app_name, public_dir))
     mkdir(app_document_root(app_name, public_dir))
     for old_domain in old_domains - set(all_domains):
@@ -110,6 +145,7 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     info(f"Created HTTP+HTTPS app vhost: vibeops/{rel(conf_path)}")
     info(f"Document root: vibeops/{rel(app_document_root(app_name, public_dir))}")
     info(f"PHP entrypoint: {php_entrypoint}")
+    info(f"PHP-FPM profile: {fpm_profile}")
     info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service_for(php_version)}/{app_name}.sock")
     nginx_reload(args.no_reload)
 
@@ -266,7 +302,12 @@ def cmd_app_list(args: argparse.Namespace) -> None:
         if not isinstance(app, dict):
             continue
         domains = ",".join(app.get("domains", []) or [])
-        info(f"{name}\tphp={app.get('php_version', '')}\tentrypoint={app.get('php_entrypoint', '')}\tmain={app.get('main_domain', '')}\tdomains={domains}")
+        info(
+            f"{name}\tphp={app.get('php_version', '')}\t"
+            f"fpm={app.get('fpm_profile', '')}\t"
+            f"entrypoint={app.get('php_entrypoint', '')}\t"
+            f"main={app.get('main_domain', '')}\tdomains={domains}"
+        )
 
 
 def cmd_app_show(args: argparse.Namespace) -> None:
@@ -297,7 +338,7 @@ def cmd_site_create(args: argparse.Namespace) -> None:
     domain = validate(args.domain, DOMAIN_RE, "domain")
     if app_name not in db.get("apps", {}) and not app_home(app_name).exists():
         warn("'site create' is deprecated; creating an app instead")
-        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, public_dir="", php_entrypoint="legacy", no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
+        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, public_dir="", php_entrypoint="legacy", fpm_profile=None, no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
         cmd_app_create(ns)
         return
     app = db.get("apps", {}).get(app_name)

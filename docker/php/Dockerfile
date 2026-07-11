@@ -4,7 +4,10 @@ FROM php:${PHP_VERSION}-fpm-trixie
 ARG TZ=Asia/Ho_Chi_Minh
 ARG SUPERCRONIC_VERSION=0.2.47
 ARG NODE_VERSION=24.11.1
+# Global PHP-FPM process cap across all pools in this container (safety bound).
+ARG PHP_FPM_PROCESS_MAX=32
 ENV TZ=${TZ}
+ENV PHP_FPM_PROCESS_MAX=${PHP_FPM_PROCESS_MAX}
 
 RUN set -eux; \
     savedAptMark="$(apt-mark showmanual)"; \
@@ -52,7 +55,8 @@ RUN set -eux; \
       [ -e "$f" ] || continue; \
       if grep -q '^\[www\]' "$f"; then rm -f "$f"; fi; \
     done; \
-    printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = 32\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
+    case "${PHP_FPM_PROCESS_MAX}" in ''|*[!0-9]*|0*) echo "Invalid PHP_FPM_PROCESS_MAX: ${PHP_FPM_PROCESS_MAX}" >&2; exit 1 ;; esac; \
+    printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = %s\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' "${PHP_FPM_PROCESS_MAX}" > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
     php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"; \
     php -r "if (hash_file('sha384', 'composer-setup.php') !== trim(file_get_contents('https://composer.github.io/installer.sig'))) { unlink('composer-setup.php'); exit(1); }"; \
     php composer-setup.php --install-dir=/usr/local/bin --filename=composer; \

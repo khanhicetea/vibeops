@@ -7,12 +7,17 @@ listen.owner = ${USERNAME}
 listen.group = ${SOCKET_GROUP_NAME}
 listen.mode = 0660
 
-pm = dynamic
-pm.max_children = 6
-pm.start_servers = 2
-pm.min_spare_servers = 1
-pm.max_spare_servers = 3
-pm.max_requests = 256
+; fpm_profile = ${FPM_PROFILE}
+pm = ${PM}
+pm.max_children = ${PM_MAX_CHILDREN}
+{% if PM_IS_ONDEMAND %}
+pm.process_idle_timeout = ${PM_PROCESS_IDLE_TIMEOUT}
+{% else %}
+pm.start_servers = ${PM_START_SERVERS}
+pm.min_spare_servers = ${PM_MIN_SPARE_SERVERS}
+pm.max_spare_servers = ${PM_MAX_SPARE_SERVERS}
+{% endif %}
+pm.max_requests = ${PM_MAX_REQUESTS}
 
 request_terminate_timeout = 60s
 request_slowlog_timeout = 10s

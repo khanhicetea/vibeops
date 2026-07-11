@@ -49,11 +49,21 @@ def wizard_create_site() -> None:
     aliases = prompt_aliases()
     public_dir = prompt_public_dir()
     php = prompt_choice("PHP version", available_php_versions(), default_php_version())
+    fpm_profile = prompt_choice(
+        "PHP-FPM profile (ondemand=idle-efficient, balanced=default, throughput=higher concurrency)",
+        list(FPM_PROFILE_NAMES),
+        default_fpm_profile(),
+    )
     db_name = prompt_validated("Database suffix, e.g. app (blank = none)", DB_NAME_RE, "database suffix", "", required=False) or None
     mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97") if db_name else default_mysql_service()
     no_index = not prompt_confirm("Create starter index.php if missing?", True)
     no_reload = not prompt_confirm("Reload nginx/PHP-FPM if running?", True)
-    plan = [f"create/update app {app_name} on PHP {php}", f"main domain {domain}", f"document root: /home/{app_name}/www" + (f"/{public_dir}" if public_dir else "")]
+    plan = [
+        f"create/update app {app_name} on PHP {php}",
+        f"main domain {domain}",
+        f"document root: /home/{app_name}/www" + (f"/{public_dir}" if public_dir else ""),
+        f"fpm profile: {fpm_profile}",
+    ]
     if aliases:
         plan.append("aliases: " + ", ".join(aliases))
     if db_name:
@@ -63,9 +73,16 @@ def wizard_create_site() -> None:
     info("\nEquivalent command:")
     alias_args = " ".join(f"--alias {shlex.quote(a)}" for a in aliases)
     public_dir_arg = f" --public-dir {shlex.quote(public_dir)}" if public_dir else ""
-    info(f"  ./manage.py app create {shlex.quote(app_name)} {shlex.quote(domain)}" + (f" {shlex.quote(db_name)}" if db_name else "") + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}" + public_dir_arg + (f" {alias_args}" if alias_args else ""))
+    info(
+        f"  ./manage.py app create {shlex.quote(app_name)} {shlex.quote(domain)}"
+        + (f" {shlex.quote(db_name)}" if db_name else "")
+        + f" --php {shlex.quote(php)} --mysql-service {shlex.quote(mysql_service)}"
+        + f" --fpm-profile {shlex.quote(fpm_profile)}"
+        + public_dir_arg
+        + (f" {alias_args}" if alias_args else "")
+    )
     if prompt_confirm("Continue?", True):
-        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, public_dir=public_dir, php_entrypoint="auto", no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
+        cmd_app_create(argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=db_name, php=php, mysql_service=mysql_service, alias=aliases, aliases=None, public_dir=public_dir, php_entrypoint="auto", fpm_profile=fpm_profile, no_index=no_index, no_reload=no_reload, uid=None, no_mysql=False, mysql_password=None))
 
 
 def wizard_create_proxy() -> None:

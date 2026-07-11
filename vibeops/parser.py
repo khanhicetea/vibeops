@@ -31,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
     app_create.add_argument("--aliases", help="Comma-separated additional server names")
     app_create.add_argument("--public-dir", default="", help="Document root subdirectory inside /home/<app>/www, e.g. 'public' for Laravel; default is app root")
     app_create.add_argument("--php-entrypoint", default="auto", choices=["auto", "front-controller", "legacy"], help="PHP execution model: front-controller only runs index.php; legacy allows existing PHP scripts. auto enables front-controller when --public-dir is non-empty")
+    app_create.add_argument(
+        "--fpm-profile",
+        default=None,
+        choices=list(FPM_PROFILE_NAMES),
+        help="PHP-FPM pool profile (ondemand|balanced|throughput); omit to keep an existing app's profile or use DEFAULT_FPM_PROFILE for a new app",
+    )
     app_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
     app_create.add_argument("--mysql-password", help="Password for the MySQL account")
     app_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")
