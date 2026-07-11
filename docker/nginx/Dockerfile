@@ -16,6 +16,11 @@ RUN curl -fsSLO "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     && cd ngx_brotli \
     && git checkout "${BROTLI_COMMIT}" \
     && git submodule update --init --recursive --depth 1 \
+    && cmake -S deps/brotli -B deps/brotli/out \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DBROTLI_DISABLE_TESTS=ON \
+    && cmake --build deps/brotli/out --config Release --parallel "$(nproc)" \
     && cd .. \
     && git clone --filter=blob:none https://github.com/tokers/zstd-nginx-module.git \
     && cd zstd-nginx-module \
