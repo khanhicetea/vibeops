@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from vibeops.helpers import *  # noqa: F403
-from vibeops.app_commands import cmd_app_list, ensure_app
+from vibeops.app_commands import cmd_app_list, ensure_app, resolve_app_php_version
 from vibeops.cron_commands import render_cron_job
 from vibeops.proxy_commands import render_proxy_vhost
 
@@ -43,7 +43,7 @@ def select_app_from_db() -> tuple[str, str]:
 def cmd_app_shell(args: argparse.Namespace) -> None:
     if not args.app_name:
         args.app_name, selected_php = select_app_from_db()
-        if args.php == default_php_version():
+        if getattr(args, "php", None) is None:
             args.php = selected_php
     args.command = [args.shell]
     cmd_app_exec(args)
@@ -51,16 +51,22 @@ def cmd_app_shell(args: argparse.Namespace) -> None:
 
 def cmd_app_exec(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
-    php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
-    php_cli_service = php_cli_service_for(php_version)
     workdir = args.workdir or f"/home/{app_name}/{DOCROOT_NAME}"
     command = args.command or ["sh"]
     if command and command[0] == "--":
         command = command[1:] or ["sh"]
 
     db = load_db()
+    php_version = resolve_app_php_version(db, app_name, getattr(args, "php", None))
+    php_cli_service = php_cli_service_for(php_version)
+    identity_exists = (
+        app_name in db.get("apps", {})
+        and (php_version_config_dir(php_version) / "users.d" / f"{app_name}.env").exists()
+    )
     ensure_app(app_name, php_version, db)
-    save_db(db)
+    # Only persist when ensure_app had to provision a missing identity.
+    if not identity_exists:
+        save_db(db)
 
     if not docker_available():
         die("docker is required")

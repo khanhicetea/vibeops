@@ -267,7 +267,7 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         elif action == "Fix app permissions":
             wizard_fix_permissions()
         elif action == "Open app shell":
-            cmd_app_shell(argparse.Namespace(app_name=None, php=default_php_version(), workdir=None, shell="bash"))
+            cmd_app_shell(argparse.Namespace(app_name=None, php=None, workdir=None, shell="bash"))
         elif action == "Show status":
             cmd_status(argparse.Namespace(check_nginx=False))
         elif action == "List apps/domains/crons":

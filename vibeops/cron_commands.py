@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from vibeops.helpers import *  # noqa: F403
-from vibeops.app_commands import ensure_app
+from vibeops.app_commands import ensure_app, resolve_app_php_version
 
 
 def safe_app_part(app_name: str) -> str:
@@ -94,7 +94,7 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         db = load_db()
         app_name = validate(args.app_name, APP_NAME_RE, "app_name")
         job_name = validate(args.job_name, JOB_RE, "job-name")
-        php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
+        php_version = resolve_app_php_version(db, app_name, getattr(args, "php", None))
         workdir = validate_cron_workdir(app_name, args.workdir or f"/home/{app_name}/{DOCROOT_NAME}")
         output = getattr(args, "output", "docker")
         timeout = getattr(args, "timeout", 0)

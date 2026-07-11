@@ -3,15 +3,59 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 from vibeops.helpers import *  # noqa: F403
 from vibeops.permission_commands import initialize_app_permissions
+
+
+def resolve_app_php_version(
+    db: dict[str, Any],
+    app_name: str,
+    requested: str | None = None,
+    *,
+    allow_new: bool = True,
+) -> str:
+    """Resolve the PHP version for an app-scoped command without mutating state.
+
+    Omitted ``requested`` uses the app's recorded primary version (or the stack
+    default for a new app when ``allow_new``). An explicit mismatched version is
+    rejected; intentional primary-runtime migration is ``app create --php``.
+    """
+    apps = db.get("apps") if isinstance(db, dict) else None
+    existing = apps.get(app_name) if isinstance(apps, dict) else None
+    if isinstance(existing, dict):
+        recorded_raw = existing.get("php_version")
+        if recorded_raw is None or recorded_raw == "":
+            die(f"App {app_name} has no recorded php_version in state")
+        recorded = validate(str(recorded_raw), PHP_VERSION_RE, "PHP version")
+        if requested is None:
+            return recorded
+        requested_version = validate(str(requested), PHP_VERSION_RE, "PHP version")
+        if requested_version != recorded:
+            die(
+                f"App {app_name} primary PHP version is {recorded}, not {requested_version}. "
+                f"Re-run ./manage.py app create {app_name} <main-domain> --php {requested_version} "
+                f"to migrate the primary runtime intentionally."
+            )
+        return requested_version
+
+    if not allow_new:
+        die(f"Unknown app: {app_name}")
+    if requested is None:
+        return validate(default_php_version(), PHP_VERSION_RE, "PHP version")
+    return validate(str(requested), PHP_VERSION_RE, "PHP version")
+
 
 def cmd_app_create(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     main_domain = validate(args.main_domain, DOMAIN_RE, "main domain")
-    php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
+    # Explicit --php is the intentional migration path; omitted preserves recorded version.
+    if getattr(args, "php", None) is None:
+        php_version = resolve_app_php_version(db, app_name, None, allow_new=True)
+    else:
+        php_version = validate(str(args.php), PHP_VERSION_RE, "PHP version")
     mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     if args.no_mysql and args.db_suffix:
         die("Cannot create a database suffix with --no-mysql")
@@ -66,8 +110,19 @@ def cmd_app_create(args: argparse.Namespace) -> None:
 
 
 def ensure_app(app_name: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> dict[str, Any]:
-    if app_name in db.get("apps", {}) and (php_version_config_dir(php_version) / "users.d" / f"{app_name}.env").exists():
-        return db["apps"][app_name]
+    existing = db.get("apps", {}).get(app_name)
+    if isinstance(existing, dict):
+        recorded_raw = existing.get("php_version")
+        if recorded_raw is not None and str(recorded_raw) != "":
+            recorded = str(recorded_raw)
+            if recorded != php_version:
+                die(
+                    f"App {app_name} primary PHP version is {recorded}, not {php_version}. "
+                    f"Re-run ./manage.py app create {app_name} <main-domain> --php {php_version} "
+                    f"to migrate the primary runtime intentionally."
+                )
+        if (php_version_config_dir(php_version) / "users.d" / f"{app_name}.env").exists():
+            return existing
     info(f"PHP {php_version} app identity {app_name} does not exist; creating it first.")
     return ensure_app_identity(app_name, php_version, db, mysql_service=mysql_service, no_reload=no_reload)
 

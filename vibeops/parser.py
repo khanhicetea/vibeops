@@ -21,7 +21,11 @@ def build_parser() -> argparse.ArgumentParser:
     app_create.add_argument("app_name")
     app_create.add_argument("main_domain")
     app_create.add_argument("db_suffix", nargs="?")
-    app_create.add_argument("--php", default=default_php_version(), help="PHP version")
+    app_create.add_argument(
+        "--php",
+        default=None,
+        help="PHP version; omit to keep an existing app's version or use the stack default for a new app",
+    )
     app_create.add_argument("--mysql-service", default=default_mysql_service(), help="MySQL service for optional database creation, e.g. mysql57/mysql84/mysql97")
     app_create.add_argument("--alias", action="append", help="Additional server_name; can be passed multiple times or comma-separated")
     app_create.add_argument("--aliases", help="Comma-separated additional server names")
@@ -156,7 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
     cron_create.add_argument("job_name")
     cron_create.add_argument("schedule")
     cron_create.add_argument("command")
-    cron_create.add_argument("--php", default=default_php_version(), help="PHP version")
+    cron_create.add_argument(
+        "--php",
+        default=None,
+        help="PHP version; omit to use the app's recorded PHP version (or the stack default for a new app)",
+    )
     cron_create.add_argument("--workdir", "-w", help="Workdir inside /home/<app>")
     cron_create.add_argument("--timezone", help="IANA timezone; defaults to stack TZ")
     cron_create.add_argument("--timeout", type=int, default=0, help="Kill the command after N seconds; 0 disables")
@@ -176,14 +184,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app")
     app_exec.add_argument("app_name")
-    app_exec.add_argument("--php", default=default_php_version(), help="PHP version")
+    app_exec.add_argument(
+        "--php",
+        default=None,
+        help="PHP version; omit to use the app's recorded PHP version (or the stack default for a new app)",
+    )
     app_exec.add_argument("--workdir", "-w", help="Container workdir")
     app_exec.add_argument("command", nargs=argparse.REMAINDER, help="Command to run; prefix with -- if needed")
     app_exec.set_defaults(func=cmd_app_exec)
 
     shell = sub.add_parser("shell", help="Open an ephemeral PHP CLI shell as an app; with no args, choose from state")
     shell.add_argument("app_name", nargs="?")
-    shell.add_argument("--php", default=default_php_version(), help="PHP version")
+    shell.add_argument(
+        "--php",
+        default=None,
+        help="PHP version; omit to use the app's recorded PHP version (or the stack default for a new app)",
+    )
     shell.add_argument("--workdir", "-w", help="Container workdir")
     shell.add_argument("--shell", default="bash", help="Shell to run, default: bash")
     shell.set_defaults(func=cmd_app_shell)

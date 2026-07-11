@@ -122,6 +122,8 @@ Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ign
 
 Default PHP version comes from `.env` `DEFAULT_PHP_VERSION`. An app slug is stack-wide unique and becomes the Linux user, PHP-FPM pool, and MySQL user.
 
+App-scoped commands (`exec`, `shell`, `cron create`, and re-running `app create` without `--php`) use the app's **recorded PHP version** by default. Pass `--php` on `app create` to set or migrate the primary runtime; `cron`, `exec`, and `shell` reject an explicit `--php` that does not match that primary version.
+
 ```bash
 ./manage.py app create shop shop.example.com app --php 8.5 --alias www.shop.example.com
 # Laravel/Symfony/front-controller apps usually serve from /home/<app>/www/public.
@@ -198,25 +200,25 @@ Use a separate app slug for a separate codebase; the old multi-site-under-one-us
 
 ## Deploy app code and run Composer
 
-Run app commands in an ephemeral matching PHP CLI container as the same Linux user used by PHP-FPM:
+Run app commands in an ephemeral matching PHP CLI container as the same Linux user used by PHP-FPM. Omit `--php` to use the app's recorded PHP version:
 
 ```bash
 ./manage.py shell
 # or explicitly:
-./manage.py shell shop --php 8.5
-./manage.py exec shop --php 8.5 -- git clone git@github.com:org/project.git .
-./manage.py exec shop --php 8.5 -- composer install
-./manage.py exec shop --php 8.5 -- php artisan migrate
+./manage.py shell shop
+./manage.py exec shop -- git clone git@github.com:org/project.git .
+./manage.py exec shop -- composer install
+./manage.py exec shop -- php artisan migrate
 ```
 
 SSH deploy keys can live in `runtime/home/shop/.ssh/` with normal SSH permissions.
 
 ## Cron jobs
 
-Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs per app and PHP version:
+Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs per app; they inherit the app's recorded PHP version unless you pass a matching `--php`:
 
 ```bash
-./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run' --php 8.5
+./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run'
 ./manage.py cron list
 ./manage.py cron remove shop schedule  # or: ./manage.py cron remove --number 1
 ```
@@ -236,16 +238,16 @@ Cron supports bounded workdirs, IANA timezones, timeouts, app-scoped shared lock
 
 ```bash
 ./manage.py cron create shop report '0 2 * * *' 'php artisan report:send' \
-  --php 8.5 --timezone Asia/Ho_Chi_Minh --timeout 1800 --lock reports
+  --timezone Asia/Ho_Chi_Minh --timeout 1800 --lock reports
 ./manage.py cron create shop import '*/5 * * * *' 'php artisan import:run' \
-  --php 8.5 --output file
+  --output file
 ```
 
 Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-cron-service>-<job>.log`. The always-present daily logrotate job retains 14 rotations as dated archives such as `.log-2026-07-11` (with older archives compressed), without changing the live file's UID/GID. The same policy covers that version's PHP-FPM error and slow logs. Scheduler health and Prometheus metrics are available inside the backend network at `http://php85-cron:9746/health` and `/metrics` (similarly for PHP 8.4).
 
 ## Change an app's PHP version
 
-Re-run `manage.py app create` with another `--php` version. It regenerates app identity and the Nginx vhost:
+Re-run `manage.py app create` with another `--php` version to migrate the **primary** PHP runtime. That is the supported migration path; `cron`/`exec`/`shell` will not change primary PHP version. It regenerates app identity and the Nginx vhost:
 
 ```bash
 ./manage.py app create shop shop.example.com --php 8.4
