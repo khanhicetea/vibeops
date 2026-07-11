@@ -7,8 +7,12 @@ import sys
 from collections import defaultdict
 from typing import Any
 
-from vibeops.helpers import *  # noqa: F403
-
+from vibeops.env import default_php_version
+from vibeops.errors import die, warn
+from vibeops.php import php_cli_service_for, php_service_for
+from vibeops.process import docker_available, run, service_running
+from vibeops.state import load_db
+from vibeops.validation import APP_NAME_RE, PHP_VERSION_RE, validate
 
 def _select_apps(args: argparse.Namespace) -> list[tuple[str, dict[str, Any], str]]:
     """Validate selection and return app records with their target PHP version."""
@@ -36,7 +40,6 @@ def _select_apps(args: argparse.Namespace) -> list[tuple[str, dict[str, Any], st
         result.append((name, app, validate(version, PHP_VERSION_RE, "PHP version")))
     return result
 
-
 def _container_command(version: str, helper: str, helper_args: list[str]) -> list[str]:
     service = php_service_for(version)
     if service_running(service):
@@ -46,7 +49,6 @@ def _container_command(version: str, helper: str, helper_args: list[str]) -> lis
         php_cli_service_for(version), *helper_args,
     ]
 
-
 def cmd_identity_sync(args: argparse.Namespace) -> None:
     if not docker_available():
         die("docker is required")
@@ -55,7 +57,6 @@ def cmd_identity_sync(args: argparse.Namespace) -> None:
         grouped[version].append(name)
     for version, names in sorted(grouped.items()):
         run(_container_command(version, "php-identity-sync", sorted(names)))
-
 
 def _permission_args(args: argparse.Namespace, app_name: str) -> list[str]:
     helper_args = [args.permission_action, app_name]
@@ -68,7 +69,6 @@ def _permission_args(args: argparse.Namespace, app_name: str) -> list[str]:
         helper_args.append("--json")
     return helper_args
 
-
 def initialize_app_permissions(app_name: str, version: str) -> bool:
     """Apply the complete filesystem policy once after an app is created."""
     if not docker_available():
@@ -79,7 +79,6 @@ def initialize_app_permissions(app_name: str, version: str) -> bool:
         warn(f"Initial permission repair could not run; after PHP is available run: ./manage.py permissions fix {app_name} --recursive")
         return False
     return True
-
 
 def cmd_permissions(args: argparse.Namespace) -> None:
     if not docker_available():

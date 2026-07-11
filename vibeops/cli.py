@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from vibeops.commands import StackError
+from vibeops.errors import StackError
 from vibeops.parser import build_parser
 
 

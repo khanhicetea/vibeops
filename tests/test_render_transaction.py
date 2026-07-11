@@ -7,7 +7,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import vibeops.cron_runtime as cron_runtime
+import vibeops.env as env
 import vibeops.helpers as helpers
+import vibeops.mysql as mysql
+import vibeops.nginx as nginx
+import vibeops.paths as paths
+import vibeops.php as php
+import vibeops.process as process
 import vibeops.runtime_commands as runtime
 
 
@@ -41,21 +48,44 @@ class RenderTransactionTests(unittest.TestCase):
         # Isolate app homes and avoid repo runtime side effects.
         self.home = self.runtime_dir / "home"
         self.home.mkdir()
+        php_versions = self.generated / "php" / "versions"
+        cron_dir = self.generated / "cron"
+        nginx_vhosts = self.generated / "nginx" / "vhosts"
+        socket_dir = self.runtime_dir / "run" / "php-fpm"
+        log_dir = self.runtime_dir / "logs" / "php"
+        stack_env = {"DEFAULT_PHP_VERSION": "8.4", "SOCKET_GROUP_NAME": "nginxsock"}
         self.patches = [
-            patch.object(helpers, "HOME_DIR", self.home),
-            patch.object(helpers, "PHP_SOCKET_DIR", self.runtime_dir / "run" / "php-fpm"),
-            patch.object(helpers, "PHP_LOG_DIR", self.runtime_dir / "logs" / "php"),
-            patch.object(helpers, "RUNTIME_DIR", self.runtime_dir),
-            patch.object(helpers, "GENERATED_DIR", self.generated),
-            patch.object(helpers, "MYSQL_SECRETS_DIR", self.secrets),
-            patch.object(helpers, "PHP_VERSIONS_DIR", self.generated / "php" / "versions"),
-            patch.object(helpers, "CRON_RUNTIME_DIR", self.generated / "cron"),
-            patch.object(helpers, "NGINX_VHOST_DIR", self.generated / "nginx" / "vhosts"),
+            patch.object(paths, "HOME_DIR", self.home),
+            patch.object(paths, "PHP_SOCKET_DIR", socket_dir),
+            patch.object(paths, "PHP_LOG_DIR", log_dir),
+            patch.object(paths, "RUNTIME_DIR", self.runtime_dir),
+            patch.object(paths, "GENERATED_DIR", self.generated),
+            patch.object(paths, "MYSQL_SECRETS_DIR", self.secrets),
+            patch.object(paths, "PHP_VERSIONS_DIR", php_versions),
+            patch.object(paths, "CRON_RUNTIME_DIR", cron_dir),
+            patch.object(paths, "NGINX_VHOST_DIR", nginx_vhosts),
+            patch.object(php, "HOME_DIR", self.home),
+            patch.object(php, "PHP_SOCKET_DIR", socket_dir),
+            patch.object(php, "PHP_LOG_DIR", log_dir),
+            patch.object(php, "PHP_VERSIONS_DIR", php_versions),
+            patch.object(mysql, "HOME_DIR", self.home),
+            patch.object(mysql, "MYSQL_SECRETS_DIR", self.secrets),
+            patch.object(mysql, "RUNTIME_DIR", self.runtime_dir),
+            patch.object(nginx, "NGINX_VHOST_DIR", nginx_vhosts),
+            patch.object(cron_runtime, "CRON_RUNTIME_DIR", cron_dir),
             patch.object(runtime, "RUNTIME_DIR", self.runtime_dir),
             patch.object(runtime, "available_php_versions", return_value=["8.4"]),
-            patch.object(helpers, "stack_env", return_value={"DEFAULT_PHP_VERSION": "8.4", "SOCKET_GROUP_NAME": "nginxsock"}),
-            patch.object(helpers, "docker_available", return_value=False),
-            patch.object(helpers, "service_running", return_value=False),
+            patch.object(env, "stack_env", return_value=stack_env),
+            patch.object(php, "stack_env", return_value=stack_env),
+            patch.object(mysql, "stack_env", return_value=stack_env),
+            patch.object(process, "docker_available", return_value=False),
+            patch.object(process, "service_running", return_value=False),
+            patch.object(runtime, "docker_available", return_value=False),
+            patch.object(runtime, "service_running", return_value=False),
+            patch.object(php, "service_running", return_value=False),
+            patch.object(mysql, "service_running", return_value=False),
+            patch.object(nginx, "service_running", return_value=False),
+            patch.object(cron_runtime, "service_running", return_value=False),
         ]
         for p in self.patches:
             p.start()
@@ -184,14 +214,15 @@ class RenderTransactionTests(unittest.TestCase):
         self.assertEqual(unmanaged.read_text(), "# hand-written local override\nserver {}\n")
 
     def test_secret_mode_preserved(self) -> None:
-        with patch.object(
-            helpers,
-            "stack_env",
-            return_value={
-                "DEFAULT_PHP_VERSION": "8.4",
-                "SOCKET_GROUP_NAME": "nginxsock",
-                "MYSQL84_ROOT_PASSWORD": "s3cret",
-            },
+        secret_env = {
+            "DEFAULT_PHP_VERSION": "8.4",
+            "SOCKET_GROUP_NAME": "nginxsock",
+            "MYSQL84_ROOT_PASSWORD": "s3cret",
+        }
+        with (
+            patch.object(env, "stack_env", return_value=secret_env),
+            patch.object(php, "stack_env", return_value=secret_env),
+            patch.object(mysql, "stack_env", return_value=secret_env),
         ):
             runtime.apply_generated_config(self._empty_db(), live=self.live, runtime_dir=self.runtime_dir)
         secret = self.secrets / "mysql84-root.cnf"

@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import vibeops.helpers as helpers
+import vibeops.mysql as mysql
+from vibeops.errors import StackError
 from vibeops import app_commands
 
 
@@ -86,73 +88,74 @@ def _app_create_side_effect_patches() -> list:
 class EnsureMysqlDatabaseTests(unittest.TestCase):
     def test_unavailable_service_raises_before_sql(self) -> None:
         with (
-            patch.object(helpers, "service_running", return_value=False),
-            patch.object(helpers, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
-            patch.object(helpers.Path, "exists", return_value=True),
-            patch.object(helpers, "mysql_root_exec_sql") as sql,
+            patch.object(mysql, "service_running", return_value=False),
+            patch.object(mysql, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(mysql, "mysql_root_exec_sql") as sql,
         ):
-            with self.assertRaisesRegex(helpers.StackError, r"not running"):
-                helpers.ensure_mysql_database("shop", "app", "mysql84")
+            with self.assertRaisesRegex(StackError, r"not running"):
+                mysql.ensure_mysql_database("shop", "app", "mysql84")
             sql.assert_not_called()
 
     def test_missing_root_password_raises_before_sql(self) -> None:
         with (
-            patch.object(helpers, "service_running", return_value=True),
-            patch.object(helpers, "stack_env", return_value={}),
-            patch.object(helpers.Path, "exists", return_value=True),
-            patch.object(helpers, "mysql_root_exec_sql") as sql,
+            patch.object(mysql, "service_running", return_value=True),
+            patch.object(mysql, "stack_env", return_value={}),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(mysql, "mysql_root_exec_sql") as sql,
         ):
-            with self.assertRaisesRegex(helpers.StackError, r"root password is unset"):
-                helpers.ensure_mysql_database("shop", "app", "mysql84")
+            with self.assertRaisesRegex(StackError, r"root password is unset"):
+                mysql.ensure_mysql_database("shop", "app", "mysql84")
             sql.assert_not_called()
 
     def test_missing_option_file_raises_before_sql(self) -> None:
         option = MagicMock(spec=Path)
         option.is_file.return_value = False
         with (
-            patch.object(helpers, "service_running", return_value=True),
-            patch.object(helpers, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
-            patch.object(helpers.Path, "exists", return_value=True),
-            patch.object(helpers, "mysql_root_option_file", return_value=option),
-            patch.object(helpers, "mysql_root_exec_sql") as sql,
+            patch.object(mysql, "service_running", return_value=True),
+            patch.object(mysql, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(mysql, "mysql_root_option_file", return_value=option),
+            patch.object(mysql, "mysql_root_exec_sql") as sql,
         ):
-            with self.assertRaisesRegex(helpers.StackError, r"Missing protected MySQL option file"):
-                helpers.ensure_mysql_database("shop", "app", "mysql84")
+            with self.assertRaisesRegex(StackError, r"Missing protected MySQL option file"):
+                mysql.ensure_mysql_database("shop", "app", "mysql84")
             sql.assert_not_called()
 
     def test_sql_failure_does_not_return_name(self) -> None:
         option = MagicMock(spec=Path)
         option.is_file.return_value = True
         with (
-            patch.object(helpers, "service_running", return_value=True),
-            patch.object(helpers, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
-            patch.object(helpers.Path, "exists", return_value=True),
-            patch.object(helpers, "mysql_root_option_file", return_value=option),
+            patch.object(mysql, "service_running", return_value=True),
+            patch.object(mysql, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(mysql, "mysql_root_option_file", return_value=option),
             patch.object(
-                helpers,
+                mysql,
                 "mysql_root_exec_sql",
-                side_effect=helpers.StackError("mysql on mysql84 failed (exit 1)"),
+                side_effect=StackError("mysql on mysql84 failed (exit 1)"),
             ),
-            patch.object(helpers, "template_text", return_value="CREATE DATABASE;"),
+            patch.object(mysql, "template_text", return_value="CREATE DATABASE;"),
         ):
-            with self.assertRaisesRegex(helpers.StackError, r"mysql on mysql84 failed"):
-                helpers.ensure_mysql_database("shop", "app", "mysql84")
+            with self.assertRaisesRegex(StackError, r"mysql on mysql84 failed"):
+                mysql.ensure_mysql_database("shop", "app", "mysql84")
 
     def test_sql_success_returns_full_name(self) -> None:
         option = MagicMock(spec=Path)
         option.is_file.return_value = True
         with (
-            patch.object(helpers, "service_running", return_value=True),
-            patch.object(helpers, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
-            patch.object(helpers.Path, "exists", return_value=True),
-            patch.object(helpers, "mysql_root_option_file", return_value=option),
-            patch.object(helpers, "mysql_root_exec_sql") as sql,
-            patch.object(helpers, "template_text", return_value="CREATE DATABASE;"),
-            patch.object(helpers, "info"),
+            patch.object(mysql, "service_running", return_value=True),
+            patch.object(mysql, "stack_env", return_value={"MYSQL84_ROOT_PASSWORD": "x"}),
+            patch.object(Path, "exists", return_value=True),
+            patch.object(mysql, "mysql_root_option_file", return_value=option),
+            patch.object(mysql, "mysql_root_exec_sql") as sql,
+            patch.object(mysql, "template_text", return_value="CREATE DATABASE;"),
+            patch.object(mysql, "info"),
         ):
-            name = helpers.ensure_mysql_database("shop", "app", "mysql84")
+            name = mysql.ensure_mysql_database("shop", "app", "mysql84")
             self.assertEqual(name, "shop_app")
             sql.assert_called_once()
+
 
 
 class AppCreateDatabaseStateTests(unittest.TestCase):
@@ -173,7 +176,6 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             ) as ready,
             patch.object(app_commands, "ensure_app_identity") as identity,
             patch.object(app_commands, "ensure_mysql_database") as ensure_db,
-            patch.object(app_commands, "mysql_root_exec_sql") as sql,
             patch.object(app_commands, "save_db") as save_db,
             patch.object(app_commands, "write_template") as write_template,
             patch.object(app_commands, "mkdir") as mkdir,
@@ -186,7 +188,6 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
                 ready.assert_called_once_with("mysql84")
                 identity.assert_not_called()
                 ensure_db.assert_not_called()
-                sql.assert_not_called()
                 save_db.assert_not_called()
                 render_txn.assert_not_called()
                 write_template.assert_not_called()

@@ -6,7 +6,6 @@ import re
 import shlex
 import sys
 
-from vibeops.helpers import *  # noqa: F403
 from vibeops.app_commands import (
     cmd_app_create,
     cmd_app_db_create,
@@ -24,10 +23,30 @@ from vibeops.db_commands import (
     cmd_db_list_backups,
     cmd_db_restore,
 )
-from vibeops.proxy_commands import cmd_proxy_create
+from vibeops.env import FPM_PROFILE_NAMES, default_fpm_profile, default_mysql_service, default_php_version
+from vibeops.errors import die, info, warn
+from vibeops.mysql import mysql_backup_dir
+from vibeops.paths import rel
 from vibeops.permission_commands import cmd_permissions
-from vibeops.runtime_commands import *  # noqa: F403
+from vibeops.proxy_commands import cmd_proxy_create
+from vibeops.runtime_commands import (
+    available_php_versions,
+    cmd_app_shell,
+    cmd_list,
+    cmd_status,
+    print_plan,
+    prompt_aliases,
+    prompt_choice,
+    prompt_confirm,
+    prompt_int,
+    prompt_public_dir,
+    prompt_text,
+    prompt_validated,
+)
+from vibeops.state import load_db
 from vibeops.tls_commands import cmd_tls_acme
+from vibeops.validation import APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, JOB_RE, MYSQL_SERVICE_RE
+
 
 def wizard_create_user() -> None:
     username = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")

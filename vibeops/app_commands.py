@@ -5,9 +5,20 @@ import argparse
 import json
 from typing import Any
 
-from vibeops.helpers import *  # noqa: F403
+from vibeops.env import default_fpm_profile, default_mysql_service, default_php_version, validate_fpm_profile
+from vibeops.errors import die, info, warn
+from vibeops.fsutil import mkdir
+from vibeops.mysql import apply_app_mysql_metadata, ensure_mysql_database, require_mysql_ready_for_sql
+from vibeops.nginx import app_vhost_path, assert_domain_free, domains_for, nginx_reload, normalize_aliases
+from vibeops.paths import PHP_TEMPLATE_DIR, rel
 from vibeops.permission_commands import initialize_app_permissions
-
+from vibeops.php import app_document_root, app_home, ensure_app_identity, php_service_for, php_version_config_dir
+from vibeops.rendering import write_template
+from vibeops.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from vibeops.validation import (
+    APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, MYSQL_SERVICE_RE,
+    PHP_VERSION_RE, validate, validate_php_entrypoint, validate_public_dir
+)
 
 def resolve_app_php_version(
     db: dict[str, Any],
@@ -46,7 +57,6 @@ def resolve_app_php_version(
         return validate(default_php_version(), PHP_VERSION_RE, "PHP version")
     return validate(str(requested), PHP_VERSION_RE, "PHP version")
 
-
 def resolve_app_fpm_profile(
     db: dict[str, Any],
     app_name: str,
@@ -67,7 +77,6 @@ def resolve_app_fpm_profile(
     if not allow_new:
         die(f"Unknown app: {app_name}")
     return default_fpm_profile()
-
 
 def cmd_app_create(args: argparse.Namespace) -> None:
     db = load_db()
@@ -149,7 +158,6 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     info(f"PHP-FPM: {php_version} via /run/php-fpm/{php_service_for(php_version)}/{app_name}.sock")
     nginx_reload(args.no_reload)
 
-
 def ensure_app(app_name: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> dict[str, Any]:
     existing = db.get("apps", {}).get(app_name)
     if isinstance(existing, dict):
@@ -167,7 +175,6 @@ def ensure_app(app_name: str, php_version: str, db: dict[str, Any], no_reload: b
     info(f"PHP {php_version} app identity {app_name} does not exist; creating it first.")
     return ensure_app_identity(app_name, php_version, db, mysql_service=mysql_service, no_reload=no_reload)
 
-
 def cmd_app_domain_list(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -178,7 +185,6 @@ def cmd_app_domain_list(args: argparse.Namespace) -> None:
     for index, domain in enumerate(domains, start=1):
         main = " (main)" if domain == app.get("main_domain") else ""
         info(f"{index}) {domain}{main}")
-
 
 @serialized_cron_state
 def cmd_app_domain_add(args: argparse.Namespace) -> None:
@@ -201,7 +207,6 @@ def cmd_app_domain_add(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Added domain {domain} to app {app_name}")
 
-
 def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
     number = getattr(args, "number", None)
     if number is not None:
@@ -214,7 +219,6 @@ def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
     if not getattr(args, "domain", None):
         die("Provide a domain or --number from 'app domain list'")
     return validate(args.domain, DOMAIN_RE, "domain")
-
 
 @serialized_cron_state
 def cmd_app_domain_remove(args: argparse.Namespace) -> None:
@@ -238,7 +242,6 @@ def cmd_app_domain_remove(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Removed domain {domain} from app {app_name}")
 
-
 @serialized_cron_state
 def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
     from vibeops.runtime_commands import apply_generated_config
@@ -259,7 +262,6 @@ def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Set main domain for {app_name}: {domain}")
 
-
 def cmd_app_db_list(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -275,7 +277,6 @@ def cmd_app_db_list(args: argparse.Namespace) -> None:
         service = services.get(database) or app.get("mysql_service") or default_mysql_service()
         info(f"{index}) {database}\tservice={service}")
 
-
 def cmd_app_db_create(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     db = load_db()
@@ -290,7 +291,6 @@ def cmd_app_db_create(args: argparse.Namespace) -> None:
     app.setdefault("database_services", {})[db_full_name] = service
     upsert_timestamp(app)
     save_db(db)
-
 
 def cmd_app_list(args: argparse.Namespace) -> None:
     db = load_db()
@@ -309,7 +309,6 @@ def cmd_app_list(args: argparse.Namespace) -> None:
             f"main={app.get('main_domain', '')}\tdomains={domains}"
         )
 
-
 def cmd_app_show(args: argparse.Namespace) -> None:
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -317,7 +316,6 @@ def cmd_app_show(args: argparse.Namespace) -> None:
     if not isinstance(app, dict):
         die(f"Unknown app: {app_name}")
     print(json.dumps(app, indent=2, sort_keys=True))
-
 
 def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = None, save: bool = True) -> None:
     warn("'user create' is deprecated; use 'app create <app_name> <main_domain>' for deployable apps")
@@ -327,10 +325,8 @@ def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = Non
         save_db(db)
         initialize_app_permissions(args.username, args.php)
 
-
 def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> None:
     ensure_app(username, php_version, db, no_reload=no_reload, mysql_service=mysql_service)
-
 
 def cmd_site_create(args: argparse.Namespace) -> None:
     db = load_db()

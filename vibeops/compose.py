@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibeops.helpers import ROOT, StackError
+from vibeops.errors import StackError
+from vibeops.paths import ROOT
 
 
 def compose_files(root: Path = ROOT) -> list[Path]:

@@ -6,7 +6,7 @@ This repository separates upstream source, local desired state, disposable gener
 compose.yml                 # upstream-owned service topology
 compose.override.yml        # optional ignored local Docker Compose overrides
 manage.py                   # thin CLI entrypoint into vibeops.cli
-vibeops/                    # management CLI package
+vibeops/                    # management CLI package (see module map below)
 
 docker/                     # Docker build contexts and image helper binaries
   php/
@@ -116,7 +116,53 @@ runtime/home/<app_name>/
 
 All domains on an app share the same code tree under `/home/<app_name>/www` and `/run/php-fpm/<php_service>/<app_name>.sock`. The app's `public_dir` metadata selects the Nginx document root inside that tree: empty string means `/home/<app_name>/www` (WordPress/default), while `public` means `/home/<app_name>/www/public` (Laravel/Symfony). The app's `php_entrypoint` metadata controls PHP routing: `front-controller` only executes `/index.php` and 404s other `.php` paths, while `legacy` keeps direct PHP script execution for older apps. `auto` defaults to `front-controller` when `public_dir` is non-empty. Separate codebases should be separate apps.
 
-App state stores a named `fpm_profile` (`ondemand`, `balanced`, or `throughput`). Render expands that name into mode-correct PHP-FPM pool directives from a single registry in `vibeops/helpers.py` — not arbitrary operator-supplied pool fragments. New apps take `DEFAULT_FPM_PROFILE` from `.env` (default `balanced`). Each PHP image also sets global `process.max` (default 32 via build arg `PHP_FPM_PROCESS_MAX`); per-pool `max_children` is additionally bounded by that cap, and status reports when configured capacity on one PHP version exceeds it.
+App state stores a named `fpm_profile` (`ondemand`, `balanced`, or `throughput`). Render expands that name into mode-correct PHP-FPM pool directives from a single registry in `vibeops/env.py` — not arbitrary operator-supplied pool fragments. New apps take `DEFAULT_FPM_PROFILE` from `.env` (default `balanced`). Each PHP image also sets global `process.max` (default 32 via build arg `PHP_FPM_PROCESS_MAX`); per-pool `max_children` is additionally bounded by that cap, and status reports when configured capacity on one PHP version exceeds it.
+
+## Management package module map
+
+Dependency direction (lower layers must not import command/parser/wizard layers):
+
+```text
+errors / paths / validation
+        ↓
+env / fsutil / process / template / compose
+        ↓
+state / rendering / mysql / php / nginx / cron_runtime
+        ↓
+*_commands.py
+        ↓
+parser / cli / wizard_commands
+```
+
+| Module | Responsibility |
+|---|---|
+| `errors.py` | `StackError` and console output helpers |
+| `paths.py` | Repo roots, runtime path constants, `RenderContext` |
+| `validation.py` | Regexes and pure validators |
+| `env.py` | `.env` parsing, stack defaults, FPM profile registry |
+| `fsutil.py` | `mkdir` / atomic text writes |
+| `process.py` | Subprocess helpers and Docker service discovery |
+| `template.py` | Template engine (no service knowledge) |
+| `compose.py` | Sole owner of Compose file selection and argv prefix |
+| `state.py` | `stack.json` load/save, locks, timestamps, UID allocation |
+| `rendering.py` | Generated headers and template-to-file writes |
+| `mysql.py` | Option files, SQL grants, DB provisioning primitives |
+| `php.py` | PHP service naming, identity/pool render, FPM reload |
+| `nginx.py` | Vhost/TLS mutation and nginx reload |
+| `cron_runtime.py` | Cron paths, aggregate crontab rebuild, scheduler reload |
+| `*_commands.py` | CLI command handlers (stable callback names) |
+| `parser.py` | Explicit argparse wiring to command modules |
+| `cli.py` | Entrypoint / exit codes |
+| `helpers.py` | Deprecated re-export shim only (no business logic) |
+
+Rules for new code:
+
+- Put validation in `validation.py`, env defaults in `env.py`, state mutations in `state.py`.
+- Compose argv goes through `compose.py` (`compose_command` / `compose_prefix`).
+- State writes use `state.py`; generated-file writes use `rendering.py` and the Plan 005 render transaction in `runtime_commands.py`.
+- Parser and wizard are adapters: they call handlers, they do not own business logic.
+- No wildcard imports (`from … import *`). Prefer explicit imports; module-qualified service APIs are fine when origin clarity matters.
+- Foundational modules must not import `*_commands`, `parser`, `wizard_commands`, or `cli`.
 
 ## MySQL recovery model
 

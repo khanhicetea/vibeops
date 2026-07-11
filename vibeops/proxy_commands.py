@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Any
 
-from vibeops.helpers import *  # noqa: F403
-
+from vibeops.errors import die, info
+from vibeops.nginx import apply_vhost_tls, assert_domain_free, domains_for, normalize_aliases
+from vibeops.paths import NGINX_TEMPLATE_DIR, NGINX_VHOST_DIR, RenderContext, rel
+from vibeops.rendering import render_template
+from vibeops.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from vibeops.validation import DOMAIN_RE, validate
 
 def render_proxy_vhost(site: dict[str, Any], ctx: RenderContext | None = None) -> Path:
     main_domain = str(site["domain"])
@@ -22,7 +27,6 @@ def render_proxy_vhost(site: dict[str, Any], ctx: RenderContext | None = None) -
     apply_vhost_tls(conf_path, site)
     site["vhost"] = rel(NGINX_VHOST_DIR / f"{main_domain}.conf")
     return conf_path
-
 
 @serialized_cron_state
 def cmd_proxy_create(args: argparse.Namespace) -> None:

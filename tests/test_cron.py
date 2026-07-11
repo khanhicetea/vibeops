@@ -5,8 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import vibeops.cron_runtime as cron_runtime
 import vibeops.helpers as helpers
 from vibeops.cron_commands import cron_render_values, validate_schedule
+from vibeops.errors import StackError
 
 
 class CronValidationTests(unittest.TestCase):
@@ -15,13 +17,13 @@ class CronValidationTests(unittest.TestCase):
         self.assertEqual(validate_schedule("@hourly"), "@hourly")
 
     def test_schedule_rejects_shell_syntax(self) -> None:
-        with self.assertRaises(helpers.StackError):
+        with self.assertRaises(StackError):
             validate_schedule("* * * * *; touch /tmp/bad")
 
     def test_workdir_is_app_bounded(self) -> None:
         self.assertEqual(helpers.validate_cron_workdir("shop", "/home/shop/www"), "/home/shop/www")
         for path in ("/tmp", "/home/other/www", "/home/shop/www/../private"):
-            with self.subTest(path=path), self.assertRaises(helpers.StackError):
+            with self.subTest(path=path), self.assertRaises(StackError):
                 helpers.validate_cron_workdir("shop", path)
 
     def test_render_values_include_runtime_policy(self) -> None:
@@ -45,8 +47,8 @@ class CronValidationTests(unittest.TestCase):
 
 class CronRenderTests(unittest.TestCase):
     def test_empty_crontab_has_daily_maintenance_job(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, patch.object(helpers, "CRON_RUNTIME_DIR", Path(tmp)):
-            combined = helpers.rebuild_supercronic_crontab("8.5")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(cron_runtime, "CRON_RUNTIME_DIR", Path(tmp)):
+            combined = cron_runtime.rebuild_supercronic_crontab("8.5")
             content = combined.read_text()
             self.assertNotIn("/bin/true", content)
             self.assertIn("/usr/sbin/logrotate", content)
@@ -58,11 +60,11 @@ class CronRenderTests(unittest.TestCase):
             self.assertIn("dateformat -%Y-%m-%d", rotation_content)
 
     def test_nonempty_crontab_does_not_add_dummy(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, patch.object(helpers, "CRON_RUNTIME_DIR", Path(tmp)):
-            jobs = helpers.cron_jobs_dir_for("8.5")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(cron_runtime, "CRON_RUNTIME_DIR", Path(tmp)):
+            jobs = cron_runtime.cron_jobs_dir_for("8.5")
             jobs.mkdir(parents=True)
             (jobs / "shop.cron").write_text("* * * * * /bin/echo ok\n")
-            content = helpers.rebuild_supercronic_crontab("8.5").read_text()
+            content = cron_runtime.rebuild_supercronic_crontab("8.5").read_text()
             self.assertIn("/bin/echo ok", content)
             self.assertNotIn("/bin/true", content)
 

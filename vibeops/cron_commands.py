@@ -2,21 +2,30 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 from pathlib import Path
 from typing import Any
 
-from vibeops.helpers import *  # noqa: F403
 from vibeops.app_commands import ensure_app, resolve_app_php_version
-
+from vibeops.cron_runtime import cron_jobs_dir_for, cron_reload, rebuild_supercronic_crontab
+from vibeops.env import default_php_version, stack_env
+from vibeops.errors import die, info
+from vibeops.fsutil import mkdir
+from vibeops.paths import DOCROOT_NAME, PHP_TEMPLATE_DIR, RenderContext, rel
+from vibeops.php import app_www, php_cron_service_for
+from vibeops.rendering import write_template
+from vibeops.state import cron_state_lock, load_db, save_db, upsert_timestamp
+from vibeops.validation import (
+    APP_NAME_RE, CRON_LOCK_RE, JOB_RE, PHP_VERSION_RE,
+    validate, validate_cron_workdir, validate_timezone
+)
 
 def safe_app_part(app_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", app_name)
 
-
 def safe_domain_part(domain: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", domain)
-
 
 def validate_schedule(schedule: str) -> str:
     if not schedule or "\n" in schedule or "\r" in schedule:
@@ -33,7 +42,6 @@ def validate_schedule(schedule: str) -> str:
         if any(not re.fullmatch(r"[A-Za-z0-9*?,/\-#LW]+", field) for field in fields):
             die(f"Invalid cron schedule: {schedule}")
     return schedule
-
 
 def cron_render_values(cron: dict[str, Any]) -> dict[str, Any]:
     app_name = validate(str(cron.get("app", "")), APP_NAME_RE, "app_name")
@@ -75,7 +83,6 @@ def cron_render_values(cron: dict[str, Any]) -> dict[str, Any]:
         "QUOTED_COMMAND": shlex.quote(command),
     }
 
-
 def render_cron_job(cron: dict[str, Any], ctx: RenderContext | None = None) -> Path:
     values = cron_render_values(cron)
     php_version = str(values["PHP_VERSION"])
@@ -88,7 +95,6 @@ def render_cron_job(cron: dict[str, Any], ctx: RenderContext | None = None) -> P
     # State records the live path so stack.json stays mount-stable.
     cron["file"] = rel(cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron")
     return cron_path
-
 
 def cmd_cron_create(args: argparse.Namespace) -> None:
     with cron_state_lock():
@@ -142,7 +148,6 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         info(f"Output: {output}; timeout: {timeout or 'none'}; lock: {lock or 'same-job (Supercronic)'}")
         info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
 
-
 def cmd_cron_list(args: argparse.Namespace) -> None:
     db = load_db()
     crons = [(key, cron) for key, cron in sorted(db.get("crons", {}).items()) if isinstance(cron, dict)]
@@ -155,7 +160,6 @@ def cmd_cron_list(args: argparse.Namespace) -> None:
             f"\ttz={cron.get('timezone', stack_env().get('TZ', 'UTC'))}"
             f"\toutput={cron.get('output', 'docker')}\t{cron.get('command', '')}"
         )
-
 
 def cmd_cron_remove(args: argparse.Namespace) -> None:
     with cron_state_lock():
@@ -189,7 +193,6 @@ def cmd_cron_remove(args: argparse.Namespace) -> None:
         save_db(db)
         info(f"Removed cron job: {cron_key}")
         info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
-
 
 def cmd_cron_reload(args: argparse.Namespace) -> None:
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")

@@ -7,6 +7,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: L
 - **Risk**: MED
@@ -210,15 +211,15 @@ Run `make check` after every extraction commit. If Docker CI exists, ensure no c
 
 ## Done criteria
 
-- [ ] `rg -n 'import \*' vibeops tests` returns no matches.
-- [ ] `helpers.py` is removed or reduced to an explicitly deprecated compatibility shim under roughly 100 lines with no business logic.
-- [ ] Parser callback ownership is explicit.
-- [ ] Foundational modules do not import command/parser/wizard layers.
-- [ ] Compose, state, and render transaction ownership each have one module.
-- [ ] Ruff wildcard ignores are removed.
-- [ ] CLI help/output, state format, generated output, and command behavior remain unchanged.
-- [ ] `make check`, Ruff, and CI pass.
-- [ ] Plan 011 is marked DONE.
+- [x] `rg -n 'import \*' vibeops tests` returns no matches.
+- [x] `helpers.py` is removed or reduced to an explicitly deprecated compatibility shim under roughly 100 lines with no business logic.
+- [x] Parser callback ownership is explicit.
+- [x] Foundational modules do not import command/parser/wizard layers.
+- [x] Compose, state, and render transaction ownership each have one module.
+- [x] Ruff wildcard ignores are removed.
+- [x] CLI help/output, state format, generated output, and command behavior remain unchanged.
+- [x] `make check`, Ruff, and CI pass.
+- [x] Plan 011 is marked DONE.
 
 ## STOP conditions
 

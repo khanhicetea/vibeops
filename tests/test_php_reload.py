@@ -4,15 +4,16 @@ import subprocess
 import unittest
 from unittest.mock import call, patch
 
-import vibeops.helpers as helpers
+import vibeops.php as php
+from vibeops.errors import StackError
 
 
 class PhpReloadTests(unittest.TestCase):
-    @patch.object(helpers, "info")
-    @patch.object(helpers, "run")
-    @patch.object(helpers, "service_running", return_value=True)
+    @patch.object(php, "info")
+    @patch.object(php, "run")
+    @patch.object(php, "service_running", return_value=True)
     def test_reload_suppresses_fpm_validation_output(self, _running, run, info) -> None:
-        helpers.php_reload("php85", "shop")
+        php.php_reload("php85", "shop")
 
         self.assertEqual(
             run.call_args_list,
@@ -27,16 +28,16 @@ class PhpReloadTests(unittest.TestCase):
         )
         info.assert_called_once_with("Reloaded php85")
 
-    @patch.object(helpers, "run")
-    @patch.object(helpers, "service_running", return_value=True)
+    @patch.object(php, "run")
+    @patch.object(php, "service_running", return_value=True)
     def test_reload_failure_is_concise(self, _running, run) -> None:
         run.side_effect = [
             None,
             subprocess.CalledProcessError(78, ["php-fpm", "-tt"], stderr="verbose config dump"),
         ]
 
-        with self.assertRaisesRegex(helpers.StackError, "Failed to validate or reload php85"):
-            helpers.php_reload("php85", "shop")
+        with self.assertRaisesRegex(StackError, "Failed to validate or reload php85"):
+            php.php_reload("php85", "shop")
 
 
 if __name__ == "__main__":

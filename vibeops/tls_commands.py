@@ -5,8 +5,11 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from vibeops.helpers import *  # noqa: F403
-
+from vibeops.errors import die, info, warn
+from vibeops.nginx import app_vhost_path
+from vibeops.paths import CERTS_DIR, NGINX_VHOST_DIR, rel
+from vibeops.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from vibeops.validation import DOMAIN_RE, validate
 
 def vhost_for_domain(domain: str, db: dict[str, Any]) -> tuple[Path, dict[str, Any] | None]:
     owner = db.get("domains", {}).get(domain)
@@ -23,7 +26,6 @@ def vhost_for_domain(domain: str, db: dict[str, Any]) -> tuple[Path, dict[str, A
     if isinstance(site, dict):
         return NGINX_VHOST_DIR / f"{domain}.conf", site
     return NGINX_VHOST_DIR / f"{domain}.conf", None
-
 
 @serialized_cron_state
 def cmd_tls_acme(args: argparse.Namespace) -> None:
@@ -44,7 +46,6 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
     save_db(db)
     info(("Enabled NGINX ACME for" if mode == "acme" else "Switched to self-signed certificate for") + f" {main_domain}")
     info(f"Regenerated vhost: vibeops/{rel(conf_path)}")
-
 
 @serialized_cron_state
 def cmd_tls_cert(args: argparse.Namespace) -> None:

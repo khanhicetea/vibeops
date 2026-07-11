@@ -15,8 +15,18 @@ import threading
 from pathlib import Path
 
 from vibeops.compose import compose_command
-from vibeops.helpers import *  # noqa: F403
-
+from vibeops.env import parse_env_file
+from vibeops.errors import StackError, die, info, warn
+from vibeops.fsutil import mkdir
+from vibeops.mysql import (
+    SYSTEM_MYSQL_DATABASES, apply_app_mysql_metadata, create_mysql_user, ensure_mysql_database,
+    generate_password, mysql_backup_dir, mysql_client_option_file_content, mysql_root_exec_sql,
+    mysql_root_option_file
+)
+from vibeops.paths import HOME_DIR, ROOT, rel
+from vibeops.process import run, run_stdin_stream, run_stdout_to_file, service_running
+from vibeops.state import load_db, save_db, upsert_timestamp
+from vibeops.validation import APP_NAME_RE, DB_NAME_RE, MYSQL_SERVICE_RE, validate
 
 def _require_mysql_service(service: str) -> str:
     service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
@@ -27,11 +37,9 @@ def _require_mysql_service(service: str) -> str:
         die(f"Missing protected MySQL option file vibeops/{rel(option_file)}; run ./manage.py render")
     return service
 
-
 def _stamp() -> str:
     """Human-sortable backup batch stamp with microsecond precision."""
     return _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-
 
 def _list_user_databases(service: str, *, app_name: str | None = None) -> list[str]:
     cp = mysql_root_exec_sql("SHOW DATABASES;", service=service)
@@ -45,10 +53,8 @@ def _list_user_databases(service: str, *, app_name: str | None = None) -> list[s
         names.append(name)
     return names
 
-
 def _backup_extension(*, compress: bool) -> str:
     return ".sql.gz" if compress else ".sql"
-
 
 def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str, *, compress: bool = False) -> Path:
     """Return a final backup path that does not yet exist (never truncate)."""
@@ -62,7 +68,6 @@ def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str, *, compress
             return candidate
     die(f"Could not reserve a unique backup name for {db_name} under vibeops/{rel(backup_dir)}")
 
-
 def _fsync_dir(directory: Path) -> None:
     try:
         fd = os.open(str(directory), os.O_RDONLY)
@@ -75,7 +80,6 @@ def _fsync_dir(directory: Path) -> None:
     finally:
         os.close(fd)
 
-
 def _open_private_partial(path: Path):
     """Create an exclusive mode-600 partial file (not matched as a finalized backup)."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -86,11 +90,9 @@ def _open_private_partial(path: Path):
         pass
     return os.fdopen(fd, "wb")
 
-
 def _is_gzip_backup(path: Path) -> bool:
     name = path.name.lower()
     return name.endswith(".sql.gz") or name.endswith(".gz")
-
 
 def mysql_root_dump(
     mysqldump_args: list[str],
@@ -163,7 +165,6 @@ def mysql_root_dump(
         if not promoted and partial.exists():
             partial.unlink(missing_ok=True)
 
-
 def _mysql_import_cmd(service: str) -> list[str]:
     return compose_command(
         "exec",
@@ -173,7 +174,6 @@ def _mysql_import_cmd(service: str) -> list[str]:
         "-lc",
         "mysql --defaults-extra-file=/run/secrets/vibeops-root.cnf --batch --raw",
     )
-
 
 def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
     """Stream a SQL dump (plain or ``.sql.gz``) into mysql without loading it fully into memory."""
@@ -222,7 +222,6 @@ def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
         # Avoid echoing secrets; mysql may warn about CLI password usage inside the container.
         die(f"mysql on {service} failed (exit {cp.returncode})" + (f": {err}" if err else ""))
 
-
 def cmd_db_list(args: argparse.Namespace) -> None:
     service = _require_mysql_service(args.mysql_service)
     app_name = validate(args.app, APP_NAME_RE, "app_name") if args.app else None
@@ -232,7 +231,6 @@ def cmd_db_list(args: argparse.Namespace) -> None:
         return
     for name in names:
         info(name)
-
 
 def cmd_db_create(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -247,7 +245,6 @@ def cmd_db_create(args: argparse.Namespace) -> None:
         app.setdefault("database_services", {})[db_full_name] = service
         upsert_timestamp(app)
         save_db(db)
-
 
 def cmd_db_user_reset(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -264,11 +261,9 @@ def cmd_db_user_reset(args: argparse.Namespace) -> None:
         upsert_timestamp(app)
         save_db(db)
 
-
 def _ephemeral_client_option_path() -> str:
     """Return a root-only in-container path for a one-shot client option file."""
     return f"/run/vibeops-client-{secrets.token_hex(16)}.cnf"
-
 
 def _stage_ephemeral_client_option_file(service: str, remote_path: str, content: str) -> None:
     """Write option-file *content* to *remote_path* inside *service* via stdin (mode 600)."""
@@ -287,7 +282,6 @@ def _stage_ephemeral_client_option_file(service: str, remote_path: str, content:
         # Never echo stdin/option content or container diagnostics that might repeat it.
         die(f"Failed to stage ephemeral MySQL client option file in {service} (exit {cp.returncode})")
 
-
 def _remove_ephemeral_client_option_file(service: str, remote_path: str) -> None:
     """Best-effort removal of an in-container client option file; warn on failure only."""
     quoted = shlex.quote(remote_path)
@@ -305,7 +299,6 @@ def _remove_ephemeral_client_option_file(service: str, remote_path: str) -> None
             warn(f"could not remove ephemeral MySQL client option file in {service}")
     except Exception:
         warn(f"could not remove ephemeral MySQL client option file in {service}")
-
 
 def _db_shell_app_user(service: str, username: str, password: str) -> int:
     """Interactive mysql as *username* without putting the password in host argv.
@@ -340,7 +333,6 @@ def _db_shell_app_user(service: str, username: str, password: str) -> int:
     finally:
         _remove_ephemeral_client_option_file(service, remote_path)
 
-
 def cmd_db_shell(args: argparse.Namespace) -> None:
     service = _require_mysql_service(args.mysql_service)
     if args.user:
@@ -364,7 +356,6 @@ def cmd_db_shell(args: argparse.Namespace) -> None:
     )
     raise SystemExit(cp.returncode)
 
-
 def _validate_keep(keep: int | None) -> int | None:
     """``--keep`` must be a positive integer; zero is rejected as too destructive by default."""
     if keep is None:
@@ -372,7 +363,6 @@ def _validate_keep(keep: int | None) -> int | None:
     if keep < 1:
         die("--keep must be a positive integer (>= 1); omit --keep to retain all backups")
     return keep
-
 
 def cmd_db_backup(args: argparse.Namespace) -> None:
     service = _require_mysql_service(args.mysql_service)
@@ -422,7 +412,6 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
     if not written:
         die("No backups written")
 
-
 def _is_final_sql_backup(path: Path) -> bool:
     """True for regular finalized ``*.sql`` / ``*.sql.gz`` files (not partials, not symlinks)."""
     name = path.name
@@ -437,20 +426,17 @@ def _is_final_sql_backup(path: Path) -> bool:
     except OSError:
         return False
 
-
 def _list_final_backups(backup_dir: Path) -> list[Path]:
     if not backup_dir.is_dir():
         return []
     files = [p for p in backup_dir.iterdir() if _is_final_sql_backup(p)]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
-
 def _apply_retention(backup_dir: Path, *, keep: int) -> None:
     files = _list_final_backups(backup_dir)
     for path in files[keep:]:
         path.unlink(missing_ok=True)
         info(f"Removed old backup vibeops/{rel(path)}")
-
 
 def cmd_db_list_backups(args: argparse.Namespace) -> None:
     service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
@@ -465,7 +451,6 @@ def cmd_db_list_backups(args: argparse.Namespace) -> None:
         size_kb = max(1, st.st_size // 1024) if st.st_size else 0
         info(f"{mtime}\t{size_kb:>8}K\tvibeops/{rel(path)}")
 
-
 def _resolve_backup_path(raw: str, service: str) -> Path:
     path = Path(raw)
     if path.is_file() and not path.is_symlink():
@@ -478,7 +463,6 @@ def _resolve_backup_path(raw: str, service: str) -> Path:
     if alt.is_file() and not alt.is_symlink():
         return alt.resolve()
     die(f"Backup file not found: {raw}")
-
 
 def cmd_db_restore(args: argparse.Namespace) -> None:
     service = _require_mysql_service(args.mysql_service)

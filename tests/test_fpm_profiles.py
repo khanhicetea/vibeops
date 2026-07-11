@@ -9,7 +9,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import vibeops.env as env
 import vibeops.helpers as helpers
+import vibeops.paths as paths
 import vibeops.runtime_commands as runtime
 from vibeops.app_commands import resolve_app_fpm_profile
 from vibeops.parser import build_parser
@@ -23,7 +25,7 @@ def _render_pool(profile: str, app: str = "shop") -> str:
         "PHP_VERSION": "8.4",
         **helpers.fpm_pool_template_values(profile),
     }
-    template = (helpers.PHP_TEMPLATE_DIR / "pool.conf.template").read_text()
+    template = (paths.PHP_TEMPLATE_DIR / "pool.conf.template").read_text()
     return render_template_text(template, values)
 
 
@@ -33,15 +35,15 @@ class FpmProfileRegistryTests(unittest.TestCase):
         self.assertEqual(helpers.DEFAULT_FPM_PROFILE, "balanced")
 
     def test_default_is_balanced(self) -> None:
-        with patch.object(helpers, "stack_env", return_value={}):
+        with patch.object(env, "stack_env", return_value={}):
             self.assertEqual(helpers.default_fpm_profile(), "balanced")
 
     def test_default_from_env(self) -> None:
-        with patch.object(helpers, "stack_env", return_value={"DEFAULT_FPM_PROFILE": "ondemand"}):
+        with patch.object(env, "stack_env", return_value={"DEFAULT_FPM_PROFILE": "ondemand"}):
             self.assertEqual(helpers.default_fpm_profile(), "ondemand")
 
     def test_invalid_env_default_fails(self) -> None:
-        with patch.object(helpers, "stack_env", return_value={"DEFAULT_FPM_PROFILE": "turbo"}):
+        with patch.object(env, "stack_env", return_value={"DEFAULT_FPM_PROFILE": "turbo"}):
             with self.assertRaisesRegex(helpers.StackError, r"Invalid fpm_profile"):
                 helpers.default_fpm_profile()
 
@@ -50,11 +52,11 @@ class FpmProfileRegistryTests(unittest.TestCase):
             helpers.validate_fpm_profile("turbo")
 
     def test_process_max_default_and_override(self) -> None:
-        with patch.object(helpers, "stack_env", return_value={}):
+        with patch.object(env, "stack_env", return_value={}):
             self.assertEqual(helpers.php_fpm_process_max(), 32)
-        with patch.object(helpers, "stack_env", return_value={"PHP_FPM_PROCESS_MAX": "64"}):
+        with patch.object(env, "stack_env", return_value={"PHP_FPM_PROCESS_MAX": "64"}):
             self.assertEqual(helpers.php_fpm_process_max(), 64)
-        with patch.object(helpers, "stack_env", return_value={"PHP_FPM_PROCESS_MAX": "0"}):
+        with patch.object(env, "stack_env", return_value={"PHP_FPM_PROCESS_MAX": "0"}):
             with self.assertRaisesRegex(helpers.StackError, r"PHP_FPM_PROCESS_MAX"):
                 helpers.php_fpm_process_max()
 
@@ -124,7 +126,7 @@ class ResolveAndNormalizeTests(unittest.TestCase):
         self.assertEqual(resolve_app_fpm_profile(db, "shop", "ondemand"), "ondemand")
 
     def test_missing_profile_normalizes_to_default(self) -> None:
-        with patch.object(helpers, "stack_env", return_value={"DEFAULT_PHP_VERSION": "8.4", "DEFAULT_MYSQL_SERVICE": "mysql84"}):
+        with patch.object(env, "stack_env", return_value={"DEFAULT_PHP_VERSION": "8.4", "DEFAULT_MYSQL_SERVICE": "mysql84"}):
             with patch.object(helpers, "default_fpm_profile", return_value="balanced"):
                 data = helpers.normalize_db({
                     "schema": helpers.SCHEMA_VERSION,
@@ -137,7 +139,7 @@ class ResolveAndNormalizeTests(unittest.TestCase):
                 self.assertEqual(data["apps"]["shop"]["fpm_profile"], "balanced")
 
     def test_invalid_state_profile_fails(self) -> None:
-        with patch.object(helpers, "stack_env", return_value={}):
+        with patch.object(env, "stack_env", return_value={}):
             with self.assertRaisesRegex(helpers.StackError, r"Invalid fpm_profile"):
                 helpers.normalize_db({
                     "schema": helpers.SCHEMA_VERSION,
@@ -268,7 +270,7 @@ class RenderWithProfileTests(unittest.TestCase):
             patch.object(helpers, "NGINX_VHOST_DIR", self.generated / "nginx" / "vhosts"),
             patch.object(runtime, "RUNTIME_DIR", self.runtime_dir),
             patch.object(runtime, "available_php_versions", return_value=["8.4"]),
-            patch.object(helpers, "stack_env", return_value={
+            patch.object(env, "stack_env", return_value={
                 "DEFAULT_PHP_VERSION": "8.4",
                 "SOCKET_GROUP_NAME": "nginxsock",
                 "DEFAULT_FPM_PROFILE": "balanced",

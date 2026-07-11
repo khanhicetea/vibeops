@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -11,10 +12,29 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from vibeops.helpers import *  # noqa: F403
 from vibeops.app_commands import cmd_app_list, ensure_app, resolve_app_php_version
 from vibeops.cron_commands import render_cron_job
+from vibeops.cron_runtime import rebuild_supercronic_crontab
+from vibeops.env import default_php_version, fpm_capacity_warnings, php_fpm_process_max
+from vibeops.errors import StackError, die, info, warn
+from vibeops.fsutil import mkdir, write_text_atomic
+from vibeops.mysql import mysql_admin_ping, mysql_log_dir, render_mysql_root_option_files
+from vibeops.nginx import render_app_vhost
+from vibeops.paths import (
+    DB_PATH, DOCROOT_NAME, GENERATED_MANAGED_GLOBS, LEGACY_DB_PATH,
+    LEGACY_PHP_VERSIONS_DIR, NGINX_VHOST_DIR, PHP_VERSIONS_DIR, RENDER_TXN_DIR_PREFIX,
+    RENDER_TXN_JOURNAL_VERSION, ROOT, RUNTIME_DIR, RenderContext,
+    live_render_context, rel
+)
+from vibeops.php import (
+    app_home, app_www, php_cli_service_for, php_cron_service_for,
+    php_service_for, php_version_config_dir, render_app_identity, render_php_fallback
+)
+from vibeops.process import docker_available, run, running_services, service_running
 from vibeops.proxy_commands import render_proxy_vhost
+from vibeops.rendering import content_looks_generated
+from vibeops.state import empty_db, load_db, save_db, serialized_cron_state
+from vibeops.validation import APP_NAME_RE, DOMAIN_RE, validate, validate_public_dir
 
 def select_app_from_db() -> tuple[str, str]:
     db = load_db()
@@ -42,7 +62,6 @@ def select_app_from_db() -> tuple[str, str]:
             return str(app["name"]), str(app.get("php_version") or default_php_version())
         warn("invalid selection")
 
-
 def cmd_app_shell(args: argparse.Namespace) -> None:
     if not args.app_name:
         args.app_name, selected_php = select_app_from_db()
@@ -50,7 +69,6 @@ def cmd_app_shell(args: argparse.Namespace) -> None:
             args.php = selected_php
     args.command = [args.shell]
     cmd_app_exec(args)
-
 
 def cmd_app_exec(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
@@ -83,7 +101,6 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
         *command,
     ])
 
-
 def cmd_list(args: argparse.Namespace) -> None:
     db = load_db()
     kind = args.kind
@@ -113,7 +130,6 @@ def cmd_list(args: argparse.Namespace) -> None:
             info(f"{key}\t{cron.get('schedule', '')}\t{cron.get('command', '')}")
     else:
         print(json.dumps(db, indent=2, sort_keys=True))
-
 
 def render_all_into(db: dict[str, Any], ctx: RenderContext) -> list[Path]:
     """Render a complete candidate generation into ``ctx`` (staging or live).
@@ -156,15 +172,12 @@ def render_all_into(db: dict[str, Any], ctx: RenderContext) -> list[Path]:
         rendered.append(rebuild_supercronic_crontab(version, ctx))
     return rendered
 
-
 def render_all(db: dict[str, Any]) -> list[Path]:
     """Stage and promote a full generation into live paths (no service reload)."""
     return apply_generated_config(db, reload_services=False, validate_services=False)
 
-
 def stat_mode(path: Path) -> int:
     return path.stat().st_mode & 0o777
-
 
 def _is_within(path: Path, root: Path) -> bool:
     try:
@@ -172,7 +185,6 @@ def _is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
-
 
 def build_render_manifest(staging: RenderContext) -> list[dict[str, Any]]:
     """Build the managed-file manifest from a completed staging tree."""
@@ -214,7 +226,6 @@ def build_render_manifest(staging: RenderContext) -> list[dict[str, Any]]:
     manifest.sort(key=lambda e: (e["root"], e["rel"]))
     return manifest
 
-
 def _live_path(entry: dict[str, Any], live: RenderContext) -> Path:
     if entry["root"] == "generated":
         return live.generated_dir / entry["rel"]
@@ -222,7 +233,6 @@ def _live_path(entry: dict[str, Any], live: RenderContext) -> Path:
         return live.secrets_dir / entry["rel"]
     die(f"Unknown manifest root: {entry.get('root')}")
     raise AssertionError("unreachable")
-
 
 def _staging_path(entry: dict[str, Any], staging: RenderContext) -> Path:
     if entry["root"] == "generated":
@@ -232,11 +242,9 @@ def _staging_path(entry: dict[str, Any], staging: RenderContext) -> Path:
     die(f"Unknown manifest root: {entry.get('root')}")
     raise AssertionError("unreachable")
 
-
 def _write_journal(path: Path, journal: dict[str, Any]) -> None:
     text = json.dumps(journal, indent=2, sort_keys=True) + "\n"
     write_text_atomic(path, text, 0o600)
-
 
 def _read_journal(path: Path) -> dict[str, Any]:
     try:
@@ -247,11 +255,9 @@ def _read_journal(path: Path) -> dict[str, Any]:
         die(f"Invalid render transaction journal: {rel(path)}")
     return data
 
-
 def _copy_file_bytes(src: Path, dest: Path) -> None:
     mkdir(dest.parent)
     shutil.copy2(src, dest)
-
 
 def _atomic_install(src: Path, dest: Path, mode: int) -> None:
     """Copy ``src`` into ``dest`` via temp + fsync + os.replace (dirs stay stable)."""
@@ -267,7 +273,6 @@ def _atomic_install(src: Path, dest: Path, mode: int) -> None:
     finally:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
-
 
 def _snapshot_existing(path: Path, backup_root: Path, entry: dict[str, Any]) -> dict[str, Any]:
     record: dict[str, Any] = {
@@ -286,7 +291,6 @@ def _snapshot_existing(path: Path, backup_root: Path, entry: dict[str, Any]) -> 
         record["backup"] = backup_rel
         record["previous_mode"] = stat_mode(path)
     return record
-
 
 def promote_manifest(
     manifest: list[dict[str, Any]],
@@ -355,7 +359,6 @@ def promote_manifest(
     journal["status"] = "promoted"
     _write_journal(journal_path, journal)
 
-
 def rollback_from_journal(
     journal: dict[str, Any],
     live: RenderContext,
@@ -385,7 +388,6 @@ def rollback_from_journal(
         # Newly created during promotion: remove.
         if dest.exists() and record.get("created"):
             dest.unlink(missing_ok=True)
-
 
 def recover_abandoned_transactions(
     runtime_dir: Path,
@@ -430,7 +432,6 @@ def recover_abandoned_transactions(
             f"vibeops/{rel(txn_dir)}; inspect journal.json before continuing"
         )
 
-
 def validate_generated_services(db: dict[str, Any]) -> None:
     """Validate promoted config against running services. No reload signals."""
     if docker_available() and service_running("nginx"):
@@ -462,7 +463,6 @@ def validate_generated_services(db: dict[str, Any]) -> None:
             php_service = service.removesuffix("-cron")
             if service_running(php_service):
                 run(["docker", "compose", "exec", "-T", php_service, "supercronic", "-test", crontab])
-
 
 def reload_generated_services(db: dict[str, Any]) -> None:
     """Signal services after successful validation. Does not roll back files on failure."""
@@ -503,7 +503,6 @@ def reload_generated_services(db: dict[str, Any]) -> None:
                 info(f"Reloaded {service} cron with SIGUSR2")
             except Exception as exc:
                 warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
-
 
 def apply_generated_config(
     db: dict[str, Any],
@@ -606,7 +605,6 @@ def apply_generated_config(
 
     return live_paths
 
-
 def compose_files() -> list[Path]:
     files = [ROOT / "compose.yml"]
     for path in [ROOT / "compose.override.yml", ROOT / "compose.local.yml"]:
@@ -618,7 +616,6 @@ def compose_files() -> list[Path]:
         files.extend(sorted(compose_d.glob("*.yaml")))
     return files
 
-
 def cmd_compose(args: argparse.Namespace) -> None:
     files = compose_files()
     cmd = ["docker", "compose"]
@@ -626,7 +623,6 @@ def cmd_compose(args: argparse.Namespace) -> None:
         cmd.extend(["-f", str(path)])
     cmd.extend(args.compose_args or ["ps"])
     os.execvp("docker", cmd)
-
 
 @serialized_cron_state
 def cmd_render(args: argparse.Namespace) -> None:
@@ -636,7 +632,6 @@ def cmd_render(args: argparse.Namespace) -> None:
     info(f"Rendered {len(rendered)} file(s) from vibeops/{rel(DB_PATH)}")
     for path in rendered:
         info(f"  {rel(path)}")
-
 
 @serialized_cron_state
 def cmd_apply(args: argparse.Namespace) -> None:
@@ -649,7 +644,6 @@ def cmd_apply(args: argparse.Namespace) -> None:
     )
     save_db(db)
     info(f"Rendered {len(rendered)} file(s)")
-
 
 def cmd_state(args: argparse.Namespace) -> None:
     if args.state_action == "path":
@@ -675,7 +669,6 @@ def cmd_state(args: argparse.Namespace) -> None:
         save_db(empty_db())
         info(f"Initialized vibeops/{rel(DB_PATH)}")
 
-
 def prompt_text(label: str, default: str | None = None, *, required: bool = True) -> str:
     suffix = f" [{default}]" if default not in (None, "") else ""
     while True:
@@ -686,7 +679,6 @@ def prompt_text(label: str, default: str | None = None, *, required: bool = True
             return value
         warn("required")
 
-
 def prompt_validated(label: str, pattern: re.Pattern[str], value_label: str, default: str | None = None, *, required: bool = True, hint: str | None = None) -> str:
     while True:
         value = prompt_text(label, default, required=required)
@@ -695,7 +687,6 @@ def prompt_validated(label: str, pattern: re.Pattern[str], value_label: str, def
         if pattern.match(value):
             return value
         warn(f"invalid {value_label}: {value}" + (f" ({hint})" if hint else ""))
-
 
 def prompt_int(label: str, default: str | None = None, *, required: bool = False) -> int | None:
     while True:
@@ -707,7 +698,6 @@ def prompt_int(label: str, default: str | None = None, *, required: bool = False
         except ValueError:
             warn(f"invalid integer: {value}")
 
-
 def prompt_public_dir() -> str:
     while True:
         raw = prompt_text("Public dir inside www (blank = www, Laravel: public)", "", required=False)
@@ -715,7 +705,6 @@ def prompt_public_dir() -> str:
             return validate_public_dir(raw)
         except StackError as exc:
             warn(str(exc))
-
 
 def prompt_aliases() -> list[str]:
     while True:
@@ -725,7 +714,6 @@ def prompt_aliases() -> list[str]:
         if not invalid:
             return aliases
         warn("invalid alias domain(s): " + ", ".join(invalid))
-
 
 def prompt_confirm(label: str, default: bool = True) -> bool:
     suffix = "Y/n" if default else "y/N"
@@ -738,7 +726,6 @@ def prompt_confirm(label: str, default: bool = True) -> bool:
         if value in {"n", "no"}:
             return False
         warn("answer yes or no")
-
 
 def prompt_choice(label: str, choices: list[str], default: str | None = None) -> str:
     if not choices:
@@ -759,7 +746,6 @@ def prompt_choice(label: str, choices: list[str], default: str | None = None) ->
             return choices[idx - 1]
         warn("invalid selection")
 
-
 def available_php_versions() -> list[str]:
     version_set: set[str] = set()
     for base in (LEGACY_PHP_VERSIONS_DIR, PHP_VERSIONS_DIR):
@@ -771,16 +757,13 @@ def available_php_versions() -> list[str]:
         versions.insert(0, default)
     return versions
 
-
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
-
 
 def print_plan(lines: list[str]) -> None:
     info("\nPlan:")
     for line in lines:
         info(f"  - {line}")
-
 
 def cmd_status(args: argparse.Namespace) -> None:
     db = load_db()
