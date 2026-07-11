@@ -16,7 +16,7 @@ from pathlib import Path
 
 from vibeops.compose import compose_command
 from vibeops.env import parse_env_file
-from vibeops.errors import StackError, die, info, warn
+from vibeops.errors import StackError, die, info, warn, warn_password_cli_flag
 from vibeops.fsutil import mkdir
 from vibeops.mysql import (
     SYSTEM_MYSQL_DATABASES, apply_app_mysql_metadata, create_mysql_user, ensure_mysql_database,
@@ -249,6 +249,8 @@ def cmd_db_create(args: argparse.Namespace) -> None:
 def cmd_db_user_reset(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    if getattr(args, "password", None):
+        warn_password_cli_flag("--password")
     password = args.password or generate_password()
     created, cred_path = create_mysql_user(app_name, password, service)
     if not created:

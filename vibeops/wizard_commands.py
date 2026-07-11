@@ -39,6 +39,7 @@ from vibeops.runtime_commands import (
     prompt_choice,
     prompt_confirm,
     prompt_int,
+    prompt_password,
     prompt_public_dir,
     prompt_text,
     prompt_validated,
@@ -54,7 +55,7 @@ def wizard_create_user() -> None:
     uid = prompt_int("UID (blank = auto)", "", required=False)
     no_mysql = not prompt_confirm("Create/update MySQL account?", True)
     mysql_service = default_mysql_service() if no_mysql else prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97")
-    mysql_password = None if no_mysql else prompt_text("MySQL password (blank = generate)", "", required=False) or None
+    mysql_password = None if no_mysql else prompt_password()
     no_reload = not prompt_confirm("Reload PHP-FPM if running?", True)
     print_plan([f"create/update app identity {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else mysql_service), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
     if prompt_confirm("Continue?", True):

@@ -48,7 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="PHP-FPM pool profile (ondemand|balanced|throughput); omit to keep an existing app's profile or use DEFAULT_FPM_PROFILE for a new app",
     )
     app_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
-    app_create.add_argument("--mysql-password", help="Password for the MySQL account")
+    app_create.add_argument(
+        "--mysql-password",
+        help="Password for the MySQL account (discouraged: visible in shell history/process list; omit to auto-generate)",
+    )
     app_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")
     app_create.add_argument("--no-reload", action="store_true", help="Do not reload nginx/PHP-FPM")
     app_create.add_argument("--uid", type=int, help="Explicit Linux UID")
@@ -98,7 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
     user_create.add_argument("uid", nargs="?", type=int)
     user_create.add_argument("--php", default=env.default_php_version(), help="PHP version")
     user_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
-    user_create.add_argument("--mysql-password", help="Password for the MySQL account")
+    user_create.add_argument(
+        "--mysql-password",
+        help="Password for the MySQL account (discouraged: visible in shell history/process list; omit to auto-generate)",
+    )
     user_create.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service to create the account in, e.g. mysql57/mysql84/mysql97")
     user_create.add_argument("--no-reload", action="store_true", help="Do not reload PHP-FPM")
     user_create.set_defaults(func=app_commands.cmd_user_create)
@@ -133,7 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     db_user_reset = db_sub.add_parser("user-reset", help="Rotate an app MySQL password and rewrite credentials file")
     db_user_reset.add_argument("app_name")
-    db_user_reset.add_argument("--password", help="New password (generated if omitted)")
+    db_user_reset.add_argument(
+        "--password",
+        help="New password (discouraged: visible in shell history/process list; omit to auto-generate)",
+    )
     db_user_reset.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_user_reset.set_defaults(func=db_commands.cmd_db_user_reset)
 

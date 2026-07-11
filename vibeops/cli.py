@@ -22,6 +22,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.func(args)
         return 0
+    except KeyboardInterrupt:
+        # Ctrl-C during interactive prompts (wizard, confirms, shells).
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
+    except EOFError:
+        # Ctrl-D / closed stdin during interactive input.
+        print("\nCancelled.", file=sys.stderr)
+        return 1
     except StackError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -678,6 +679,15 @@ def prompt_text(label: str, default: str | None = None, *, required: bool = True
         if value or not required:
             return value
         warn("required")
+
+
+def prompt_password(label: str = "MySQL password (blank = generate)") -> str | None:
+    """Read a secret without echoing (uses getpass). Blank input means generate/omit.
+
+    KeyboardInterrupt and EOFError propagate so ``cli.main`` can exit cleanly.
+    """
+    value = getpass.getpass(f"{label}: ")
+    return value or None
 
 def prompt_validated(label: str, pattern: re.Pattern[str], value_label: str, default: str | None = None, *, required: bool = True, hint: str | None = None) -> str:
     while True:

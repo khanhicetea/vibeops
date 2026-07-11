@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from vibeops.env import default_fpm_profile, default_mysql_service, default_php_version, validate_fpm_profile
-from vibeops.errors import die, info, warn
+from vibeops.errors import die, info, warn, warn_password_cli_flag
 from vibeops.fsutil import mkdir
 from vibeops.mysql import apply_app_mysql_metadata, ensure_mysql_database, require_mysql_ready_for_sql
 from vibeops.nginx import app_vhost_path, assert_domain_free, domains_for, nginx_reload, normalize_aliases
@@ -79,6 +79,8 @@ def resolve_app_fpm_profile(
     return default_fpm_profile()
 
 def cmd_app_create(args: argparse.Namespace) -> None:
+    if getattr(args, "mysql_password", None):
+        warn_password_cli_flag("--mysql-password")
     db = load_db()
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     main_domain = validate(args.main_domain, DOMAIN_RE, "main domain")
@@ -319,6 +321,8 @@ def cmd_app_show(args: argparse.Namespace) -> None:
 
 def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = None, save: bool = True) -> None:
     warn("'user create' is deprecated; use 'app create <app_name> <main_domain>' for deployable apps")
+    if getattr(args, "mysql_password", None):
+        warn_password_cli_flag("--mysql-password")
     db = db if db is not None else load_db()
     ensure_app_identity(args.username, args.php, db, uid=args.uid, no_mysql=args.no_mysql, mysql_password=args.mysql_password, mysql_service=args.mysql_service, no_reload=args.no_reload)
     if save:
