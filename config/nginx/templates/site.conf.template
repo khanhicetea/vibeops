@@ -26,7 +26,7 @@ server {
 {% if ACCESS_LOG %}
     # App-scoped access log (opt-in via ./manage.py app access-log enable).
     # flush=30s batches writes; rotate with ./manage.py logs rotate (reopen, not reload).
-    access_log /var/log/nginx/apps/${APP_NAME}.access.log vibeops_combined buffer=64k flush=30s;
+    access_log /var/log/nginx/apps/${APP_NAME}.access.log bento_combined buffer=64k flush=30s;
 {% endif %}
 
     include /etc/nginx/snippets/security.conf;
@@ -72,7 +72,7 @@ server {
     root $base;
 
 {% if ACCESS_LOG %}
-    access_log /var/log/nginx/apps/${APP_NAME}.access.log vibeops_combined buffer=64k flush=30s;
+    access_log /var/log/nginx/apps/${APP_NAME}.access.log bento_combined buffer=64k flush=30s;
 {% endif %}
 
     include /etc/nginx/snippets/security.conf;

@@ -6,12 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import vibeops.utils.env as env
-from vibeops.utils.errors import StackError
-from vibeops.services.php import php_version_config_dir
-from vibeops.commands.app_commands import ensure_app, resolve_app_php_version
-from vibeops.commands.parser import build_parser
-from vibeops.commands import app_commands, cron_commands, runtime_commands
+import bento.utils.env as env
+from bento.utils.errors import StackError
+from bento.services.php import php_version_config_dir
+from bento.commands.app_commands import ensure_app, resolve_app_php_version
+from bento.commands.parser import build_parser
+from bento.commands import app_commands, cron_commands, runtime_commands
 
 
 def _shop_db(php_version: str = "8.5") -> dict:
@@ -258,7 +258,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(app_commands, "upsert_timestamp"),
             patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-shop.conf")),
         ):
-            import vibeops.commands.runtime_commands as runtime_commands
+            import bento.commands.runtime_commands as runtime_commands
 
             with patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-shop.conf")]):
                 args = argparse.Namespace(
@@ -300,7 +300,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(app_commands, "upsert_timestamp"),
             patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-fresh.conf")),
         ):
-            import vibeops.commands.runtime_commands as runtime_commands
+            import bento.commands.runtime_commands as runtime_commands
 
             with patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-fresh.conf")]):
                 args = argparse.Namespace(
@@ -340,7 +340,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(app_commands, "upsert_timestamp"),
             patch.object(app_commands, "app_vhost_path", return_value=Path("/tmp/app-shop.conf")),
         ):
-            import vibeops.commands.runtime_commands as runtime_commands
+            import bento.commands.runtime_commands as runtime_commands
 
             with patch.object(runtime_commands, "apply_generated_config", return_value=[Path("/tmp/app-shop.conf")]):
                 args = argparse.Namespace(

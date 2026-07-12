@@ -7,7 +7,7 @@
 > in `plans/README.md`.
 >
 > **Drift check (run first)**:
-> `git diff --stat 706f9ab..HEAD -- vibeops/commands/db_commands.py vibeops/commands/parser.py vibeops/commands/cron_commands.py vibeops/services/cron_runtime.py docker/php/ compose.yml README.md docs/architecture.md`
+> `git diff --stat 706f9ab..HEAD -- bento/commands/db_commands.py bento/commands/parser.py bento/commands/cron_commands.py bento/services/cron_runtime.py docker/php/ compose.yml README.md docs/architecture.md`
 > On mismatch, STOP and report.
 
 ## Status
@@ -25,7 +25,7 @@ Logical backup/restore is solid (`db backup` with atomic promote, gzip, retentio
 
 ## Current state
 
-- Backup implementation: `vibeops/commands/db_commands.py` (`cmd_db_backup`) writes under `runtime/backups/<mysql_service>/`
+- Backup implementation: `bento/commands/db_commands.py` (`cmd_db_backup`) writes under `runtime/backups/<mysql_service>/`
 - README: “Schedule regular `./manage.py db backup` (host cron or manual…)”
 - Cron system today is **app-scoped** (`crons` in state, runs as app user via `php-cron-as`) — **root/stack backups cannot safely run as an app user**
 - Stack already has always-present daily maintenance jobs in supercronic (see `docs/architecture.md` cron layout) for logrotate — pattern for “version-level system jobs”
@@ -44,7 +44,7 @@ Logical backup/restore is solid (`db backup` with atomic promote, gzip, retentio
   --mysql-service mysql84
 ```
 
-- Writes a root-owned file under `runtime/generated/cron/host/vibeops-db-backup.cron` **or** prints install instructions
+- Writes a root-owned file under `runtime/generated/cron/host/bento-db-backup.cron` **or** prints install instructions
 - Content runs on the **host**: `cd <repo> && ./manage.py db backup --gzip --keep 14 --mysql-service mysql84`
 - Also support `./manage.py db schedule show` and `db schedule uninstall` (remove generated file + tell user to remove crontab line)
 - Optional: `db schedule install --user-crontab` that runs `crontab -l` merge — **only if** you can do it safely; otherwise write file + print `crontab` install one-liner and do not auto-mutate user crontab
@@ -65,9 +65,9 @@ Only if Option A is blocked on platform assumptions. Do **not** overload `php*-c
 ## Scope
 
 **In scope**:
-- `vibeops/commands/db_commands.py` — schedule install/show/uninstall (+ maybe list)
-- `vibeops/commands/parser.py` — `db schedule` subcommands
-- `vibeops/utils/paths.py` — path constant for generated schedule file if needed
+- `bento/commands/db_commands.py` — schedule install/show/uninstall (+ maybe list)
+- `bento/commands/parser.py` — `db schedule` subcommands
+- `bento/utils/paths.py` — path constant for generated schedule file if needed
 - `tests/test_db_backup_schedule.py` — new
 - `README.md` recovery section update (replace “use host cron manually” with managed command)
 - `.env.example` optional defaults: `DB_BACKUP_CRON`, `DB_BACKUP_KEEP`
@@ -106,7 +106,7 @@ Pure functions: given root, service, keep, gzip → expected shell line. No dock
 
 ### Step 2: Implement schedule commands
 
-Write file under e.g. `runtime/generated/cron/host/db-backup.crontab` with header comment “managed by vibeops; do not edit”.
+Write file under e.g. `runtime/generated/cron/host/db-backup.crontab` with header comment “managed by bento; do not edit”.
 
 Print after install:
 

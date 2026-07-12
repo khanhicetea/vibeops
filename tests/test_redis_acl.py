@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vibeops.services import redis
-from vibeops.utils.env import parse_env_file
+from bento.services import redis
+from bento.utils.env import parse_env_file
 
 
 class RedisAclTests(unittest.TestCase):

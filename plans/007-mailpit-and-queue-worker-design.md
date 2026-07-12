@@ -6,7 +6,7 @@
 > stop after the design document. Update `plans/README.md` when done.
 >
 > **Drift check (run first)**:
-> `git diff --stat 706f9ab..HEAD -- compose.yml docker/php/ vibeops/services/cron_runtime.py vibeops/commands/cron_commands.py docs/architecture.md README.md`
+> `git diff --stat 706f9ab..HEAD -- compose.yml docker/php/ bento/services/cron_runtime.py bento/commands/cron_commands.py docs/architecture.md README.md`
 > On large drift in cron/compose models, re-read before writing the design.
 
 ## Status
@@ -25,12 +25,12 @@
 
 ## Why this matters
 
-VibeOps already treats **cron** as a first-class, versioned, multi-tenant concern (supercronic, `php-cron-as`, state in `stack.json`). Laravel/WordPress-style apps also need:
+bento already treats **cron** as a first-class, versioned, multi-tenant concern (supercronic, `php-cron-as`, state in `stack.json`). Laravel/WordPress-style apps also need:
 
 1. **Outbound/dev mail** — password resets, notifications (no SMTP path in compose today)
 2. **Queue workers** — `queue:work` / Horizon-style long-running PHP processes (today: abuse cron or run manually via `exec`)
 
-Shipping either without a design will fork patterns (another supervisor? reuse cron containers? separate worker services?). This plan locks an architecture that matches VibeOps isolation rules (per-app UID, PHP version affinity, no root app code).
+Shipping either without a design will fork patterns (another supervisor? reuse cron containers? separate worker services?). This plan locks an architecture that matches bento isolation rules (per-app UID, PHP version affinity, no root app code).
 
 ## Current state (grounding)
 
@@ -129,7 +129,7 @@ Read fully:
 - `docs/architecture.md` (cron + identity)
 - `docker/php/bin/php-cron-as`, `php-app-run`, `php-supercronic`
 - `compose.yml` service roles
-- `vibeops/commands/cron_commands.py` CLI shape
+- `bento/commands/cron_commands.py` CLI shape
 
 ### Step 2: Write design doc
 

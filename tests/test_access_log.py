@@ -9,12 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vibeops.commands import access_log_commands
-from vibeops.commands.parser import build_parser
-from vibeops.services import access_log, nginx
-from vibeops.utils import env
-from vibeops.utils.errors import StackError
-from vibeops.utils.paths import RenderContext
+from bento.commands import access_log_commands
+from bento.commands.parser import build_parser
+from bento.services import access_log, nginx
+from bento.utils import env
+from bento.utils.errors import StackError
+from bento.utils.paths import RenderContext
 
 
 class AccessLogRenderTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class AccessLogRenderTests(unittest.TestCase):
         with patch.object(access_log, "NGINX_ACCESS_LOG_DIR", self.log_dir):
             path = nginx.render_app_vhost(self.app, self.ctx)
         text = path.read_text()
-        self.assertEqual(text.count("access_log /var/log/nginx/apps/shop.access.log vibeops_combined buffer=64k flush=30s;"), 2)
+        self.assertEqual(text.count("access_log /var/log/nginx/apps/shop.access.log bento_combined buffer=64k flush=30s;"), 2)
         self.assertTrue(self.log_dir.is_dir())
 
 
@@ -174,7 +174,7 @@ class AccessLogCliTests(unittest.TestCase):
             patch.object(access_log_commands, "upsert_timestamp"),
             patch.object(access_log_commands, "info"),
             patch.object(access_log_commands, "ensure_access_log_dir"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+            patch("bento.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
         ):
             access_log_commands.cmd_app_access_log(
                 argparse.Namespace(access_log_action="enable", app_name="shop", no_reload=False)

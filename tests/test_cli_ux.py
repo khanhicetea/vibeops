@@ -6,15 +6,15 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from vibeops.commands.cli import main
-from vibeops.utils.errors import cli_flag_present, warn_password_cli_flag
-from vibeops.commands.parser import build_parser
-from vibeops.commands.runtime_commands import prompt_password
+from bento.commands.cli import main
+from bento.utils.errors import cli_flag_present, warn_password_cli_flag
+from bento.commands.parser import build_parser
+from bento.commands.runtime_commands import prompt_password
 
 
 class CliCancellationTests(unittest.TestCase):
     def test_keyboard_interrupt_returns_130_without_traceback(self) -> None:
-        with mock.patch("vibeops.commands.cli.build_parser") as build:
+        with mock.patch("bento.commands.cli.build_parser") as build:
             parser = mock.Mock()
             args = mock.Mock()
             args.func = mock.Mock(side_effect=KeyboardInterrupt)
@@ -28,7 +28,7 @@ class CliCancellationTests(unittest.TestCase):
         self.assertNotIn("Traceback", err.getvalue())
 
     def test_eof_error_returns_1_without_traceback(self) -> None:
-        with mock.patch("vibeops.commands.cli.build_parser") as build:
+        with mock.patch("bento.commands.cli.build_parser") as build:
             parser = mock.Mock()
             args = mock.Mock()
             args.func = mock.Mock(side_effect=EOFError)
@@ -44,7 +44,7 @@ class CliCancellationTests(unittest.TestCase):
 
 class PromptPasswordTests(unittest.TestCase):
     def test_uses_getpass_and_returns_secret(self) -> None:
-        with mock.patch("vibeops.commands.runtime_commands.getpass.getpass", return_value="s3cret") as gp:
+        with mock.patch("bento.commands.runtime_commands.getpass.getpass", return_value="s3cret") as gp:
             self.assertEqual(prompt_password(), "s3cret")
             gp.assert_called_once()
             prompt = gp.call_args.args[0]
@@ -52,7 +52,7 @@ class PromptPasswordTests(unittest.TestCase):
             self.assertTrue(prompt.endswith(": "))
 
     def test_blank_means_generate(self) -> None:
-        with mock.patch("vibeops.commands.runtime_commands.getpass.getpass", return_value=""):
+        with mock.patch("bento.commands.runtime_commands.getpass.getpass", return_value=""):
             self.assertIsNone(prompt_password())
 
 
@@ -99,7 +99,7 @@ class PasswordFlagDiscourageTests(unittest.TestCase):
 
 class WizardMenuRefactorTests(unittest.TestCase):
     def test_main_menu_is_focused(self) -> None:
-        from vibeops.commands import wizard_commands
+        from bento.commands import wizard_commands
 
         with (
             mock.patch.object(wizard_commands.sys.stdin, "isatty", return_value=True),
@@ -115,7 +115,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
         self.assertEqual(choice.call_args.kwargs["zero"], "Quit")
 
     def test_manage_app_menu_passes_selected_app_to_scoped_manager(self) -> None:
-        from vibeops.commands import wizard_commands
+        from bento.commands import wizard_commands
 
         app = {"name": "shop", "main_domain": "shop.example.com", "php_version": "8.5"}
         with (
@@ -134,7 +134,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
         domains.assert_called_once_with("shop")
 
     def test_customize_menu_selects_app_scoped_vhost(self) -> None:
-        from vibeops.commands import wizard_commands
+        from bento.commands import wizard_commands
 
         app = {"name": "shop", "service_config": {}}
         with (
@@ -155,7 +155,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
         self.assertFalse(args.no_reload)
 
     def test_tls_acme_is_inside_app_domains_menu(self) -> None:
-        from vibeops.commands import wizard_commands
+        from bento.commands import wizard_commands
 
         app = {"name": "shop", "main_domain": "shop.example.com", "domains": ["shop.example.com"]}
         with (
@@ -171,7 +171,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
         tls.assert_called_once_with("shop")
 
     def test_backup_and_restore_are_inside_app_database_menu(self) -> None:
-        from vibeops.commands import wizard_commands
+        from bento.commands import wizard_commands
 
         app = {"name": "shop", "mysql_service": "mysql84"}
         with (
@@ -186,8 +186,8 @@ class WizardMenuRefactorTests(unittest.TestCase):
         self.assertIn("Restore a backup", actions)
 
     def test_failed_permission_check_suggests_and_offers_fix(self) -> None:
-        from vibeops.commands import wizard_commands
-        from vibeops.utils.errors import StackError
+        from bento.commands import wizard_commands
+        from bento.utils.errors import StackError
 
         with (
             mock.patch.object(wizard_commands, "cmd_permissions", side_effect=StackError("permission operation failed")),
@@ -210,7 +210,7 @@ def _force_numbered_choice():
 
 class PromptChoiceZeroTests(unittest.TestCase):
     def test_shows_zero_back_and_accepts_zero(self) -> None:
-        from vibeops.commands.runtime_commands import prompt_choice
+        from bento.commands.runtime_commands import prompt_choice
 
         out = io.StringIO()
         with (
@@ -227,7 +227,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
         self.assertIn("Choose 0-2", inp.call_args.args[0])
 
     def test_main_menu_zero_quit(self) -> None:
-        from vibeops.commands.runtime_commands import prompt_choice
+        from bento.commands.runtime_commands import prompt_choice
 
         out = io.StringIO()
         with (
@@ -240,7 +240,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
         self.assertIn("0 - Quit", out.getvalue())
 
     def test_selects_numbered_choice(self) -> None:
-        from vibeops.commands.runtime_commands import prompt_choice
+        from bento.commands.runtime_commands import prompt_choice
 
         with (
             _force_numbered_choice(),
@@ -250,7 +250,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
             self.assertEqual(prompt_choice("Pick", ["A", "B", "C"]), "B")
 
     def test_prompt_pick_raises_wizard_back_on_zero(self) -> None:
-        from vibeops.commands.runtime_commands import WizardBack, prompt_pick
+        from bento.commands.runtime_commands import WizardBack, prompt_pick
 
         with (
             _force_numbered_choice(),
@@ -271,7 +271,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
         default: str | None = None,
         zero: str | None = "Back",
     ):
-        from vibeops.commands import runtime_commands
+        from bento.commands import runtime_commands
 
         key_iter = iter(keys)
 
@@ -324,7 +324,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
         self.assertIn("number: 10", text)
 
     def test_prompt_choice_uses_arrows_when_tty(self) -> None:
-        from vibeops.commands import runtime_commands
+        from bento.commands import runtime_commands
 
         with (
             mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=True),
@@ -347,7 +347,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
         numbered.assert_not_called()
 
     def test_prompt_choice_uses_numbers_when_not_tty(self) -> None:
-        from vibeops.commands import runtime_commands
+        from bento.commands import runtime_commands
 
         with (
             mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=False),
@@ -369,7 +369,7 @@ class PromptChoiceArrowTests(unittest.TestCase):
 
     def test_left_right_arrows_do_not_freeze(self) -> None:
         """Left/right CSI finals (C/D) must not block waiting for more input."""
-        from vibeops.commands import runtime_commands
+        from bento.commands import runtime_commands
 
         # Sequence: left (ESC[D), right (ESC[C), down, enter → select B
         # (zero=Back at 0; start on A; down → B)

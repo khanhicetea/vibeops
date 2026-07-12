@@ -7,7 +7,7 @@
 > in `plans/README.md`.
 >
 > **Drift check (run first)**:
-> `git diff --stat 706f9ab..HEAD -- compose.yml docker/redis/ .env.example config/mysql/templates/user-credentials.env.template vibeops/services/mysql.py vibeops/services/php.py vibeops/utils/env.py README.md docs/`
+> `git diff --stat 706f9ab..HEAD -- compose.yml docker/redis/ .env.example config/mysql/templates/user-credentials.env.template bento/services/mysql.py bento/services/php.py bento/utils/env.py README.md docs/`
 > On mismatch with "Current state", STOP and report.
 
 ## Status
@@ -68,9 +68,9 @@ but the template currently **does not** include Redis keys (README aspirational 
 - `docker/redis/Dockerfile` — only if entrypoint needed (prefer pure compose `command:` overrides)
 - `.env.example` — `REDIS_MAXMEMORY`, optional `REDIS_PASSWORD` documented
 - `config/mysql/templates/user-credentials.env.template` — add REDIS_* keys (or rename path only if already planned; **do not** rename file in this plan)
-- `vibeops/services/mysql.py` — when writing credentials, pass Redis template vars (or small helper)
-- `vibeops/utils/env.py` — readers for redis maxmemory / password / defaults
-- `vibeops/commands/runtime_commands.py` — optional redis ping line in `status`
+- `bento/services/mysql.py` — when writing credentials, pass Redis template vars (or small helper)
+- `bento/utils/env.py` — readers for redis maxmemory / password / defaults
+- `bento/commands/runtime_commands.py` — optional redis ping line in `status`
 - `tests/` — env/template unit tests (no live Redis required)
 - `README.md` — document Redis knobs + per-app prefix/DB
 
@@ -168,7 +168,7 @@ If redis running, try ping (compose exec redis redis-cli ping) and show ok/faile
 
 ### Step 1: Env helpers + tests
 
-Add parsers in `vibeops/utils/env.py` for maxmemory string validation (simple non-empty token) and optional password presence. Unit test without docker.
+Add parsers in `bento/utils/env.py` for maxmemory string validation (simple non-empty token) and optional password presence. Unit test without docker.
 
 ### Step 2: Credentials template + write path
 

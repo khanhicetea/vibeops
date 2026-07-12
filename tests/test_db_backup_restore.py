@@ -10,9 +10,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.commands.db_commands as db_commands
-from vibeops.os.fsutil import mkdir
-from vibeops.utils.errors import StackError
+import bento.commands.db_commands as db_commands
+from bento.os.fsutil import mkdir
+from bento.utils.errors import StackError
 
 
 class ReserveBackupPathTests(unittest.TestCase):
@@ -56,7 +56,7 @@ class AtomicDumpTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.backup_dir = Path(self.tmp.name)
         self.service = "mysql84"
-        self.option = Path(self.tmp.name) / "vibeops-root.cnf"
+        self.option = Path(self.tmp.name) / "bento-root.cnf"
         self.option.write_text("[client]\nuser=root\n", encoding="utf-8")
         self.patches = [
             patch.object(db_commands, "service_running", return_value=True),
@@ -149,7 +149,7 @@ class AtomicDumpTests(unittest.TestCase):
                 db_commands.mysql_root_dump(["--databases", "shop_app"], service=self.service, output_path=final)
 
         flat = " ".join(seen[0])
-        self.assertIn("defaults-extra-file=/run/secrets/vibeops-root.cnf", flat)
+        self.assertIn("defaults-extra-file=/run/secrets/bento-root.cnf", flat)
         self.assertNotIn("password", flat.lower())
         self.assertNotIn("MYSQL_PWD", flat)
         self.assertNotIn(" -p", f" {flat} ")

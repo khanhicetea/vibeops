@@ -8,9 +8,9 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import vibeops.services.mysql as mysql
-from vibeops.utils.errors import StackError
-from vibeops.commands import app_commands
+import bento.services.mysql as mysql
+from bento.utils.errors import StackError
+from bento.commands import app_commands
 
 
 def _empty_db() -> dict:
@@ -65,7 +65,7 @@ def _create_args(
 
 def _app_create_side_effect_patches() -> list:
     """Common cmd_app_create patches after MySQL readiness succeeds."""
-    import vibeops.commands.runtime_commands as runtime_commands
+    import bento.commands.runtime_commands as runtime_commands
 
     return [
         patch.object(app_commands, "require_mysql_ready_for_sql", return_value="mysql84"),
@@ -179,7 +179,7 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             patch.object(app_commands, "write_template") as write_template,
             patch.object(app_commands, "mkdir") as mkdir,
         ):
-            import vibeops.commands.runtime_commands as runtime_commands
+            import bento.commands.runtime_commands as runtime_commands
 
             with patch.object(runtime_commands, "apply_generated_config") as render_txn:
                 with self.assertRaisesRegex(StackError, r"not running"):

@@ -1,6 +1,6 @@
 # Optional binary log overlay for point-in-time recovery experiments.
 #
-# Default VibeOps keeps disable_log_bin in version conf (8.4/9.7).
+# Default bento keeps disable_log_bin in version conf (8.4/9.7).
 # Enabling binlog increases disk I/O and is not a substitute for logical dumps.
 #
 # Manual enable (operator-only; do not enable by default):

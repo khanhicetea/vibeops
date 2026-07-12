@@ -22,12 +22,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import vibeops.commands.app_commands as app_commands
-import vibeops.commands.cron_commands as cron_commands
-import vibeops.commands.db_commands as db_commands
-import vibeops.commands.proxy_commands as proxy_commands
-import vibeops.commands.runtime_commands as runtime
-import vibeops.commands.tls_commands as tls_commands
+import bento.commands.app_commands as app_commands
+import bento.commands.cron_commands as cron_commands
+import bento.commands.db_commands as db_commands
+import bento.commands.proxy_commands as proxy_commands
+import bento.commands.runtime_commands as runtime
+import bento.commands.tls_commands as tls_commands
 
 
 def _db_with_app() -> dict:
@@ -72,7 +72,7 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(app_commands, "assert_domain_free"),
             patch.object(app_commands, "upsert_timestamp"),
             patch.object(app_commands, "info"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+            patch("bento.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
         ):
             app_commands.cmd_app_domain_add(
                 argparse.Namespace(app_name="shop", domain="www.shop.example.com", no_reload=False)
@@ -80,7 +80,7 @@ class ReloadScopeTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_access_log_enable_only_targets_nginx(self) -> None:
-        import vibeops.commands.access_log_commands as access_log_commands
+        import bento.commands.access_log_commands as access_log_commands
 
         db = _db_with_app()
         calls, fake_apply = self._track_apply()
@@ -90,7 +90,7 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(access_log_commands, "upsert_timestamp"),
             patch.object(access_log_commands, "info"),
             patch.object(access_log_commands, "ensure_access_log_dir"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+            patch("bento.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
         ):
             access_log_commands.cmd_app_access_log(
                 argparse.Namespace(access_log_action="enable", app_name="shop", no_reload=False)
@@ -122,7 +122,7 @@ class ReloadScopeTests(unittest.TestCase):
                 patch.object(app_commands, "save_db"),
                 patch.object(app_commands, "upsert_timestamp"),
                 patch.object(app_commands, "info"),
-                patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+                patch("bento.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
             ):
                 method(ns)
             self.assertEqual(len(calls), 1, msg=method.__name__)
@@ -140,7 +140,7 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(proxy_commands, "upsert_timestamp"),
             patch.object(proxy_commands, "info"),
             patch.object(proxy_commands, "rel", side_effect=str),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+            patch("bento.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
         ):
             proxy_commands.cmd_proxy_create(
                 argparse.Namespace(
@@ -174,7 +174,7 @@ class ReloadScopeTests(unittest.TestCase):
                 patch.object(tls_commands, "info"),
                 patch.object(tls_commands, "warn"),
                 patch.object(tls_commands, "rel", side_effect=str),
-                patch("vibeops.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
+                patch("bento.commands.runtime_commands.apply_generated_config", side_effect=fake_apply),
             ):
                 method(ns)
             self.assertEqual(len(calls), 1, msg=method.__name__)
@@ -188,10 +188,10 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(app_commands, "save_db") as save_db,
             patch.object(app_commands, "ensure_mysql_database", return_value="shop_app") as ensure_db,
             patch.object(app_commands, "upsert_timestamp"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", apply_mock),
+            patch("bento.commands.runtime_commands.apply_generated_config", apply_mock),
             patch.object(app_commands, "nginx_reload") as nginx_mock,
-            patch("vibeops.services.php.php_reload") as php_mock,
-            patch("vibeops.services.cron_runtime.cron_reload") as cron_mock,
+            patch("bento.services.php.php_reload") as php_mock,
+            patch("bento.services.cron_runtime.cron_reload") as cron_mock,
         ):
             app_commands.cmd_app_db_create(
                 argparse.Namespace(app_name="shop", db_suffix="app", mysql_service=None)
@@ -212,10 +212,10 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(db_commands, "save_db"),
             patch.object(db_commands, "ensure_mysql_database", return_value="shop_reports"),
             patch.object(db_commands, "upsert_timestamp"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", apply_mock),
-            patch("vibeops.services.php.php_reload") as php_mock,
-            patch("vibeops.services.nginx.nginx_reload") as nginx_mock,
-            patch("vibeops.services.cron_runtime.cron_reload") as cron_mock,
+            patch("bento.commands.runtime_commands.apply_generated_config", apply_mock),
+            patch("bento.services.php.php_reload") as php_mock,
+            patch("bento.services.nginx.nginx_reload") as nginx_mock,
+            patch("bento.services.cron_runtime.cron_reload") as cron_mock,
         ):
             db_commands.cmd_db_create(
                 argparse.Namespace(app_name="shop", db_suffix="reports", mysql_service="mysql84")
@@ -233,10 +233,10 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(db_commands, "apply_app_mysql_metadata"),
             patch.object(db_commands, "upsert_timestamp"),
             patch.object(db_commands, "generate_password", return_value="secret"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", apply_mock),
-            patch("vibeops.services.php.php_reload") as php_mock2,
-            patch("vibeops.services.nginx.nginx_reload") as nginx_mock2,
-            patch("vibeops.services.cron_runtime.cron_reload") as cron_mock2,
+            patch("bento.commands.runtime_commands.apply_generated_config", apply_mock),
+            patch("bento.services.php.php_reload") as php_mock2,
+            patch("bento.services.nginx.nginx_reload") as nginx_mock2,
+            patch("bento.services.cron_runtime.cron_reload") as cron_mock2,
         ):
             db_commands.cmd_db_user_reset(
                 argparse.Namespace(app_name="shop", mysql_service="mysql84", password=None)
@@ -262,9 +262,9 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(cron_commands, "info"),
             patch.object(cron_commands, "rel", side_effect=str),
             patch.object(cron_commands, "stack_env", return_value={"TZ": "UTC"}),
-            patch("vibeops.commands.runtime_commands.apply_generated_config") as apply_mock,
-            patch("vibeops.services.php.php_reload") as php_mock,
-            patch("vibeops.services.nginx.nginx_reload") as nginx_mock,
+            patch("bento.commands.runtime_commands.apply_generated_config") as apply_mock,
+            patch("bento.services.php.php_reload") as php_mock,
+            patch("bento.services.nginx.nginx_reload") as nginx_mock,
         ):
             cron_commands.cmd_cron_create(
                 argparse.Namespace(
@@ -315,8 +315,8 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(app_commands, "rel", side_effect=str),
             patch.object(app_commands, "upsert_timestamp"),
             patch.object(app_commands, "write_template"),
-            patch("vibeops.commands.runtime_commands.apply_generated_config", return_value=[]) as apply_mock,
-            patch("vibeops.services.cron_runtime.cron_reload") as cron_mock,
+            patch("bento.commands.runtime_commands.apply_generated_config", return_value=[]) as apply_mock,
+            patch("bento.services.cron_runtime.cron_reload") as cron_mock,
         ):
             app_commands.cmd_app_create(
                 argparse.Namespace(

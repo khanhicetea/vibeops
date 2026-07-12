@@ -1,6 +1,6 @@
-# VibeOps — vibe-coding ops stack
+# bento — vibe-coding ops stack
 
-VibeOps is a Docker-based LEMP operations stack for vibe-coding workflows, with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions, MySQL, Redis, per-app cron, supervised workers, and ACME-ready TLS.
+bento is a Docker-based LEMP operations stack for vibe-coding workflows, with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions, MySQL, Redis, per-app cron, supervised workers, and ACME-ready TLS.
 
 It is optimized for production performance and DX around isolated apps. The primary deployable unit is an app slug:
 
@@ -11,7 +11,7 @@ It is optimized for production performance and DX around isolated apps. The prim
 In this stack that maps to:
 
 ```text
-vibeops/runtime/home/<app_name>/www
+bento/runtime/home/<app_name>/www
 ```
 
 ## Architecture
@@ -25,7 +25,7 @@ vibeops/runtime/home/<app_name>/www
   - `php85` from `php:8.5-fpm-trixie`
   - OPcache is installed only when `php -m` shows it is missing, so PHP 8.5 can use its built-in Zend OPcache without reinstalling it.
 - **PHP-FPM exposes per-app Unix sockets** in versioned shared dirs:
-  - host path: `vibeops/runtime/run/php-fpm/php84/<app_name>.sock`
+  - host path: `bento/runtime/run/php-fpm/php84/<app_name>.sock`
   - nginx path: `/run/php-fpm/php84/<app_name>.sock`
   - PHP container path: `/run/php-fpm/<app_name>.sock`
 - **Each app is a Linux user / PHP-FPM pool / MySQL user** inside PHP containers:
@@ -88,7 +88,7 @@ runtime/                      # mutable/generated/live data
 ## Quick start
 
 ```bash
-cd vibeops
+cd bento
 cp .env.example .env
 # edit MYSQL_ROOT_PASSWORD
 
@@ -283,7 +283,7 @@ This writes:
 runtime/generated/cron/php85/jobs/shop-schedule.cron
 runtime/generated/cron/php85/apps/shop.cron
 runtime/generated/cron/php85/system.cron
-runtime/generated/runner/php85/programs/vibeops.conf
+runtime/generated/runner/php85/programs/bento.conf
 ```
 
 The app scheduler and all of its jobs run directly as `shop:shop`, from app-bounded workdirs, with the PHP 8.5 binary/extensions and the same environment as PHP-FPM. The non-privileged `php-cron-job` helper enforces optional timeout, lock, and file-output policy; it does not switch users. `manage.py` validates each app crontab, asks Supervisord to `reread`/`update` generated programs, then sends `SIGUSR2` to the named app scheduler rather than PID 1.
@@ -408,8 +408,8 @@ Copy an existing PHP service set in `compose.yml` (FPM, runner, and CLI) and cha
       - ./runtime/generated/php/versions/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
       - ./runtime/generated/php/versions/8.x/users.d:/usr/local/etc/php/users.d:ro
       - ./runtime/generated/cron/phpXX:/usr/local/etc/php/cron.d:ro
-      - ./runtime/generated/runner/phpXX/programs:/etc/vibeops/programs:ro
-      - ./config/php/supervisor/supervisord.conf:/etc/vibeops/supervisord.conf:ro
+      - ./runtime/generated/runner/phpXX/programs:/etc/bento/programs:ro
+      - ./config/php/supervisor/supervisord.conf:/etc/bento/supervisord.conf:ro
 ```
 
 Then:
@@ -451,7 +451,7 @@ Logical dumps go under `runtime/backups/<mysql_service>/` (mounted at `/backups`
 
 `./manage.py render` stages a complete generation under `runtime/.render-txn-*/`, then promotes files atomically into bind-mounted destinations (`runtime/generated/`, `runtime/secrets/mysql/`). Stale managed files are removed only after the candidate set is complete; validation/reload failures roll generated files back (reload-signal failures after a successful validate leave the new generation for retry). See `docs/architecture.md` for the stage → promote → validate → rollback → reload lifecycle.
 
-It also generates ignored, mode-600 root client option files under `runtime/secrets/mysql/` from the long random root password in `.env`. Each MySQL service mounts only its own file read-only at `/run/secrets/vibeops-root.cnf`; health checks and `manage.py` administrative commands use that file, so passwords are not passed in client command arguments. Re-run `./manage.py render` and recreate the affected MySQL container after changing a root password. Keep `.env` as the recovery source and never commit or copy these option files into images.
+It also generates ignored, mode-600 root client option files under `runtime/secrets/mysql/` from the long random root password in `.env`. Each MySQL service mounts only its own file read-only at `/run/secrets/bento-root.cnf`; health checks and `manage.py` administrative commands use that file, so passwords are not passed in client command arguments. Re-run `./manage.py render` and recreate the affected MySQL container after changing a root password. Keep `.env` as the recovery source and never commit or copy these option files into images.
 
 ```bash
 ./manage.py db list

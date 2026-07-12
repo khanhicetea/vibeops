@@ -5,7 +5,7 @@ SOCKET_GROUP_NAME="${SOCKET_GROUP_NAME:-nginxsock}"
 SOCKET_GID="${SOCKET_GID:-101}"
 PHP_USERS_DIR="${PHP_USERS_DIR:-/usr/local/etc/php/users.d}"
 PHP_FPM_RUN_DIR="${PHP_FPM_RUN_DIR:-/run/php-fpm}"
-PHP_CRON_LOCK_DIR="${PHP_CRON_LOCK_DIR:-/run/vibeops-cron-locks}"
+PHP_CRON_LOCK_DIR="${PHP_CRON_LOCK_DIR:-/run/bento-cron-locks}"
 
 fail() { echo "php-identity-sync: $*" >&2; exit 1; }
 

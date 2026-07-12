@@ -5,10 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.services.cron_runtime as cron_runtime
-from vibeops.utils.validation import validate_cron_workdir
-from vibeops.commands.cron_commands import cron_render_values, validate_schedule
-from vibeops.utils.errors import StackError
+import bento.services.cron_runtime as cron_runtime
+from bento.utils.validation import validate_cron_workdir
+from bento.commands.cron_commands import cron_render_values, validate_schedule
+from bento.utils.errors import StackError
 
 
 class CronValidationTests(unittest.TestCase):

@@ -9,16 +9,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.utils.env as env
-from vibeops.utils.errors import StackError
-from vibeops.services.state import empty_db, normalize_db
-from vibeops.services.php import render_app_identity
-import vibeops.os.process as process
-import vibeops.utils.paths as paths
-import vibeops.commands.runtime_commands as runtime
-from vibeops.commands.app_commands import resolve_app_fpm_profile
-from vibeops.commands.parser import build_parser
-from vibeops.utils.template import render_template_text
+import bento.utils.env as env
+from bento.utils.errors import StackError
+from bento.services.state import empty_db, normalize_db
+from bento.services.php import render_app_identity
+import bento.os.process as process
+import bento.utils.paths as paths
+import bento.commands.runtime_commands as runtime
+from bento.commands.app_commands import resolve_app_fpm_profile
+from bento.commands.parser import build_parser
+from bento.utils.template import render_template_text
 
 
 def _render_pool(profile: str, app: str = "shop") -> str:
@@ -114,7 +114,7 @@ class FpmPoolRenderTests(unittest.TestCase):
 class ResolveAndNormalizeTests(unittest.TestCase):
     def test_new_app_uses_stack_default(self) -> None:
         with patch.object(env, "default_fpm_profile", return_value="balanced"):
-            with patch("vibeops.commands.app_commands.default_fpm_profile", return_value="balanced"):
+            with patch("bento.commands.app_commands.default_fpm_profile", return_value="balanced"):
                 self.assertEqual(resolve_app_fpm_profile({"apps": {}}, "shop", None), "balanced")
 
     def test_new_app_explicit_profile(self) -> None:

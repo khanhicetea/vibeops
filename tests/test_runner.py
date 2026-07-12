@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import vibeops.commands.runtime_commands as runtime_commands
-import vibeops.commands.worker_commands as worker_commands
-import vibeops.services.runner as runner
-from vibeops.utils.errors import StackError
-from vibeops.utils.paths import RenderContext
+import bento.commands.runtime_commands as runtime_commands
+import bento.commands.worker_commands as worker_commands
+import bento.services.runner as runner
+from bento.utils.errors import StackError
+from bento.utils.paths import RenderContext
 
 
 def _db() -> dict:

@@ -7,7 +7,7 @@
 > in `plans/README.md`.
 >
 > **Drift check (run first)**:
-> `git diff --stat 706f9ab..HEAD -- vibeops/commands/proxy_commands.py vibeops/commands/parser.py vibeops/commands/runtime_commands.py tests/test_reload_scope.py docs/architecture.md README.md`
+> `git diff --stat 706f9ab..HEAD -- bento/commands/proxy_commands.py bento/commands/parser.py bento/commands/runtime_commands.py tests/test_reload_scope.py docs/architecture.md README.md`
 > On mismatch with "Current state" excerpts, STOP and report.
 
 ## Status
@@ -25,7 +25,7 @@
 
 ## Current state
 
-- `vibeops/commands/proxy_commands.py` — only `render_proxy_vhost` and `cmd_proxy_create`:
+- `bento/commands/proxy_commands.py` — only `render_proxy_vhost` and `cmd_proxy_create`:
 
 ```python
 @serialized_cron_state
@@ -44,7 +44,7 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
     save_db(db)
 ```
 
-- Parser (`vibeops/commands/parser.py` ~231–239): only `proxy create`
+- Parser (`bento/commands/parser.py` ~231–239): only `proxy create`
 - Domain index: `db["domains"][domain] = {"kind": "proxy", "domain": main_domain}`
 - Status already lists proxies (`cmd_status` filters `sites` with `type == "proxy"`)
 - Reload: nginx-only (`SERVICE_TARGETS_NGINX`)
@@ -60,8 +60,8 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
 ## Scope
 
 **In scope**:
-- `vibeops/commands/proxy_commands.py`
-- `vibeops/commands/parser.py`
+- `bento/commands/proxy_commands.py`
+- `bento/commands/parser.py`
 - `tests/test_proxy_lifecycle.py` (new)
 - `tests/test_reload_scope.py` (add remove row if applicable)
 - `docs/architecture.md` reload matrix
@@ -86,7 +86,7 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
 # or: ./manage.py proxy remove --number N
 ```
 
-1. **list**: table of proxies with selection numbers: `#`, domain, upstream, aliases (joined), TLS mode — use `vibeops/ui/table.py` `print_table` like `cron list` / `app domain list`
+1. **list**: table of proxies with selection numbers: `#`, domain, upstream, aliases (joined), TLS mode — use `bento/ui/table.py` `print_table` like `cron list` / `app domain list`
 2. **remove**:
    - Resolve by domain or `--number` from list order (same pattern as `cron remove`)
    - Delete `db["sites"][main_domain]`

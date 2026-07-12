@@ -52,7 +52,7 @@ RUN set -eux; \
       if grep -q '^\[www\]' "$f"; then rm -f "$f"; fi; \
     done; \
     case "${PHP_FPM_PROCESS_MAX}" in ''|*[!0-9]*|0*) echo "Invalid PHP_FPM_PROCESS_MAX: ${PHP_FPM_PROCESS_MAX}" >&2; exit 1 ;; esac; \
-    printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = %s\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' "${PHP_FPM_PROCESS_MAX}" > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
+    printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = %s\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' "${PHP_FPM_PROCESS_MAX}" > /usr/local/etc/php-fpm.d/zz-bento.conf; \
     apt-mark auto '.*' > /dev/null; \
     apt-mark manual $savedAptMark \
       bash ca-certificates curl gosu openssl passwd logrotate tzdata util-linux \

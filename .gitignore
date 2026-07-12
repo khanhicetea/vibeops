@@ -1,4 +1,4 @@
-# VibeOps local/runtime/user data
+# bento local/runtime/user data
 # Keep source config/templates tracked; ignore generated tenant/runtime data.
 
 # Local secrets/config

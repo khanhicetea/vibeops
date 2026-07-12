@@ -6,12 +6,12 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-from vibeops.ui.table import format_table, print_table, terminal_width, truncate_cell
+from bento.ui.table import format_table, print_table, terminal_width, truncate_cell
 
 
 class TerminalWidthTests(unittest.TestCase):
     def test_uses_shutil_get_terminal_size(self) -> None:
-        with mock.patch("vibeops.ui.table.shutil.get_terminal_size") as gts:
+        with mock.patch("bento.ui.table.shutil.get_terminal_size") as gts:
             gts.return_value = mock.Mock(columns=120, lines=40)
             self.assertEqual(terminal_width(), 120)
             gts.assert_called_once()
@@ -19,7 +19,7 @@ class TerminalWidthTests(unittest.TestCase):
             self.assertEqual(gts.call_args.kwargs.get("fallback") or gts.call_args.args[0], (80, 24))
 
     def test_clamps_very_narrow(self) -> None:
-        with mock.patch("vibeops.ui.table.shutil.get_terminal_size") as gts:
+        with mock.patch("bento.ui.table.shutil.get_terminal_size") as gts:
             gts.return_value = mock.Mock(columns=10, lines=20)
             self.assertGreaterEqual(terminal_width(), 40)
 
@@ -74,7 +74,7 @@ class FormatTableTests(unittest.TestCase):
 
     def test_print_table_uses_info_and_prefix(self) -> None:
         out = io.StringIO()
-        with mock.patch("vibeops.ui.table.terminal_width", return_value=80):
+        with mock.patch("bento.ui.table.terminal_width", return_value=80):
             with redirect_stdout(out):
                 print_table([["x", "y"]], headers=["H1", "H2"], prefix="  ")
         text = out.getvalue()

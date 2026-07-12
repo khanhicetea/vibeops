@@ -1,6 +1,6 @@
 # Opt in to Brotli and Zstandard compression
 
-VibeOps uses the official Nginx image and gzip by default. This guide builds a local image with the third-party Brotli and Zstandard dynamic modules. It supports both precompressed static files (`.br`, `.zst`) and on-the-fly compression for static, FastCGI, and proxied responses.
+bento uses the official Nginx image and gzip by default. This guide builds a local image with the third-party Brotli and Zstandard dynamic modules. It supports both precompressed static files (`.br`, `.zst`) and on-the-fly compression for static, FastCGI, and proxied responses.
 
 This is a local customization: keep it in `runtime/custom/` and `compose.override.yml` so upstream `compose.yml` remains unchanged. Rebuild the image whenever the configured Nginx version changes.
 
@@ -107,7 +107,7 @@ Create or extend the ignored `compose.override.yml`:
 ```yaml
 services:
   nginx:
-    image: vibeops-nginx-br-zstd:${NGINX_VERSION:-1.30}
+    image: bento-nginx-br-zstd:${NGINX_VERSION:-1.30}
     build:
       context: .
       dockerfile: runtime/custom/nginx/br-zstd/Dockerfile

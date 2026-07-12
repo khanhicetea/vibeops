@@ -1,12 +1,12 @@
-# VibeOps architecture and file layout
+# bento architecture and file layout
 
 This repository separates upstream source, local desired state, disposable generated config, and live runtime data. The primary isolation unit is an app slug, which is also the Linux user, PHP-FPM pool, and MySQL user.
 
 ```text
 compose.yml                 # upstream-owned service topology
 compose.override.yml        # optional ignored local Docker Compose overrides
-manage.py                   # thin CLI entrypoint into vibeops.commands.cli
-vibeops/                    # management CLI package (see module map below)
+manage.py                   # thin CLI entrypoint into bento.commands.cli
+bento/                    # management CLI package (see module map below)
 
 docker/                     # Docker build contexts and image helper binaries
   php/
@@ -81,7 +81,7 @@ Service signals only (not file re-render). Contract tests live in `tests/test_re
 | `db backup` / `db restore` / shell / exec | — | — | — | no service reloads (existing app) |
 | `apply` | Y | Y | Y | intentional full apply |
 | `render` | — | — | — | files only |
-- **Unmanaged files**: local files under managed globs that lack the VibeOps generated notice are left in place and reported.
+- **Unmanaged files**: local files under managed globs that lack the bento generated notice are left in place and reported.
 - **Abandoned transactions**: a leftover mid-promotion journal is restored on the next render/apply when the journal is deterministic.
 
 Users should customize Docker Compose with ignored override files instead of editing `compose.yml`:
@@ -114,7 +114,7 @@ Cron and long-running processes are version-scoped to match the PHP image:
 runtime/generated/cron/php85/jobs/*.cron       # individual state-rendered snippets
 runtime/generated/cron/php85/apps/shop.cron    # all shop schedules
 runtime/generated/cron/php85/system.cron       # root maintenance only
-runtime/generated/runner/php85/programs/vibeops.conf
+runtime/generated/runner/php85/programs/bento.conf
 ```
 
 `php84-runner` / `php85-runner` run Supervisord as PID 1. Docker restarts the runner container; Supervisord restarts its children. Its root-only Unix control socket is not exposed on the backend network.
@@ -144,11 +144,11 @@ runtime/home/<app_name>/
 
 All domains on an app share the same code tree under `/home/<app_name>/www` and `/run/php-fpm/<php_service>/<app_name>.sock`. The app's `public_dir` metadata selects the Nginx document root inside that tree: empty string means `/home/<app_name>/www` (WordPress/default), while `public` means `/home/<app_name>/www/public` (Laravel/Symfony). The app's `php_entrypoint` metadata controls PHP routing: `front-controller` only executes `/index.php` and 404s other `.php` paths, while `legacy` keeps direct PHP script execution for older apps. `auto` defaults to `front-controller` when `public_dir` is non-empty. Separate codebases should be separate apps.
 
-App state stores a named `fpm_profile` (`ondemand`, `balanced`, or `throughput`). Render expands that name into mode-correct PHP-FPM pool directives from a single registry in `vibeops/utils/env.py` — not arbitrary operator-supplied pool fragments. New apps take `DEFAULT_FPM_PROFILE` from `.env` (default `balanced`). Each PHP image also sets global `process.max` (default 32 via build arg `PHP_FPM_PROCESS_MAX`); per-pool `max_children` is additionally bounded by that cap, and status reports when configured capacity on one PHP version exceeds it.
+App state stores a named `fpm_profile` (`ondemand`, `balanced`, or `throughput`). Render expands that name into mode-correct PHP-FPM pool directives from a single registry in `bento/utils/env.py` — not arbitrary operator-supplied pool fragments. New apps take `DEFAULT_FPM_PROFILE` from `.env` (default `balanced`). Each PHP image also sets global `process.max` (default 32 via build arg `PHP_FPM_PROCESS_MAX`); per-pool `max_children` is additionally bounded by that cap, and status reports when configured capacity on one PHP version exceeds it.
 
 ## Management package module map
 
-Layout under `vibeops/`:
+Layout under `bento/`:
 
 ```text
 utils/       errors, paths, validation, env, template
@@ -203,7 +203,7 @@ Rules for new code:
 - State writes use `services/state.py`; generated-file writes use `services/rendering.py` and the render transaction in `commands/runtime_commands.py`.
 - Parser and wizard are adapters: they call handlers, they do not own business logic.
 - No wildcard imports (`from … import *`). Prefer explicit imports; module-qualified service APIs are fine when origin clarity matters.
-- Foundational packages (`utils`, `os`, `services`, `ui`) must not import `vibeops.commands`.
+- Foundational packages (`utils`, `os`, `services`, `ui`) must not import `bento.commands`.
 
 ## MySQL recovery model
 
@@ -212,4 +212,4 @@ Rules for new code:
 - **Logical dump durability:** backups stream into a private partial file and are promoted atomically to a unique finalized `*.sql` or `*.sql.gz` path only after a successful non-empty dump (`--gzip` streams through compression). Partials are excluded from listing/retention. Restore streams plain or gzip dumps into `mysql` (not fully buffered in the Python process) and may overwrite objects; object-level restore is not atomic.
 - **No PITR by default:** 8.4/9.7 conf keeps `disable_log_bin`. Logical dumps are the supported recovery path until an operator intentionally enables binlog (see `config/mysql/conf.d/z-binlog.cnf.example`).
 - **Readiness:** PHP services depend on `mysql84` being healthy; each MySQL service exposes a `mysqladmin ping` healthcheck.
-- **Credentials:** app MySQL passwords live only under `runtime/home/<app>/.credentials/` (mode 600); manage.py does not print them and does not put the root password on host process argv. Admin dump/restore use `/run/secrets/vibeops-root.cnf` inside the container.
+- **Credentials:** app MySQL passwords live only under `runtime/home/<app>/.credentials/` (mode 600); manage.py does not print them and does not put the root password on host process argv. Admin dump/restore use `/run/secrets/bento-root.cnf` inside the container.

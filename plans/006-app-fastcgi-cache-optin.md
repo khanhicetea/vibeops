@@ -7,7 +7,7 @@
 > in `plans/README.md`.
 >
 > **Drift check (run first)**:
-> `git diff --stat 706f9ab..HEAD -- config/nginx/ vibeops/services/nginx.py vibeops/services/state.py vibeops/commands/parser.py vibeops/commands/access_log_commands.py vibeops/utils/env.py tests/test_access_log.py docs/ README.md`
+> `git diff --stat 706f9ab..HEAD -- config/nginx/ bento/services/nginx.py bento/services/state.py bento/commands/parser.py bento/commands/access_log_commands.py bento/utils/env.py tests/test_access_log.py docs/ README.md`
 > On mismatch, STOP and report.
 
 ## Status
@@ -38,7 +38,7 @@ fastcgi_cache_path /var/cache/nginx/fastcgi levels=1:2 keys_zone=fastcgi_cache:1
   - state: `app["access_log"] = bool`
   - CLI: `app access-log enable|disable|status`
   - render: `{% if ACCESS_LOG %}` in template
-  - commands: `vibeops/commands/access_log_commands.py`
+  - commands: `bento/commands/access_log_commands.py`
   - tests: `tests/test_access_log.py`
 
 ## Commands you will need
@@ -53,9 +53,9 @@ fastcgi_cache_path /var/cache/nginx/fastcgi levels=1:2 keys_zone=fastcgi_cache:1
 **In scope**:
 - `config/nginx/templates/site.conf.template` — conditional include for cache snippet inside PHP locations (both HTTP and HTTPS server blocks; both front-controller and legacy PHP locations)
 - `config/nginx/snippets/wordpress_cache.conf` — review; maybe add `generic_fastcgi_cache.conf` for non-WP apps
-- `vibeops/services/nginx.py` — pass template vars from app state
-- `vibeops/services/state.py` — normalize `fastcgi_cache` / `cache_mode` field
-- `vibeops/commands/` — new `cache_commands.py` or extend a small module; wire in `parser.py`
+- `bento/services/nginx.py` — pass template vars from app state
+- `bento/services/state.py` — normalize `fastcgi_cache` / `cache_mode` field
+- `bento/commands/` — new `cache_commands.py` or extend a small module; wire in `parser.py`
 - `tests/test_app_cache.py` — new
 - `tests/test_reload_scope.py` — nginx-only reload for cache toggle
 - `docs/architecture.md` + `README.md`
@@ -147,7 +147,7 @@ include /etc/nginx/snippets/php_fastcgi.conf;
 {% endif %}
 ```
 
-Or hardcode snippet name from mode in the Python renderer (cleaner than dynamic include names if template engine is limited — check `vibeops/utils/template.py` capabilities).
+Or hardcode snippet name from mode in the Python renderer (cleaner than dynamic include names if template engine is limited — check `bento/utils/template.py` capabilities).
 
 ### Step 3: State normalize + CLI
 

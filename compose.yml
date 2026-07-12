@@ -1,4 +1,4 @@
-name: vibeops
+name: bento
 
 # Docker owns operational stdout/stderr retention. App-owned cron file logs are
 # separate and rotated by the scheduler's daily logrotate job.
@@ -24,8 +24,8 @@ x-php-common: &php-common
   networks:
     - backend
 
-x-php84-image: &php84-image vibeops-php84:${PHP84_VERSION:-8.4}
-x-php85-image: &php85-image vibeops-php85:${PHP85_VERSION:-8.5}
+x-php84-image: &php84-image bento-php84:${PHP84_VERSION:-8.4}
+x-php85-image: &php85-image bento-php85:${PHP85_VERSION:-8.5}
 
 x-php84-build: &php84-build
   context: ./docker/php
@@ -47,8 +47,8 @@ x-php84-volumes: &php84-volumes
   - ./runtime/generated/php/versions/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./runtime/generated/php/versions/8.4/users.d:/usr/local/etc/php/users.d:ro
   - ./runtime/generated/cron/php84:/usr/local/etc/php/cron.d:ro
-  - ./runtime/generated/runner/php84/programs:/etc/vibeops/programs:ro
-  - ./config/php/supervisor/supervisord.conf:/etc/vibeops/supervisord.conf:ro
+  - ./runtime/generated/runner/php84/programs:/etc/bento/programs:ro
+  - ./config/php/supervisor/supervisord.conf:/etc/bento/supervisord.conf:ro
   - ./docker/php/bin/php-identity-sync:/usr/local/bin/php-identity-sync:ro
   - ./docker/php/bin/php-permissions:/usr/local/bin/php-permissions:ro
   - ./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro
@@ -63,8 +63,8 @@ x-php85-volumes: &php85-volumes
   - ./runtime/generated/php/versions/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./runtime/generated/php/versions/8.5/users.d:/usr/local/etc/php/users.d:ro
   - ./runtime/generated/cron/php85:/usr/local/etc/php/cron.d:ro
-  - ./runtime/generated/runner/php85/programs:/etc/vibeops/programs:ro
-  - ./config/php/supervisor/supervisord.conf:/etc/vibeops/supervisord.conf:ro
+  - ./runtime/generated/runner/php85/programs:/etc/bento/programs:ro
+  - ./config/php/supervisor/supervisord.conf:/etc/bento/supervisord.conf:ro
   - ./docker/php/bin/php-identity-sync:/usr/local/bin/php-identity-sync:ro
   - ./docker/php/bin/php-permissions:/usr/local/bin/php-permissions:ro
   - ./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro
@@ -72,7 +72,7 @@ x-php85-volumes: &php85-volumes
   - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
 
 x-mysql-healthcheck: &mysql-healthcheck
-  test: ["CMD", "mysqladmin", "--defaults-extra-file=/run/secrets/vibeops-root.cnf", "ping", "--silent"]
+  test: ["CMD", "mysqladmin", "--defaults-extra-file=/run/secrets/bento-root.cnf", "ping", "--silent"]
   interval: 5s
   timeout: 5s
   retries: 20
@@ -128,11 +128,11 @@ services:
     image: *php84-image
     restart: unless-stopped
     build: *php84-build
-    command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/vibeops/supervisord.conf"]
+    command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/bento/supervisord.conf"]
     volumes: *php84-volumes
     expose: ["9746"]
     healthcheck:
-      test: ["CMD-SHELL", "supervisorctl -c /etc/vibeops/supervisord.conf status system-cron | grep -q RUNNING && curl -fsS http://127.0.0.1:9746/health >/dev/null"]
+      test: ["CMD-SHELL", "supervisorctl -c /etc/bento/supervisord.conf status system-cron | grep -q RUNNING && curl -fsS http://127.0.0.1:9746/health >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -144,11 +144,11 @@ services:
     image: *php85-image
     restart: unless-stopped
     build: *php85-build
-    command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/vibeops/supervisord.conf"]
+    command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/bento/supervisord.conf"]
     volumes: *php85-volumes
     expose: ["9746"]
     healthcheck:
-      test: ["CMD-SHELL", "supervisorctl -c /etc/vibeops/supervisord.conf status system-cron | grep -q RUNNING && curl -fsS http://127.0.0.1:9746/health >/dev/null"]
+      test: ["CMD-SHELL", "supervisorctl -c /etc/bento/supervisord.conf status system-cron | grep -q RUNNING && curl -fsS http://127.0.0.1:9746/health >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -198,7 +198,7 @@ services:
       - ./config/mysql/versions/5.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
       - ./runtime/backups/mysql57:/backups
       - ./runtime/logs/mysql57:/var/log/mysql
-      - ./runtime/secrets/mysql/mysql57-root.cnf:/run/secrets/vibeops-root.cnf:ro
+      - ./runtime/secrets/mysql/mysql57-root.cnf:/run/secrets/bento-root.cnf:ro
     healthcheck: *mysql-healthcheck
     networks:
       - backend
@@ -219,7 +219,7 @@ services:
       - ./config/mysql/versions/8.4/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
       - ./runtime/backups/mysql84:/backups
       - ./runtime/logs/mysql84:/var/log/mysql
-      - ./runtime/secrets/mysql/mysql84-root.cnf:/run/secrets/vibeops-root.cnf:ro
+      - ./runtime/secrets/mysql/mysql84-root.cnf:/run/secrets/bento-root.cnf:ro
     healthcheck: *mysql-healthcheck
     networks:
       - backend
@@ -241,7 +241,7 @@ services:
       - ./config/mysql/versions/9.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
       - ./runtime/backups/mysql97:/backups
       - ./runtime/logs/mysql97:/var/log/mysql
-      - ./runtime/secrets/mysql/mysql97-root.cnf:/run/secrets/vibeops-root.cnf:ro
+      - ./runtime/secrets/mysql/mysql97-root.cnf:/run/secrets/bento-root.cnf:ro
     healthcheck: *mysql-healthcheck
     networks:
       - backend

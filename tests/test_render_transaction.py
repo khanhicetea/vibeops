@@ -7,17 +7,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.services.cron_runtime as cron_runtime
-import vibeops.utils.env as env
-from vibeops.utils.errors import StackError
-from vibeops.services.state import empty_db
-import vibeops.services.mysql as mysql
-import vibeops.services.nginx as nginx
-import vibeops.utils.paths as pathmod
-import vibeops.services.php as php
-import vibeops.services.runner as runner
-import vibeops.os.process as process
-import vibeops.commands.runtime_commands as runtime
+import bento.services.cron_runtime as cron_runtime
+import bento.utils.env as env
+from bento.utils.errors import StackError
+from bento.services.state import empty_db
+import bento.services.mysql as mysql
+import bento.services.nginx as nginx
+import bento.utils.paths as pathmod
+import bento.services.php as php
+import bento.services.runner as runner
+import bento.os.process as process
+import bento.commands.runtime_commands as runtime
 
 
 def _snapshot_tree(root: Path) -> dict[str, tuple[bytes, int]]:
@@ -131,7 +131,7 @@ class RenderTransactionTests(unittest.TestCase):
         # Fallback pool for available PHP version always rendered.
         self.assertTrue((self.generated / "php" / "versions" / "8.4" / "pool.d" / "zz-fallback.conf").is_file())
         self.assertTrue((self.generated / "cron" / "php84" / "system.cron").is_file())
-        self.assertTrue((self.generated / "runner" / "php84" / "programs" / "vibeops.conf").is_file())
+        self.assertTrue((self.generated / "runner" / "php84" / "programs" / "bento.conf").is_file())
 
         after_gen = _snapshot_tree(repo_generated) if repo_generated.exists() else {}
         after_sec = _snapshot_tree(repo_secrets) if repo_secrets.exists() else {}

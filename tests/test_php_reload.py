@@ -4,8 +4,8 @@ import subprocess
 import unittest
 from unittest.mock import call, patch
 
-import vibeops.services.php as php
-from vibeops.utils.errors import StackError
+import bento.services.php as php
+from bento.utils.errors import StackError
 
 
 class PhpReloadTests(unittest.TestCase):

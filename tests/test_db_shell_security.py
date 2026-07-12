@@ -10,9 +10,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import vibeops.commands.db_commands as db_commands
-from vibeops.services.mysql import mysql_client_option_file_content
-from vibeops.utils.errors import StackError
+import bento.commands.db_commands as db_commands
+from bento.services.mysql import mysql_client_option_file_content
+from bento.utils.errors import StackError
 
 SENTINEL = "DO_NOT_LEAK_TEST_SECRET"
 
@@ -156,7 +156,7 @@ class DbShellSecurityTests(unittest.TestCase):
             patch.object(db_commands, "info", side_effect=lambda m: self.info_out.write(str(m) + "\n")),
             patch.object(db_commands, "warn", side_effect=lambda m: self.warn_out.write(str(m) + "\n")),
             # Stable remote path for assertions.
-            patch.object(db_commands, "_ephemeral_client_option_path", return_value="/run/vibeops-client-deadbeef.cnf"),
+            patch.object(db_commands, "_ephemeral_client_option_path", return_value="/run/bento-client-deadbeef.cnf"),
         ]
         for p in self.patches:
             p.start()
@@ -209,19 +209,19 @@ class DbShellSecurityTests(unittest.TestCase):
             if "umask 077" in flat:
                 kinds.append("setup")
                 self.assertIn("-T", call["cmd"])
-                self.assertIn("/run/vibeops-client-deadbeef.cnf", flat)
+                self.assertIn("/run/bento-client-deadbeef.cnf", flat)
                 self.assertIn(SENTINEL, call.get("input_text") or "")
                 self.assertNotIn(SENTINEL, flat)
             elif call["fn"] == "subprocess.run" and "defaults-extra-file=" in flat:
                 kinds.append("client")
                 self.assertNotIn("-T", call["cmd"])  # interactive TTY exec
-                self.assertIn("--defaults-extra-file=/run/vibeops-client-deadbeef.cnf", flat)
+                self.assertIn("--defaults-extra-file=/run/bento-client-deadbeef.cnf", flat)
                 self.assertNotIn(SENTINEL, flat)
                 self.assertNotIn("MYSQL_PWD", flat)
             elif "rm -f" in flat:
                 kinds.append("cleanup")
                 self.assertIn("-T", call["cmd"])
-                self.assertIn("/run/vibeops-client-deadbeef.cnf", flat)
+                self.assertIn("/run/bento-client-deadbeef.cnf", flat)
 
         self.assertEqual(kinds, ["setup", "client", "cleanup"])
         self._assert_no_sentinel_in_output()
@@ -324,7 +324,7 @@ class DbShellSecurityTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
         self.assertEqual(len(self.calls), 1)
         flat = " ".join(self.calls[0]["cmd"])
-        self.assertIn("defaults-extra-file=/run/secrets/vibeops-root.cnf", flat)
+        self.assertIn("defaults-extra-file=/run/secrets/bento-root.cnf", flat)
         self.assertNotIn("MYSQL_PWD", flat)
 
     def test_db_password_fallback_key(self) -> None:
@@ -342,7 +342,7 @@ class DbShellSecurityTests(unittest.TestCase):
 
 class SourceAuditTests(unittest.TestCase):
     def test_no_password_valued_mysql_pwd_argv_construction(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "vibeops"
+        root = Path(__file__).resolve().parents[1] / "bento"
         offenders: list[str] = []
         pattern = re.compile(r'MYSQL_PWD=\{|f["\']MYSQL_PWD=|f["\']DB_PASSWORD=|f["\']MYSQL_PASSWORD=')
         for path in root.rglob("*.py"):

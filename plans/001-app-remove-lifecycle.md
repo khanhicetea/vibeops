@@ -8,7 +8,7 @@
 > maintain the index.
 >
 > **Drift check (run first)**:
-> `git diff --stat 706f9ab..HEAD -- vibeops/commands/app_commands.py vibeops/commands/parser.py vibeops/commands/wizard_commands.py vibeops/services/php.py vibeops/services/nginx.py vibeops/services/state.py vibeops/services/cron_runtime.py tests/ docs/architecture.md README.md`
+> `git diff --stat 706f9ab..HEAD -- bento/commands/app_commands.py bento/commands/parser.py bento/commands/wizard_commands.py bento/services/php.py bento/services/nginx.py bento/services/state.py bento/services/cron_runtime.py tests/ docs/architecture.md README.md`
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -24,17 +24,17 @@
 
 ## Why this matters
 
-VibeOps can create isolated apps (Linux user, PHP-FPM pool, nginx vhost, domains, optional MySQL user/DBs, crons) but cannot tear them down through the CLI. Operators must hand-edit `runtime/state/stack.json`, delete generated pool/vhost files, and hope nothing is left behind. That produces state drift and leftover FPM pools. A first-class `app remove` with explicit flags for home and database destruction makes multi-tenant ops complete and safe.
+bento can create isolated apps (Linux user, PHP-FPM pool, nginx vhost, domains, optional MySQL user/DBs, crons) but cannot tear them down through the CLI. Operators must hand-edit `runtime/state/stack.json`, delete generated pool/vhost files, and hope nothing is left behind. That produces state drift and leftover FPM pools. A first-class `app remove` with explicit flags for home and database destruction makes multi-tenant ops complete and safe.
 
 ## Current state
 
 - **CLI surface**: `app create|list|show|domain|db|config|access-log|logs` exist; **no** `app remove` / `app delete`.
-  - `vibeops/commands/parser.py` — app subparsers (around lines 30–146)
-- **Create path**: `cmd_app_create` in `vibeops/commands/app_commands.py` builds identity + vhost + optional DB via `ensure_app_identity` / `apply_generated_config`.
+  - `bento/commands/parser.py` — app subparsers (around lines 30–146)
+- **Create path**: `cmd_app_create` in `bento/commands/app_commands.py` builds identity + vhost + optional DB via `ensure_app_identity` / `apply_generated_config`.
 - **Teardown exemplar**: `cmd_cron_remove` removes state + job file + reloads only that PHP cron service:
 
 ```python
-# vibeops/commands/cron_commands.py (pattern to match for cleanup + reload)
+# bento/commands/cron_commands.py (pattern to match for cleanup + reload)
 cron_path.unlink(missing_ok=True)
 db["crons"].pop(cron_key, None)
 combined_crontab = rebuild_supercronic_crontab(php_version)
@@ -42,7 +42,7 @@ cron_reload(php_cron_service_for(php_version))
 save_db(db)
 ```
 
-- **State shape** (`empty_db` / `normalize_db` in `vibeops/services/state.py`):
+- **State shape** (`empty_db` / `normalize_db` in `bento/services/state.py`):
   - `apps[app_name]` — app record
   - `domains[domain] = {kind: "php", app: app_name}`
   - `crons["app/job"]` may reference app
@@ -52,8 +52,8 @@ save_db(db)
   - pool: `runtime/generated/php/versions/<ver>/pool.d/<app>.conf`
   - user env: `runtime/generated/php/versions/<ver>/users.d/<app>.env`
   - cron job files under `runtime/generated/cron/phpXX/jobs/` for that app
-- **App home**: `runtime/home/<app>/` via `app_home` in `vibeops/services/php.py`
-- **Reload scopes**: app identity/pool changes use nginx + php; domain-only uses nginx. See `tests/test_reload_scope.py` matrix and `SERVICE_TARGETS_*` in `vibeops/commands/runtime_commands.py`:
+- **App home**: `runtime/home/<app>/` via `app_home` in `bento/services/php.py`
+- **Reload scopes**: app identity/pool changes use nginx + php; domain-only uses nginx. See `tests/test_reload_scope.py` matrix and `SERVICE_TARGETS_*` in `bento/commands/runtime_commands.py`:
 
 ```python
 SERVICE_TARGETS_ALL = frozenset({"nginx", "php", "cron"})
@@ -61,9 +61,9 @@ SERVICE_TARGETS_NGINX = frozenset({"nginx"})
 ```
 
 - **Conventions**:
-  - Validate names with `APP_NAME_RE` / `validate(...)` from `vibeops/utils/validation.py`
+  - Validate names with `APP_NAME_RE` / `validate(...)` from `bento/utils/validation.py`
   - State mutations that race with cron should use `@serialized_cron_state` or `cron_state_lock` when touching crons
-  - Prefer `die` / `info` / `warn` from `vibeops/utils/errors.py`
+  - Prefer `die` / `info` / `warn` from `bento/utils/errors.py`
   - Destructive actions require `--yes` for non-TTY (mirror `db restore`)
   - Layering: business logic in `commands` + `services`; parser only wires argparse
 
@@ -79,10 +79,10 @@ SERVICE_TARGETS_NGINX = frozenset({"nginx"})
 ## Scope
 
 **In scope**:
-- `vibeops/commands/app_commands.py` — `cmd_app_remove` (+ helpers if needed)
-- `vibeops/commands/parser.py` — wire `app remove` (alias `delete`)
-- `vibeops/commands/wizard_commands.py` — optional Manage app → Remove (only if existing manage-app menu is easy to extend without redesign)
-- `vibeops/services/php.py` — optional pure helpers for pool/user env paths if missing (keep small)
+- `bento/commands/app_commands.py` — `cmd_app_remove` (+ helpers if needed)
+- `bento/commands/parser.py` — wire `app remove` (alias `delete`)
+- `bento/commands/wizard_commands.py` — optional Manage app → Remove (only if existing manage-app menu is easy to extend without redesign)
+- `bento/services/php.py` — optional pure helpers for pool/user env paths if missing (keep small)
 - `tests/test_app_remove.py` — new characterization/unit tests
 - `tests/test_reload_scope.py` — add row for `app remove`
 - `docs/architecture.md` — reload matrix row for `app remove`
@@ -148,19 +148,19 @@ Create `tests/test_app_remove.py` modeled after `tests/test_reload_scope.py` and
 
 ### Step 2: Implement `cmd_app_remove`
 
-In `vibeops/commands/app_commands.py`:
+In `bento/commands/app_commands.py`:
 
 - Add `cmd_app_remove(args)`
 - Use `load_db` / `save_db` / `upsert_timestamp` not needed on delete
 - Import `apply_generated_config` and service targets from `runtime_commands` lazily (same style as domain commands)
 - For cron cleanup, reuse helpers from `cron_commands` / `cron_runtime` rather than duplicating crontab merge logic
-- For MySQL drop, add a small function in `vibeops/services/mysql.py` only if needed, e.g. `drop_app_mysql_resources(app_name, mysql_service, databases: list[str])` using existing `mysql_root_exec_sql` and `mysql_string_literal` — **identifiers must be validated** against `APP_NAME_RE` / `DB_NAME_RE` before interpolation
+- For MySQL drop, add a small function in `bento/services/mysql.py` only if needed, e.g. `drop_app_mysql_resources(app_name, mysql_service, databases: list[str])` using existing `mysql_root_exec_sql` and `mysql_string_literal` — **identifiers must be validated** against `APP_NAME_RE` / `DB_NAME_RE` before interpolation
 
 **Verify**: unit tests green for state/reload cases.
 
 ### Step 3: Wire parser
 
-In `vibeops/commands/parser.py` under `app` subparsers:
+In `bento/commands/parser.py` under `app` subparsers:
 
 ```python
 app_remove = app_sub.add_parser("remove", aliases=["delete"], help="Remove an app from state and generated config")

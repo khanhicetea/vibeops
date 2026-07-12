@@ -5,7 +5,7 @@ Execute in the order below unless dependencies say otherwise. Each executor: rea
 
 ## Stack context (for executors)
 
-VibeOps is a Docker LEMP ops stack with a pure-Python stdlib CLI (`./manage.py`).
+bento is a Docker LEMP ops stack with a pure-Python stdlib CLI (`./manage.py`).
 
 - **Verification gate**: `make check` (syntax + `python3 -B -m unittest discover -s tests -v`)
 - **Layering**: `utils` → `os` → `services` → `ui` → `commands` (see `docs/architecture.md`)

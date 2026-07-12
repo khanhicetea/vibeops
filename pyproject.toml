@@ -1,14 +1,14 @@
 [project]
-name = "vibeops"
+name = "bento"
 version = "1.0.0"
-description = "Pure-Python management CLI for the VibeOps Docker stack"
+description = "Pure-Python management CLI for the bento Docker stack"
 requires-python = ">=3.11"
 # No runtime third-party dependencies; the CLI is stdlib-only.
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-src = ["vibeops", "tests", "manage.py"]
+src = ["bento", "tests", "manage.py"]
 
 [tool.ruff.lint]
 # Enable core correctness checks. F403/F405 are not ignored — wildcard imports

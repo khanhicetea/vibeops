@@ -9,7 +9,7 @@ if [ "$#" -ne 7 ]; then
   exit 2
 fi
 
-APP_USER="${VIBEOPS_APP:-}"
+APP_USER="${bento_APP:-}"
 APP_JOB="$1"
 APP_WORKDIR="$2"
 OUTPUT="$3"
@@ -18,7 +18,7 @@ LOCK="$5"
 RUNNER_SERVICE="$6"
 shift 6
 
-case "$APP_USER" in ''|*[!a-z0-9_-]*|[0-9_-]*) echo "Invalid VIBEOPS_APP: $APP_USER" >&2; exit 2;; esac
+case "$APP_USER" in ''|*[!a-z0-9_-]*|[0-9_-]*) echo "Invalid bento_APP: $APP_USER" >&2; exit 2;; esac
 case "$APP_JOB" in ''|*[!A-Za-z0-9_.-]*) echo "Invalid cron job: $APP_JOB" >&2; exit 2;; esac
 case "$OUTPUT" in docker|file) ;; *) echo "Invalid output mode: $OUTPUT" >&2; exit 2;; esac
 case "$TIMEOUT" in ''|*[!0-9]*) echo "Invalid timeout: $TIMEOUT" >&2; exit 2;; esac
@@ -46,10 +46,10 @@ fi
 
 cd "$APP_WORKDIR"
 umask 0027
-export VIBEOPS_CRON_JOB="$APP_JOB" VIBEOPS_CRON_OUTPUT="$OUTPUT" VIBEOPS_RUNNER_SERVICE="$RUNNER_SERVICE"
+export bento_CRON_JOB="$APP_JOB" bento_CRON_OUTPUT="$OUTPUT" bento_RUNNER_SERVICE="$RUNNER_SERVICE"
 set -- sh -lc "$1"
 if [ "$LOCK" != "-" ]; then
-  set -- flock -n "/run/vibeops-cron-locks/${APP_USER}/${LOCK}.lock" -- "$@"
+  set -- flock -n "/run/bento-cron-locks/${APP_USER}/${LOCK}.lock" -- "$@"
 fi
 if [ "$TIMEOUT" -gt 0 ]; then
   set -- timeout --foreground --kill-after=30 "$TIMEOUT" "$@"

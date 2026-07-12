@@ -45,7 +45,7 @@ test:
 | Purpose | Command | Expected |
 |---------|---------|----------|
 | Full local gate | `make check` | exit 0 |
-| Ruff (after install in CI/local) | `python3 -m ruff check vibeops tests manage.py` | exit 0 |
+| Ruff (after install in CI/local) | `python3 -m ruff check bento tests manage.py` | exit 0 |
 | Unit tests | `python3 -B -m unittest discover -s tests -v` | all pass |
 
 ## Scope
@@ -98,7 +98,7 @@ Start by running ruff with broader select locally in CI job first; only commit r
 If ruff not installed: `pip install ruff` in a throwaway venv (`.venv` may already exist).
 
 ```bash
-python3 -m ruff check vibeops tests manage.py
+python3 -m ruff check bento tests manage.py
 ```
 
 Record findings. Fix auto-fixable issues that are clearly correct. Do not enable rules you will not fix in this plan.
@@ -113,7 +113,7 @@ Commit the final `select` list that is green.
 .PHONY: check test syntax lint
 
 lint:
-	@python3 -m ruff check vibeops tests manage.py
+	@python3 -m ruff check bento tests manage.py
 
 # Prefer: check remains dependency-free
 check: syntax test
@@ -145,7 +145,7 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Ruff
-        run: python -m ruff check vibeops tests manage.py
+        run: python -m ruff check bento tests manage.py
       - name: make check
         run: make check
 ```
@@ -177,5 +177,5 @@ Document CI. Run `make check` and ruff locally.
 
 ## Maintenance notes
 
-- Next DX step: optional `ruff format` and mypy on `vibeops/utils` only
+- Next DX step: optional `ruff format` and mypy on `bento/utils` only
 - Do not add pytest until there is a reason; unittest is fine
