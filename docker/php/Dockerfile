@@ -1,9 +1,12 @@
 ARG PHP_VERSION=8.4
 FROM php:${PHP_VERSION}-fpm-trixie
 
+# -----------------------------------------------------------------------------
+# Layer 1: PHP extensions + FPM runtime
+# Bumps to CLI tools (Node, supercronic, git/vim, composer) must not rebuild this.
+# Declare only ARGs used below so tool-version ARGs cannot bust this cache.
+# -----------------------------------------------------------------------------
 ARG TZ=Asia/Ho_Chi_Minh
-ARG SUPERCRONIC_VERSION=0.2.47
-ARG NODE_VERSION=24.11.1
 # Global PHP-FPM process cap across all pools in this container (safety bound).
 ARG PHP_FPM_PROCESS_MAX=32
 ENV TZ=${TZ}
@@ -16,19 +19,12 @@ RUN set -eux; \
       bash \
       ca-certificates \
       curl \
-      git \
       gosu \
-      grep \
-      gzip \
-      openssh-client \
       openssl \
       passwd \
       logrotate \
       tzdata \
       util-linux \
-      unzip \
-      vim \
-      xz-utils \
       $PHPIZE_DEPS \
       libfreetype6 \
       libicu76 \
@@ -57,10 +53,44 @@ RUN set -eux; \
     done; \
     case "${PHP_FPM_PROCESS_MAX}" in ''|*[!0-9]*|0*) echo "Invalid PHP_FPM_PROCESS_MAX: ${PHP_FPM_PROCESS_MAX}" >&2; exit 1 ;; esac; \
     printf '[global]\nerror_log = /proc/self/fd/2\nprocess.max = %s\ninclude=/usr/local/etc/php-fpm.d/pools/*.conf\n' "${PHP_FPM_PROCESS_MAX}" > /usr/local/etc/php-fpm.d/zz-vibeops.conf; \
+    apt-mark auto '.*' > /dev/null; \
+    apt-mark manual $savedAptMark \
+      bash ca-certificates curl gosu openssl passwd logrotate tzdata util-linux \
+      libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
+    ldd "$(php -r 'echo ini_get("extension_dir");')"/*.so \
+      | awk '/=>/ { print $3 } /^\// { print $1 }' \
+      | xargs -r -I '{}' sh -c 'dpkg-query -S "$1" 2>/dev/null | cut -d: -f1' sh '{}' \
+      | sort -u \
+      | xargs -r apt-mark manual; \
+    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+    rm -rf /var/lib/apt/lists/* /tmp/pear ~/.pearrc
+
+# -----------------------------------------------------------------------------
+# Layer 2+: common CLI / deploy tools (not required to compile PHP extensions)
+# Version ARGs are declared immediately above the RUN that uses them so a bump
+# rebuilds only that tool layer (and later layers), never PHP extensions.
+# -----------------------------------------------------------------------------
+
+# Apt CLI packages + Composer (no version pin ARGs here).
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      git \
+      grep \
+      gzip \
+      openssh-client \
+      redis-tools \
+      unzip \
+      vim \
+      xz-utils; \
     php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"; \
     php -r "if (hash_file('sha384', 'composer-setup.php') !== trim(file_get_contents('https://composer.github.io/installer.sig'))) { unlink('composer-setup.php'); exit(1); }"; \
     php composer-setup.php --install-dir=/usr/local/bin --filename=composer; \
     rm composer-setup.php; \
+    rm -rf /var/lib/apt/lists/*
+
+ARG NODE_VERSION=24.11.1
+RUN set -eux; \
     deb_arch="$(dpkg --print-architecture)"; \
     case "$deb_arch" in \
       amd64) node_arch="x64" ;; \
@@ -74,17 +104,9 @@ RUN set -eux; \
     tar -xJf "${node_dist}.tar.xz" -C /usr/local --strip-components=1 --no-same-owner; \
     rm "${node_dist}.tar.xz" SHASUMS256.txt; \
     node --version; \
-    npm --version; \
-    apt-mark auto '.*' > /dev/null; \
-    apt-mark manual $savedAptMark bash ca-certificates curl git gosu grep gzip openssh-client openssl passwd logrotate tzdata util-linux unzip vim xz-utils libfreetype6 libicu76 libjpeg62-turbo libpng16-16 libzip5; \
-    ldd "$(php -r 'echo ini_get("extension_dir");')"/*.so \
-      | awk '/=>/ { print $3 } /^\// { print $1 }' \
-      | xargs -r -I '{}' sh -c 'dpkg-query -S "$1" 2>/dev/null | cut -d: -f1' sh '{}' \
-      | sort -u \
-      | xargs -r apt-mark manual; \
-    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
-    rm -rf /var/lib/apt/lists/* /tmp/pear ~/.pearrc
+    npm --version
 
+ARG SUPERCRONIC_VERSION=0.2.47
 RUN set -eux; \
     deb_arch="$(dpkg --print-architecture)"; \
     case "$deb_arch" in \
@@ -97,6 +119,7 @@ RUN set -eux; \
     echo "$supercronic_sha1  /usr/local/bin/supercronic" | sha1sum -c -; \
     chmod +x /usr/local/bin/supercronic
 
+# Helper scripts last: edit bins without rebuilding PHP or tool installs.
 COPY bin/php-identity-sync /usr/local/bin/php-identity-sync
 COPY bin/php-permissions /usr/local/bin/php-permissions
 COPY bin/php-app-run /usr/local/bin/php-app-run
