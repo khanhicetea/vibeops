@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
 from vibeops.os.fsutil import mkdir
 from vibeops.os.process import run, service_running
 from vibeops.services.mysql import generate_password
 from vibeops.services.rendering import write_template
-from vibeops.utils.env import parse_env_file, stack_env
+from vibeops.utils.env import stack_env
 from vibeops.utils.errors import die, info
 from vibeops.utils.paths import CONFIG_DIR, HOME_DIR, rel
 from vibeops.utils.validation import APP_NAME_RE, validate
@@ -46,9 +45,9 @@ def ensure_redis_user(app_name: str) -> tuple[bool, str]:
     acl_enabled = env.get("REDIS_APP_ACL", "false").strip().lower() == "true"
     cred_dir = HOME_DIR / app_name / ".credentials"
     cred_path = cred_dir / "redis.env"
-    existing = parse_env_file(cred_path)
     if acl_enabled:
-        password = validate_redis_password(existing.get("REDIS_PASSWORD") or generate_password(32), "REDIS_PASSWORD")
+        # Always mint a unique per-app secret. Admin auth stays on REDIS_ADMIN_PASSWORD.
+        password = validate_redis_password(generate_password(32), "REDIS_PASSWORD")
         username = app_name
     else:
         password = env.get("REDIS_PASSWORD", "")

@@ -8,21 +8,23 @@ from vibeops.utils.env import parse_env_file
 
 
 class RedisAclTests(unittest.TestCase):
-    def test_credentials_are_stable_and_prefixed(self) -> None:
+    def test_acl_credentials_are_random_and_prefixed(self) -> None:
         with tempfile.TemporaryDirectory() as td, \
              patch.object(redis, "HOME_DIR", Path(td)), \
-             patch.object(redis, "stack_env", return_value={"REDIS_APP_ACL": "true"}), \
-             patch.object(redis, "service_running", return_value=False):
+             patch.object(redis, "stack_env", return_value={
+                 "REDIS_APP_ACL": "true",
+                 "REDIS_PASSWORD": "shared-master-secret",
+             }), \
+             patch.object(redis, "service_running", return_value=False), \
+             patch.object(redis, "generate_password", return_value="random-app-secret-0123456789ab"):
             created, rel_path = redis.ensure_redis_user("shop")
             self.assertFalse(created)
-            path = Path(td) / "shop" / ".credentials" / "redis.env"
-            first = parse_env_file(path)
-            redis.ensure_redis_user("shop")
-            second = parse_env_file(path)
-            self.assertEqual(first["REDIS_PASSWORD"], second["REDIS_PASSWORD"])
-            self.assertEqual(first["REDIS_USERNAME"], "shop")
-            self.assertEqual(first["REDIS_DB"], "0")
-            self.assertEqual(first["REDIS_PREFIX"], "shop:")
+            values = parse_env_file(Path(td) / "shop" / ".credentials" / "redis.env")
+            self.assertEqual(values["REDIS_USERNAME"], "shop")
+            self.assertEqual(values["REDIS_PASSWORD"], "random-app-secret-0123456789ab")
+            self.assertNotEqual(values["REDIS_PASSWORD"], "shared-master-secret")
+            self.assertEqual(values["REDIS_DB"], "0")
+            self.assertEqual(values["REDIS_PREFIX"], "shop:")
             self.assertTrue(rel_path.endswith("shop/.credentials/redis.env"))
 
     def test_acl_secret_is_sent_on_stdin_not_argv(self) -> None:
