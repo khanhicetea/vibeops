@@ -11,8 +11,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import vibeops.commands.db_commands as db_commands
-import vibeops.helpers as helpers
-from vibeops.helpers import StackError
+from vibeops.services.mysql import mysql_client_option_file_content
+from vibeops.utils.errors import StackError
 
 SENTINEL = "DO_NOT_LEAK_TEST_SECRET"
 
@@ -39,7 +39,7 @@ def _contains_sentinel(obj: object, *, seen: set[int] | None = None) -> bool:
 
 class MysqlOptionFileContentTests(unittest.TestCase):
     def test_single_client_section_and_quoted_fields(self) -> None:
-        body = helpers.mysql_client_option_file_content(user="shop", password="plain")
+        body = mysql_client_option_file_content(user="shop", password="plain")
         self.assertEqual(body.count("[client]"), 1)
         self.assertIn('user="shop"', body)
         self.assertIn('password="plain"', body)
@@ -50,7 +50,7 @@ class MysqlOptionFileContentTests(unittest.TestCase):
         self.assertEqual(len(lines), 3)
 
     def test_escapes_backslash_and_double_quote_in_password(self) -> None:
-        body = helpers.mysql_client_option_file_content(
+        body = mysql_client_option_file_content(
             user="shop",
             password=r'a\b"c',
         )
@@ -61,12 +61,12 @@ class MysqlOptionFileContentTests(unittest.TestCase):
 
     def test_username_specials_are_quoted_not_injected(self) -> None:
         # APP_NAME_RE usernames are constrained; still ensure quoting is structural.
-        body = helpers.mysql_client_option_file_content(user="shop_app", password="x")
+        body = mysql_client_option_file_content(user="shop_app", password="x")
         self.assertIn('user="shop_app"', body)
         self.assertEqual(body.count("[client]"), 1)
 
     def test_protocol_socket_for_root_style_content(self) -> None:
-        body = helpers.mysql_client_option_file_content(
+        body = mysql_client_option_file_content(
             user="root",
             password=r'p"w\d',
             protocol="socket",
@@ -76,11 +76,11 @@ class MysqlOptionFileContentTests(unittest.TestCase):
 
     def test_rejects_newline_in_password(self) -> None:
         with self.assertRaises(StackError):
-            helpers.mysql_client_option_file_content(user="shop", password="bad\nline")
+            mysql_client_option_file_content(user="shop", password="bad\nline")
 
     def test_rejects_invalid_protocol(self) -> None:
         with self.assertRaises(StackError):
-            helpers.mysql_client_option_file_content(user="root", password="x", protocol="socket;rm")
+            mysql_client_option_file_content(user="root", password="x", protocol="socket;rm")
 
 
 class DbShellSecurityTests(unittest.TestCase):

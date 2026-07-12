@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import vibeops.helpers as helpers
+import vibeops.utils.env as env
+from vibeops.utils.errors import StackError
+from vibeops.services.php import php_version_config_dir
 from vibeops.commands.app_commands import ensure_app, resolve_app_php_version
 from vibeops.commands.parser import build_parser
 from vibeops.commands import app_commands, cron_commands, runtime_commands
@@ -72,12 +74,12 @@ class ResolveAppPhpVersionTests(unittest.TestCase):
     def test_existing_mismatch_raises_and_does_not_mutate(self) -> None:
         db = _shop_db()
         original = copy.deepcopy(db["apps"]["shop"])
-        with self.assertRaisesRegex(helpers.StackError, r"primary PHP version is 8\.5, not 8\.4"):
+        with self.assertRaisesRegex(StackError, r"primary PHP version is 8\.5, not 8\.4"):
             resolve_app_php_version(db, "shop", "8.4")
         self.assertEqual(db["apps"]["shop"], original)
 
     def test_unknown_omitted_uses_default(self) -> None:
-        with patch.object(helpers, "default_php_version", return_value="8.4"):
+        with patch.object(env, "default_php_version", return_value="8.4"):
             # resolve imports via wildcard into app_commands namespace
             with patch.object(app_commands, "default_php_version", return_value="8.4"):
                 self.assertEqual(resolve_app_php_version({"apps": {}}, "newapp", None), "8.4")
@@ -86,19 +88,19 @@ class ResolveAppPhpVersionTests(unittest.TestCase):
         self.assertEqual(resolve_app_php_version({"apps": {}}, "newapp", "8.5"), "8.5")
 
     def test_unknown_not_allow_new(self) -> None:
-        with self.assertRaisesRegex(helpers.StackError, r"Unknown app: newapp"):
+        with self.assertRaisesRegex(StackError, r"Unknown app: newapp"):
             resolve_app_php_version({"apps": {}}, "newapp", None, allow_new=False)
 
     def test_malformed_recorded_version(self) -> None:
         db = _shop_db()
         db["apps"]["shop"]["php_version"] = "not-a-version"
-        with self.assertRaisesRegex(helpers.StackError, r"Invalid PHP version"):
+        with self.assertRaisesRegex(StackError, r"Invalid PHP version"):
             resolve_app_php_version(db, "shop", None)
 
     def test_missing_recorded_version(self) -> None:
         db = _shop_db()
         del db["apps"]["shop"]["php_version"]
-        with self.assertRaisesRegex(helpers.StackError, r"no recorded php_version"):
+        with self.assertRaisesRegex(StackError, r"no recorded php_version"):
             resolve_app_php_version(db, "shop", None)
 
 
@@ -106,7 +108,7 @@ class EnsureAppInvariantTests(unittest.TestCase):
     def test_rejects_different_primary_version_without_identity_call(self) -> None:
         db = _shop_db("8.5")
         with patch.object(app_commands, "ensure_app_identity") as identity:
-            with self.assertRaisesRegex(helpers.StackError, r"primary PHP version is 8\.5, not 8\.4"):
+            with self.assertRaisesRegex(StackError, r"primary PHP version is 8\.5, not 8\.4"):
                 ensure_app("shop", "8.4", db)
             identity.assert_not_called()
             self.assertEqual(db["apps"]["shop"]["php_version"], "8.5")
@@ -114,7 +116,7 @@ class EnsureAppInvariantTests(unittest.TestCase):
 
 class CommandHandlerPhpResolutionTests(unittest.TestCase):
     def _identity_path(self, version: str = "8.5", app: str = "shop") -> Path:
-        return helpers.php_version_config_dir(version) / "users.d" / f"{app}.env"
+        return php_version_config_dir(version) / "users.d" / f"{app}.env"
 
     def test_exec_omitted_selects_app_cli_service(self) -> None:
         db = _shop_db("8.5")
@@ -203,7 +205,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(runtime_commands, "os") as os_mod,
         ):
             args = argparse.Namespace(app_name="shop", php="8.4", workdir=None, command=["php", "-v"])
-            with self.assertRaisesRegex(helpers.StackError, r"primary PHP version is 8\.5, not 8\.4"):
+            with self.assertRaisesRegex(StackError, r"primary PHP version is 8\.5, not 8\.4"):
                 runtime_commands.cmd_app_exec(args)
             ensure.assert_not_called()
             save_db.assert_not_called()
@@ -232,7 +234,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
                 timeout=0,
                 lock=None,
             )
-            with self.assertRaisesRegex(helpers.StackError, r"primary PHP version is 8\.5, not 8\.4"):
+            with self.assertRaisesRegex(StackError, r"primary PHP version is 8\.5, not 8\.4"):
                 cron_commands.cmd_cron_create(args)
             ensure.assert_not_called()
             apply.assert_not_called()

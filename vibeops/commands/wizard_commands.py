@@ -15,7 +15,6 @@ from vibeops.commands.app_commands import (
     cmd_app_domain_list,
     cmd_app_domain_remove,
     cmd_app_domain_set_main,
-    cmd_user_create,
 )
 from vibeops.commands.app_config_commands import (
     cmd_app_config_customize,
@@ -44,8 +43,6 @@ from vibeops.commands.runtime_commands import (
     prompt_aliases,
     prompt_choice,
     prompt_confirm,
-    prompt_int,
-    prompt_password,
     prompt_pick,
     prompt_public_dir,
     prompt_text,
@@ -56,21 +53,7 @@ from vibeops.commands.tls_commands import cmd_tls_acme
 from vibeops.utils.validation import APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, JOB_RE, MYSQL_SERVICE_RE
 
 
-def wizard_create_user() -> None:
-    username = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
-    php = prompt_pick("PHP version", available_php_versions(), default_php_version())
-    uid = prompt_int("UID (blank = auto)", "", required=False)
-    no_mysql = not prompt_confirm("Create/update MySQL account?", True)
-    mysql_service = default_mysql_service() if no_mysql else prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_mysql_service(), hint="for example mysql57, mysql84, mysql97")
-    mysql_password = None if no_mysql else prompt_password()
-    no_reload = not prompt_confirm("Reload PHP-FPM if running?", True)
-    print_plan([f"create/update app identity {username}", f"PHP {php}", "MySQL account: " + ("no" if no_mysql else mysql_service), "reload PHP-FPM: " + ("no" if no_reload else "yes")])
-    if prompt_confirm("Continue?", True):
-        cmd_user_create(argparse.Namespace(username=username, uid=uid, php=php, no_mysql=no_mysql, mysql_password=mysql_password, mysql_service=mysql_service, no_reload=no_reload))
-
-
-
-def wizard_create_site() -> None:
+def wizard_create_app() -> None:
     app_name = prompt_validated("App name", APP_NAME_RE, "app_name", hint="use a Linux-safe slug like my_app or shop-api; lowercase, no spaces, max 32 chars")
     domain = prompt_validated("Main domain", DOMAIN_RE, "domain")
     aliases = prompt_aliases()
@@ -541,7 +524,7 @@ def cmd_wizard(args: argparse.Namespace) -> None:
             return
         try:
             if action == "Create app":
-                wizard_create_site()
+                wizard_create_app()
             elif action == "Manage app":
                 wizard_manage_app()
             else:

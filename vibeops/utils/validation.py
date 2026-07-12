@@ -10,8 +10,6 @@ from vibeops.utils.errors import die
 
 APP_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
-USERNAME_RE = APP_NAME_RE
-
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 
 DOMAIN_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+$")

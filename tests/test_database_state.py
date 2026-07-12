@@ -8,7 +8,6 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import vibeops.helpers as helpers
 import vibeops.services.mysql as mysql
 from vibeops.utils.errors import StackError
 from vibeops.commands import app_commands
@@ -170,7 +169,7 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             patch.object(
                 app_commands,
                 "require_mysql_ready_for_sql",
-                side_effect=helpers.StackError(
+                side_effect=StackError(
                     "Cannot create database; mysql84 is not running, .env is missing, or root password is unset."
                 ),
             ) as ready,
@@ -183,7 +182,7 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             import vibeops.commands.runtime_commands as runtime_commands
 
             with patch.object(runtime_commands, "apply_generated_config") as render_txn:
-                with self.assertRaisesRegex(helpers.StackError, r"not running"):
+                with self.assertRaisesRegex(StackError, r"not running"):
                     app_commands.cmd_app_create(_create_args())
                 ready.assert_called_once_with("mysql84")
                 identity.assert_not_called()
@@ -207,7 +206,7 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             patch.object(
                 app_commands,
                 "require_mysql_ready_for_sql",
-                side_effect=helpers.StackError(
+                side_effect=StackError(
                     "Cannot create database; mysql84 is not running, .env is missing, or root password is unset."
                 ),
             ),
@@ -215,7 +214,7 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             patch.object(app_commands, "ensure_mysql_database") as ensure_db,
             patch.object(app_commands, "save_db") as save_db,
         ):
-            with self.assertRaises(helpers.StackError):
+            with self.assertRaises(StackError):
                 app_commands.cmd_app_create(_create_args())
             identity.assert_not_called()
             ensure_db.assert_not_called()
@@ -237,13 +236,13 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
                 patch.object(
                     app_commands,
                     "ensure_mysql_database",
-                    side_effect=helpers.StackError("mysql on mysql84 failed (exit 1)"),
+                    side_effect=StackError("mysql on mysql84 failed (exit 1)"),
                 )
             )
             save_db = stack.enter_context(patch.object(app_commands, "save_db"))
             for p in _app_create_side_effect_patches():
                 stack.enter_context(p)
-            with self.assertRaisesRegex(helpers.StackError, r"mysql on mysql84 failed"):
+            with self.assertRaisesRegex(StackError, r"mysql on mysql84 failed"):
                 app_commands.cmd_app_create(_create_args())
             save_db.assert_not_called()
             self.assertEqual(app["databases"], original_db_keys["databases"])
@@ -322,7 +321,7 @@ class AppCreateDatabaseStateTests(unittest.TestCase):
             patch.object(app_commands, "save_db") as save_db,
         ):
             with self.assertRaisesRegex(
-                helpers.StackError, r"Cannot create a database suffix with --no-mysql"
+                StackError, r"Cannot create a database suffix with --no-mysql"
             ):
                 app_commands.cmd_app_create(_create_args(no_mysql=True))
             identity.assert_not_called()

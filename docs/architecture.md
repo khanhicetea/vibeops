@@ -44,7 +44,7 @@ runtime/                    # local state/generated/live data
 ```bash
 ./manage.py render          # stage + promote a complete generation into runtime/generated
 ./manage.py apply           # render, validate running services, then reload
-./manage.py state migrate   # move/upgrade legacy ./stack.json
+./manage.py state init      # create empty runtime/state/stack.json
 ```
 
 Render and apply are transactional. Top-level bind-mounted directories (`runtime/generated/`, `runtime/secrets/mysql/`) stay in place; only file contents are replaced atomically. Lifecycle:
@@ -129,7 +129,7 @@ Operational output defaults to the shared runner's stdout/stderr and Docker `loc
 
 ## App model
 
-`runtime/state/stack.json` schema 7 stores PHP apps under `apps` and a stack-wide `domains` index for collision checks and TLS lookup. Each app records its selected MySQL service (`mysql_service`, plus host/port/user metadata); the default comes from `.env` `DEFAULT_MYSQL_SERVICE` unless `--mysql-service` is passed when creating the app/database. Optional `service_config.vhost` and `service_config.pool` records select `generated` or `custom` template ownership and retain the upstream template digest used to report update availability. A PHP app vhost is named `runtime/generated/nginx/vhosts/app-<app_name>.conf`; proxy vhosts remain domain-keyed.
+`runtime/state/stack.json` schema 1 stores PHP apps under `apps` and a stack-wide `domains` index for collision checks and TLS lookup. Each app records its selected MySQL service (`mysql_service`, plus host/port/user metadata); the default comes from `.env` `DEFAULT_MYSQL_SERVICE` unless `--mysql-service` is passed when creating the app/database. Optional `service_config.vhost` and `service_config.pool` records select `generated` or `custom` template ownership and retain the upstream template digest used to report update availability. A PHP app vhost is named `runtime/generated/nginx/vhosts/app-<app_name>.conf`; proxy vhosts remain domain-keyed.
 
 Filesystem layout for an app:
 
@@ -153,10 +153,9 @@ Layout under `vibeops/`:
 ```text
 utils/       errors, paths, validation, env, template
 os/          fsutil, process
-services/    compose, state, rendering, mysql, php, nginx, cron_runtime, runner
+services/    compose, state, rendering, mysql, php, nginx, access_log, cron_runtime, runner, redis
 ui/          table
 commands/    *_commands, parser, cli
-helpers.py   deprecated re-export shim (no business logic)
 ```
 
 Dependency direction (lower layers must not import command/parser/wizard layers):
@@ -196,16 +195,15 @@ commands (*_commands / parser / cli / wizard)
 | `commands/*_commands.py` | CLI command handlers (stable callback names) |
 | `commands/parser.py` | Explicit argparse wiring to command modules |
 | `commands/cli.py` | Entrypoint / exit codes |
-| `helpers.py` | Deprecated re-export shim only (no business logic) |
 
 Rules for new code:
 
 - Put validation in `utils/validation.py`, env defaults in `utils/env.py`, state mutations in `services/state.py`.
 - Compose argv goes through `services/compose.py` (`compose_command` / `compose_prefix`).
-- State writes use `services/state.py`; generated-file writes use `services/rendering.py` and the Plan 005 render transaction in `commands/runtime_commands.py`.
+- State writes use `services/state.py`; generated-file writes use `services/rendering.py` and the render transaction in `commands/runtime_commands.py`.
 - Parser and wizard are adapters: they call handlers, they do not own business logic.
 - No wildcard imports (`from … import *`). Prefer explicit imports; module-qualified service APIs are fine when origin clarity matters.
-- Foundational packages (`utils`, `os`, `services`, `ui`) must not import `vibeops.commands` or `helpers`.
+- Foundational packages (`utils`, `os`, `services`, `ui`) must not import `vibeops.commands`.
 
 ## MySQL recovery model
 

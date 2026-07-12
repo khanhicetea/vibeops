@@ -32,7 +32,7 @@ import vibeops.commands.tls_commands as tls_commands
 
 def _db_with_app() -> dict:
     return {
-        "schema": 5,
+        "schema": 1,
         "defaults": {"php_version": "8.5", "mysql_service": "mysql84"},
         "apps": {
             "shop": {
@@ -50,7 +50,6 @@ def _db_with_app() -> dict:
         "domains": {"shop.example.com": {"kind": "php", "app": "shop"}},
         "sites": {},
         "crons": {},
-        "users": {},
     }
 
 

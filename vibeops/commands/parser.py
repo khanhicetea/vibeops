@@ -146,35 +146,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     app_logs_analyze.set_defaults(func=access_log_commands.cmd_app_logs_analyze)
 
-    user = sub.add_parser("user", help="Deprecated: manage app identities")
-    user_sub = user.add_subparsers(dest="user_command", required=True)
-    user_create = user_sub.add_parser("create", help="Create/update a PHP-FPM user and pool")
-    user_create.add_argument("username")
-    user_create.add_argument("uid", nargs="?", type=int)
-    user_create.add_argument("--php", default=env.default_php_version(), help="PHP version")
-    user_create.add_argument("--no-mysql", action="store_true", help="Do not create/update the MySQL account")
-    user_create.add_argument(
-        "--mysql-password",
-        help="Password for the MySQL account (discouraged: visible in shell history/process list; omit to auto-generate)",
-    )
-    user_create.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service to create the account in, e.g. mysql57/mysql84/mysql97")
-    user_create.add_argument("--no-reload", action="store_true", help="Do not reload PHP-FPM")
-    user_create.set_defaults(func=app_commands.cmd_user_create)
-
-    site = sub.add_parser("site", help="Manage PHP sites")
-    site_sub = site.add_subparsers(dest="site_command", required=True)
-    site_create = site_sub.add_parser("create", help="Create/update a PHP vhost")
-    site_create.add_argument("username")
-    site_create.add_argument("domain")
-    site_create.add_argument("db_name", nargs="?")
-    site_create.add_argument("--php", default=env.default_php_version(), help="PHP version")
-    site_create.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service for optional database creation, e.g. mysql57/mysql84/mysql97")
-    site_create.add_argument("--alias", action="append", help="Additional server_name; can be passed multiple times or comma-separated")
-    site_create.add_argument("--aliases", help="Comma-separated additional server names")
-    site_create.add_argument("--no-index", action="store_true", help="Do not create starter index.php")
-    site_create.add_argument("--no-reload", action="store_true", help="Do not reload nginx/PHP-FPM")
-    site_create.set_defaults(func=app_commands.cmd_site_create)
-
     db = sub.add_parser("db", help="Manage MySQL databases and backups")
     db_sub = db.add_subparsers(dest="db_command", required=True)
 
@@ -371,7 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     wizard.set_defaults(func=wizard_commands.cmd_wizard)
 
     list_cmd = sub.add_parser("list", help="List metadata from state")
-    list_cmd.add_argument("kind", choices=["apps", "domains", "crons", "workers", "all", "users", "sites"])
+    list_cmd.add_argument("kind", choices=["apps", "domains", "crons", "workers", "all"])
     list_cmd.set_defaults(func=runtime_commands.cmd_list)
 
     state = sub.add_parser("state", help="Inspect/init the JSON metadata DB")
@@ -383,9 +354,6 @@ def build_parser() -> argparse.ArgumentParser:
     state_path.set_defaults(func=runtime_commands.cmd_state)
     state_show = state_sub.add_parser("show", help="Print metadata DB JSON")
     state_show.set_defaults(func=runtime_commands.cmd_state)
-    state_migrate = state_sub.add_parser("migrate", help="Move/upgrade legacy ./stack.json into runtime/state/stack.json")
-    state_migrate.add_argument("--force", action="store_true")
-    state_migrate.set_defaults(func=runtime_commands.cmd_state)
 
     return parser
 

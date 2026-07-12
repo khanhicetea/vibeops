@@ -11,8 +11,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import vibeops.commands.db_commands as db_commands
-import vibeops.helpers as helpers
-from vibeops.helpers import StackError
+from vibeops.os.fsutil import mkdir
+from vibeops.utils.errors import StackError
 
 
 class ReserveBackupPathTests(unittest.TestCase):
@@ -61,9 +61,8 @@ class AtomicDumpTests(unittest.TestCase):
         self.patches = [
             patch.object(db_commands, "service_running", return_value=True),
             patch.object(db_commands, "mysql_root_option_file", return_value=self.option),
-            patch.object(db_commands, "mkdir", side_effect=helpers.mkdir),
+            patch.object(db_commands, "mkdir", side_effect=mkdir),
             patch.object(db_commands, "ROOT", Path(self.tmp.name)),
-            patch.object(helpers, "ROOT", Path(self.tmp.name)),
         ]
         for p in self.patches:
             p.start()

@@ -33,6 +33,8 @@ FOUNDATIONAL = {
     "nginx": "services/nginx.py",
     "access_log": "services/access_log.py",
     "cron_runtime": "services/cron_runtime.py",
+    "runner": "services/runner.py",
+    "redis": "services/redis.py",
     "table": "ui/table.py",
 }
 
@@ -86,7 +88,7 @@ class WildcardImportInvariantTests(unittest.TestCase):
 
 class LayerImportInvariantTests(unittest.TestCase):
     def test_foundational_modules_do_not_import_command_layer(self) -> None:
-        forbidden = COMMAND_LAYER | {"helpers"}
+        forbidden = COMMAND_LAYER
         bad: list[str] = []
         for name, rel in sorted(FOUNDATIONAL.items()):
             path = VIBEOPS / rel
@@ -196,6 +198,7 @@ class PackageLayoutTests(unittest.TestCase):
         # No leftover flat modules that should have been moved
         for leaf in FOUNDATIONAL:
             self.assertFalse((VIBEOPS / f"{leaf}.py").exists(), msg=f"flat leftover vibeops/{leaf}.py")
+        self.assertFalse((VIBEOPS / "helpers.py").exists(), msg="deprecated helpers.py shim must stay removed")
 
 
 if __name__ == "__main__":

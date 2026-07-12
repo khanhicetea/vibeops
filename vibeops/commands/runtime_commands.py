@@ -23,10 +23,9 @@ from vibeops.os.fsutil import mkdir, write_text_atomic
 from vibeops.services.mysql import mysql_admin_ping, mysql_log_dir, render_mysql_root_option_files
 from vibeops.services.nginx import render_app_vhost
 from vibeops.utils.paths import (
-    DB_PATH, DOCROOT_NAME, GENERATED_MANAGED_GLOBS, LEGACY_DB_PATH,
-    LEGACY_PHP_VERSIONS_DIR, NGINX_VHOST_DIR, PHP_VERSIONS_DIR, RENDER_TXN_DIR_PREFIX,
-    RENDER_TXN_JOURNAL_VERSION, ROOT, RUNTIME_DIR, RenderContext,
-    live_render_context, rel
+    DB_PATH, DOCROOT_NAME, GENERATED_MANAGED_GLOBS, NGINX_VHOST_DIR,
+    PHP_VERSIONS_DIR, RENDER_TXN_DIR_PREFIX, RENDER_TXN_JOURNAL_VERSION, ROOT,
+    RUNTIME_DIR, SUPPORTED_PHP_VERSIONS, RenderContext, live_render_context, rel
 )
 from vibeops.services.php import (
     app_home, app_www, php_cli_service_for,
@@ -120,9 +119,6 @@ def cmd_list(args: argparse.Namespace) -> None:
             else:
                 rows.append([domain, "proxy", f"vhost={owner.get('domain', '')}"])
         print_table(rows, headers=["DOMAIN", "KIND", "OWNER"])
-    elif kind in {"users", "sites"}:
-        warn(f"'list {kind}' is deprecated; use 'list apps' or 'list domains'")
-        cmd_list(argparse.Namespace(kind="apps" if kind == "users" else "domains"))
     elif kind == "crons":
         crons = db.get("crons", {})
         if not crons:
@@ -680,19 +676,6 @@ def cmd_state(args: argparse.Namespace) -> None:
         info(str(DB_PATH))
     elif args.state_action == "show":
         print(json.dumps(load_db(), indent=2, sort_keys=True))
-    elif args.state_action == "migrate":
-        if DB_PATH.exists() and not args.force:
-            die(f"{rel(DB_PATH)} already exists; use --force to overwrite")
-        data = load_db()
-        save_db(data)
-        if LEGACY_DB_PATH.exists() and LEGACY_DB_PATH != DB_PATH:
-            backup = LEGACY_DB_PATH.with_suffix(".json.legacy")
-            if not backup.exists():
-                LEGACY_DB_PATH.rename(backup)
-                info(f"Moved legacy state to vibeops/{rel(backup)}")
-            else:
-                warn(f"legacy state remains at {rel(LEGACY_DB_PATH)} because {rel(backup)} already exists")
-        info(f"Migrated state to vibeops/{rel(DB_PATH)}")
     elif args.state_action == "init":
         if DB_PATH.exists() and not args.force:
             die(f"{rel(DB_PATH)} already exists; use --force to overwrite")
@@ -1027,15 +1010,12 @@ def prompt_pick(
     return value
 
 def available_php_versions() -> list[str]:
-    version_set: set[str] = set()
-    for base in (LEGACY_PHP_VERSIONS_DIR, PHP_VERSIONS_DIR):
-        if base.exists():
-            version_set.update(p.name for p in base.iterdir() if p.is_dir())
-    versions = sorted(version_set)
+    version_set: set[str] = set(SUPPORTED_PHP_VERSIONS)
+    if PHP_VERSIONS_DIR.exists():
+        version_set.update(p.name for p in PHP_VERSIONS_DIR.iterdir() if p.is_dir())
     default = default_php_version()
-    if default not in versions:
-        versions.insert(0, default)
-    return versions
+    version_set.add(default)
+    return sorted(version_set)
 
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]

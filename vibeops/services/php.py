@@ -12,7 +12,7 @@ from vibeops.os.fsutil import mkdir
 from vibeops.services.app_config import selected_template_path
 from vibeops.services.mysql import apply_app_mysql_metadata, create_mysql_user
 from vibeops.services.redis import apply_app_redis_metadata, ensure_redis_user
-from vibeops.utils.paths import DOCROOT_NAME, HOME_DIR, LEGACY_PHP_VERSIONS_DIR, PHP_LOG_DIR, PHP_SOCKET_DIR, PHP_TEMPLATE_DIR, PHP_VERSIONS_DIR, RenderContext, rel
+from vibeops.utils.paths import DOCROOT_NAME, HOME_DIR, PHP_LOG_DIR, PHP_SOCKET_DIR, PHP_TEMPLATE_DIR, PHP_VERSIONS_DIR, RenderContext, rel
 from vibeops.os.process import run, service_running
 from vibeops.services.rendering import write_template
 from vibeops.services.state import allocate_uid, read_uid_from_env, upsert_timestamp
@@ -173,11 +173,10 @@ def render_app_identity(app: dict[str, Any], ctx: RenderContext | None = None) -
     app_name = validate(str(app.get("name", "")), APP_NAME_RE, "app_name")
     php_version = validate(str(app.get("php_version") or default_php_version()), PHP_VERSION_RE, "PHP version")
     php_service = php_service_for(php_version)
-    # Prefer recorded UID, then live/legacy identity files (not staging), then allocate.
+    # Prefer recorded UID, then live identity files (not staging), then allocate.
     uid = int(
         app.get("uid")
         or read_uid_from_env(PHP_VERSIONS_DIR / php_version / "users.d" / f"{app_name}.env")
-        or read_uid_from_env(LEGACY_PHP_VERSIONS_DIR / php_version / "users.d" / f"{app_name}.env")
         or allocate_uid(app_name, None, {"apps": {app_name: app}})
     )
     socket_group_name = stack_env().get("SOCKET_GROUP_NAME", "nginxsock")

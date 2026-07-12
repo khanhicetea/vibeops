@@ -32,7 +32,7 @@ compose.d/*.yml                 # local Compose fragments, loaded by ./manage.py
 ```bash
 ./manage.py render              # regenerate runtime/generated from state
 ./manage.py apply               # render, validate, reload running services
-./manage.py state migrate       # move old ./stack.json to runtime/state/stack.json
+./manage.py state init          # create empty runtime/state/stack.json if needed
 ./manage.py compose up -d       # docker compose with local fragments included
 ```
 
@@ -433,17 +433,6 @@ This creates fallback PHP-FPM pool files in `runtime/generated/php/versions/*/po
 
 App templates selected through `app config customize` are rendered automatically into the normal generated mounts. Other files under `runtime/custom/` are preserved and ignored by git, but affect services only when mounted/included through a Compose override or another upstream-supported hook.
 
-### Legacy state
-
-Older installs used root-level `stack.json`. Migrate with:
-
-```bash
-./manage.py state migrate
-./manage.py render
-```
-
-The CLI can read legacy `./stack.json`, but new writes go to `runtime/state/stack.json`.
-
 ## Do and don't
 
 ### Do
@@ -470,7 +459,6 @@ The CLI can read legacy `./stack.json`, but new writes go to `runtime/state/stac
 
 ```bash
 git pull
-./manage.py state migrate      # safe no-op if already migrated
 ./manage.py render
 ./manage.py compose config     # optional sanity check
 ./manage.py apply

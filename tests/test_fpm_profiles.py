@@ -10,7 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import vibeops.utils.env as env
-import vibeops.helpers as helpers
+from vibeops.utils.errors import StackError
+from vibeops.services.state import empty_db, normalize_db
+from vibeops.services.php import render_app_identity
+import vibeops.os.process as process
 import vibeops.utils.paths as paths
 import vibeops.commands.runtime_commands as runtime
 from vibeops.commands.app_commands import resolve_app_fpm_profile
@@ -23,7 +26,7 @@ def _render_pool(profile: str, app: str = "shop") -> str:
         "USERNAME": app,
         "SOCKET_GROUP_NAME": "nginxsock",
         "PHP_VERSION": "8.4",
-        **helpers.fpm_pool_template_values(profile),
+        **env.fpm_pool_template_values(profile),
     }
     template = (paths.PHP_TEMPLATE_DIR / "pool.conf.template").read_text()
     return render_template_text(template, values)
@@ -31,34 +34,34 @@ def _render_pool(profile: str, app: str = "shop") -> str:
 
 class FpmProfileRegistryTests(unittest.TestCase):
     def test_known_profiles(self) -> None:
-        self.assertEqual(set(helpers.FPM_PROFILES), {"ondemand", "balanced", "throughput"})
-        self.assertEqual(helpers.DEFAULT_FPM_PROFILE, "balanced")
+        self.assertEqual(set(env.FPM_PROFILES), {"ondemand", "balanced", "throughput"})
+        self.assertEqual(env.DEFAULT_FPM_PROFILE, "balanced")
 
     def test_default_is_balanced(self) -> None:
         with patch.object(env, "stack_env", return_value={}):
-            self.assertEqual(helpers.default_fpm_profile(), "balanced")
+            self.assertEqual(env.default_fpm_profile(), "balanced")
 
     def test_default_from_env(self) -> None:
         with patch.object(env, "stack_env", return_value={"DEFAULT_FPM_PROFILE": "ondemand"}):
-            self.assertEqual(helpers.default_fpm_profile(), "ondemand")
+            self.assertEqual(env.default_fpm_profile(), "ondemand")
 
     def test_invalid_env_default_fails(self) -> None:
         with patch.object(env, "stack_env", return_value={"DEFAULT_FPM_PROFILE": "turbo"}):
-            with self.assertRaisesRegex(helpers.StackError, r"Invalid fpm_profile"):
-                helpers.default_fpm_profile()
+            with self.assertRaisesRegex(StackError, r"Invalid fpm_profile"):
+                env.default_fpm_profile()
 
     def test_invalid_profile_fails(self) -> None:
-        with self.assertRaisesRegex(helpers.StackError, r"Invalid fpm_profile"):
-            helpers.validate_fpm_profile("turbo")
+        with self.assertRaisesRegex(StackError, r"Invalid fpm_profile"):
+            env.validate_fpm_profile("turbo")
 
     def test_process_max_default_and_override(self) -> None:
         with patch.object(env, "stack_env", return_value={}):
-            self.assertEqual(helpers.php_fpm_process_max(), 32)
+            self.assertEqual(env.php_fpm_process_max(), 32)
         with patch.object(env, "stack_env", return_value={"PHP_FPM_PROCESS_MAX": "64"}):
-            self.assertEqual(helpers.php_fpm_process_max(), 64)
+            self.assertEqual(env.php_fpm_process_max(), 64)
         with patch.object(env, "stack_env", return_value={"PHP_FPM_PROCESS_MAX": "0"}):
-            with self.assertRaisesRegex(helpers.StackError, r"PHP_FPM_PROCESS_MAX"):
-                helpers.php_fpm_process_max()
+            with self.assertRaisesRegex(StackError, r"PHP_FPM_PROCESS_MAX"):
+                env.php_fpm_process_max()
 
 
 class FpmPoolRenderTests(unittest.TestCase):
@@ -101,7 +104,7 @@ class FpmPoolRenderTests(unittest.TestCase):
         self.assertNotIn("pm.process_idle_timeout", text)
 
     def test_all_profiles_render_without_template_error(self) -> None:
-        for name in helpers.FPM_PROFILE_NAMES:
+        for name in env.FPM_PROFILE_NAMES:
             with self.subTest(profile=name):
                 text = _render_pool(name)
                 self.assertIn(f"fpm_profile = {name}", text)
@@ -110,7 +113,7 @@ class FpmPoolRenderTests(unittest.TestCase):
 
 class ResolveAndNormalizeTests(unittest.TestCase):
     def test_new_app_uses_stack_default(self) -> None:
-        with patch.object(helpers, "default_fpm_profile", return_value="balanced"):
+        with patch.object(env, "default_fpm_profile", return_value="balanced"):
             with patch("vibeops.commands.app_commands.default_fpm_profile", return_value="balanced"):
                 self.assertEqual(resolve_app_fpm_profile({"apps": {}}, "shop", None), "balanced")
 
@@ -127,26 +130,24 @@ class ResolveAndNormalizeTests(unittest.TestCase):
 
     def test_missing_profile_normalizes_to_default(self) -> None:
         with patch.object(env, "stack_env", return_value={"DEFAULT_PHP_VERSION": "8.4", "DEFAULT_MYSQL_SERVICE": "mysql84"}):
-            with patch.object(helpers, "default_fpm_profile", return_value="balanced"):
-                data = helpers.normalize_db({
-                    "schema": helpers.SCHEMA_VERSION,
+            with patch.object(env, "default_fpm_profile", return_value="balanced"):
+                data = normalize_db({
+                    "schema": paths.SCHEMA_VERSION,
                     "apps": {"shop": {"name": "shop"}},
                     "domains": {},
                     "sites": {},
-                    "users": {},
                     "crons": {},
                 })
                 self.assertEqual(data["apps"]["shop"]["fpm_profile"], "balanced")
 
     def test_invalid_state_profile_fails(self) -> None:
         with patch.object(env, "stack_env", return_value={}):
-            with self.assertRaisesRegex(helpers.StackError, r"Invalid fpm_profile"):
-                helpers.normalize_db({
-                    "schema": helpers.SCHEMA_VERSION,
+            with self.assertRaisesRegex(StackError, r"Invalid fpm_profile"):
+                normalize_db({
+                    "schema": paths.SCHEMA_VERSION,
                     "apps": {"shop": {"name": "shop", "fpm_profile": "turbo"}},
                     "domains": {},
                     "sites": {},
-                    "users": {},
                     "crons": {},
                 })
 
@@ -173,11 +174,10 @@ class CapacityWarningTests(unittest.TestCase):
     def _db(self, *apps: tuple[str, str, str]) -> dict:
         """apps: (name, php_version, fpm_profile)"""
         data: dict = {
-            "schema": helpers.SCHEMA_VERSION,
+            "schema": paths.SCHEMA_VERSION,
             "apps": {},
             "domains": {},
             "sites": {},
-            "users": {},
             "crons": {},
         }
         for name, version, profile in apps:
@@ -191,7 +191,7 @@ class CapacityWarningTests(unittest.TestCase):
     def test_warns_when_over_cap(self) -> None:
         # balanced max_children=6; 6 apps * 6 = 36 > 32
         db = self._db(*[(f"a{i}", "8.4", "balanced") for i in range(6)])
-        warnings = helpers.fpm_capacity_warnings(db, process_max=32)
+        warnings = env.fpm_capacity_warnings(db, process_max=32)
         self.assertEqual(len(warnings), 1)
         self.assertIn("process.max is 32", warnings[0])
         self.assertIn("sum of pool pm.max_children is 36", warnings[0])
@@ -199,21 +199,21 @@ class CapacityWarningTests(unittest.TestCase):
     def test_no_warning_under_cap(self) -> None:
         db = self._db(("shop", "8.4", "balanced"), ("blog", "8.4", "ondemand"))
         # 6 + 4 = 10 < 32
-        warnings = helpers.fpm_capacity_warnings(db, process_max=32)
+        warnings = env.fpm_capacity_warnings(db, process_max=32)
         self.assertEqual(warnings, [])
 
     def test_per_version_isolation(self) -> None:
         # each version under cap individually
         apps = [(f"a{i}", "8.4", "throughput") for i in range(2)]  # 24
         apps += [(f"b{i}", "8.5", "throughput") for i in range(2)]  # 24
-        warnings = helpers.fpm_capacity_warnings(self._db(*apps), process_max=32)
+        warnings = env.fpm_capacity_warnings(self._db(*apps), process_max=32)
         self.assertEqual(warnings, [])
 
 
 class StatusCapacityOutputTests(unittest.TestCase):
     def test_status_emits_capacity_warning(self) -> None:
         db = {
-            "schema": helpers.SCHEMA_VERSION,
+            "schema": paths.SCHEMA_VERSION,
             "apps": {
                 f"a{i}": {
                     "name": f"a{i}",
@@ -227,7 +227,6 @@ class StatusCapacityOutputTests(unittest.TestCase):
             },
             "domains": {},
             "sites": {},
-            "users": {},
             "crons": {},
         }
         out_buf = io.StringIO()
@@ -235,7 +234,7 @@ class StatusCapacityOutputTests(unittest.TestCase):
         with patch.object(runtime, "load_db", return_value=db), \
              patch.object(runtime, "docker_available", return_value=False), \
              patch.object(runtime, "running_services", return_value=set()), \
-             patch.object(helpers, "php_fpm_process_max", return_value=32), \
+             patch.object(env, "php_fpm_process_max", return_value=32), \
              patch.object(runtime, "php_fpm_process_max", return_value=32), \
              redirect_stdout(out_buf), redirect_stderr(err_buf):
             runtime.cmd_status(type("NS", (), {"check_nginx": False})())
@@ -257,17 +256,17 @@ class RenderWithProfileTests(unittest.TestCase):
         self.secrets.mkdir(parents=True)
         self.home = self.runtime_dir / "home"
         self.home.mkdir()
-        self.live = helpers.RenderContext(generated_dir=self.generated, secrets_dir=self.secrets)
+        self.live = paths.RenderContext(generated_dir=self.generated, secrets_dir=self.secrets)
         self.patches = [
-            patch.object(helpers, "HOME_DIR", self.home),
-            patch.object(helpers, "PHP_SOCKET_DIR", self.runtime_dir / "run" / "php-fpm"),
-            patch.object(helpers, "PHP_LOG_DIR", self.runtime_dir / "logs" / "php"),
-            patch.object(helpers, "RUNTIME_DIR", self.runtime_dir),
-            patch.object(helpers, "GENERATED_DIR", self.generated),
-            patch.object(helpers, "MYSQL_SECRETS_DIR", self.secrets),
-            patch.object(helpers, "PHP_VERSIONS_DIR", self.generated / "php" / "versions"),
-            patch.object(helpers, "CRON_RUNTIME_DIR", self.generated / "cron"),
-            patch.object(helpers, "NGINX_VHOST_DIR", self.generated / "nginx" / "vhosts"),
+            patch.object(paths, "HOME_DIR", self.home),
+            patch.object(paths, "PHP_SOCKET_DIR", self.runtime_dir / "run" / "php-fpm"),
+            patch.object(paths, "PHP_LOG_DIR", self.runtime_dir / "logs" / "php"),
+            patch.object(paths, "RUNTIME_DIR", self.runtime_dir),
+            patch.object(paths, "GENERATED_DIR", self.generated),
+            patch.object(paths, "MYSQL_SECRETS_DIR", self.secrets),
+            patch.object(paths, "PHP_VERSIONS_DIR", self.generated / "php" / "versions"),
+            patch.object(paths, "CRON_RUNTIME_DIR", self.generated / "cron"),
+            patch.object(paths, "NGINX_VHOST_DIR", self.generated / "nginx" / "vhosts"),
             patch.object(runtime, "RUNTIME_DIR", self.runtime_dir),
             patch.object(runtime, "available_php_versions", return_value=["8.4"]),
             patch.object(env, "stack_env", return_value={
@@ -275,8 +274,8 @@ class RenderWithProfileTests(unittest.TestCase):
                 "SOCKET_GROUP_NAME": "nginxsock",
                 "DEFAULT_FPM_PROFILE": "balanced",
             }),
-            patch.object(helpers, "docker_available", return_value=False),
-            patch.object(helpers, "service_running", return_value=False),
+            patch.object(process, "docker_available", return_value=False),
+            patch.object(process, "service_running", return_value=False),
         ]
         for p in self.patches:
             p.start()
@@ -287,7 +286,7 @@ class RenderWithProfileTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_render_writes_profile_specific_pool(self) -> None:
-        db = helpers.empty_db()
+        db = empty_db()
         for name, profile in (("shop", "ondemand"), ("blog", "throughput")):
             db["apps"][name] = {
                 "name": name,
@@ -311,7 +310,7 @@ class RenderWithProfileTests(unittest.TestCase):
         self.assertIn("pm.max_children = 12", blog)
 
     def test_invalid_profile_rolls_back_render(self) -> None:
-        db = helpers.empty_db()
+        db = empty_db()
         db["apps"]["shop"] = {
             "name": "shop",
             "uid": 10001,
@@ -327,8 +326,8 @@ class RenderWithProfileTests(unittest.TestCase):
         # Directly call render_app_identity with an invalid profile to simulate malformed state.
         app = dict(db["apps"]["shop"])
         app["fpm_profile"] = "turbo"
-        with self.assertRaisesRegex(helpers.StackError, r"Invalid fpm_profile"):
-            helpers.render_app_identity(app, self.live)
+        with self.assertRaisesRegex(StackError, r"Invalid fpm_profile"):
+            render_app_identity(app, self.live)
         # Staging tree for a failed apply should not leave live pool.
         self.assertFalse((self.generated / "php" / "versions" / "8.4" / "pool.d" / "shop.conf").exists())
 

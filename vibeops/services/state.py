@@ -13,9 +13,9 @@ from typing import Any, Iterator
 
 from vibeops.utils.env import default_fpm_profile, default_mysql_service, default_php_version, validate_fpm_profile
 from vibeops.services.app_config import normalize_service_config
-from vibeops.utils.errors import die, warn
+from vibeops.utils.errors import die
 from vibeops.os.fsutil import mkdir
-from vibeops.utils.paths import DB_PATH, LEGACY_DB_PATH, LEGACY_PHP_VERSIONS_DIR, NGINX_VHOST_DIR, PHP_VERSIONS_DIR, SCHEMA_VERSION, STATE_DIR, now, rel
+from vibeops.utils.paths import DB_PATH, NGINX_VHOST_DIR, PHP_VERSIONS_DIR, SCHEMA_VERSION, STATE_DIR, now, rel
 from vibeops.utils.validation import default_php_entrypoint, validate_php_entrypoint, validate_public_dir
 
 def empty_db() -> dict[str, Any]:
@@ -28,7 +28,6 @@ def empty_db() -> dict[str, Any]:
         "apps": {},
         "domains": {},
         "sites": {},
-        "users": {},
         "crons": {},
         "workers": {},
         "updated_at": now(),
@@ -36,11 +35,6 @@ def empty_db() -> dict[str, Any]:
 
 
 def state_path() -> Path:
-    if DB_PATH.exists():
-        return DB_PATH
-    if LEGACY_DB_PATH.exists():
-        warn(f"using legacy state at {rel(LEGACY_DB_PATH)}; run './manage.py state migrate' to move it to {rel(DB_PATH)}")
-        return LEGACY_DB_PATH
     return DB_PATH
 
 
@@ -55,9 +49,10 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
     data.setdefault("apps", {})
     data.setdefault("domains", {})
     data.setdefault("sites", {})
-    data.setdefault("users", {})
     data.setdefault("crons", {})
     data.setdefault("workers", {})
+    # Drop unused pre-v1 keys if present in hand-edited state.
+    data.pop("users", None)
     for app_name, app in data.get("apps", {}).items():
         if isinstance(app, dict):
             app.setdefault("name", app_name)
@@ -153,20 +148,18 @@ def allocate_uid(app_name: str, explicit_uid: int | None, db: dict[str, Any]) ->
     if isinstance(existing, int):
         return existing
 
-    for base in (PHP_VERSIONS_DIR, LEGACY_PHP_VERSIONS_DIR):
-        for path in sorted(base.glob(f"*/users.d/{app_name}.env")):
-            uid = read_uid_from_env(path)
-            if uid is not None:
-                return uid
+    for path in sorted(PHP_VERSIONS_DIR.glob(f"*/users.d/{app_name}.env")):
+        uid = read_uid_from_env(path)
+        if uid is not None:
+            return uid
 
     max_uid = 0
     for app in db.get("apps", {}).values():
         uid = app.get("uid") if isinstance(app, dict) else None
         if isinstance(uid, int):
             max_uid = max(max_uid, uid)
-    for base in (PHP_VERSIONS_DIR, LEGACY_PHP_VERSIONS_DIR):
-        for path in base.glob("*/users.d/*.env"):
-            uid = read_uid_from_env(path)
-            if uid is not None:
-                max_uid = max(max_uid, uid)
+    for path in PHP_VERSIONS_DIR.glob("*/users.d/*.env"):
+        uid = read_uid_from_env(path)
+        if uid is not None:
+            max_uid = max(max_uid, uid)
     return 10000 if max_uid < 10000 else max_uid + 1

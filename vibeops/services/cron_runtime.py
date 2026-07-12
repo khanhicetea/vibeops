@@ -47,10 +47,9 @@ def _app_from_job_file(path: Path) -> str:
 
 
 def rebuild_supercronic_crontab(php_version: str, ctx: RenderContext | None = None) -> Path:
-    """Rebuild root maintenance and one merged Supercronic file per app.
+    """Rebuild root maintenance crontab and one merged Supercronic file per app.
 
-    The historical function name remains for compatibility. It now returns the
-    system maintenance crontab rather than a shared, root-owned app crontab.
+    Returns the system maintenance crontab path.
     """
     cron_dir = cron_dir_for(php_version, ctx)
     jobs_dir = cron_jobs_dir_for(php_version, ctx)

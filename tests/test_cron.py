@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import vibeops.services.cron_runtime as cron_runtime
-import vibeops.helpers as helpers
+from vibeops.utils.validation import validate_cron_workdir
 from vibeops.commands.cron_commands import cron_render_values, validate_schedule
 from vibeops.utils.errors import StackError
 
@@ -21,10 +21,10 @@ class CronValidationTests(unittest.TestCase):
             validate_schedule("* * * * *; touch /tmp/bad")
 
     def test_workdir_is_app_bounded(self) -> None:
-        self.assertEqual(helpers.validate_cron_workdir("shop", "/home/shop/www"), "/home/shop/www")
+        self.assertEqual(validate_cron_workdir("shop", "/home/shop/www"), "/home/shop/www")
         for path in ("/tmp", "/home/other/www", "/home/shop/www/../private"):
             with self.subTest(path=path), self.assertRaises(StackError):
-                helpers.validate_cron_workdir("shop", path)
+                validate_cron_workdir("shop", path)
 
     def test_render_values_include_runtime_policy(self) -> None:
         values = cron_render_values({

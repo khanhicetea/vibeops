@@ -5,7 +5,6 @@
 .env
 .env.*
 !.env.example
-stack.json
 compose.override.yml
 compose.local.yml
 compose.d/*.yml
@@ -47,7 +46,6 @@ compose.d/*.yml
 /runtime/generated/cron/php*/jobs/*.cron
 /runtime/generated/cron/php*/apps/*.cron
 /runtime/generated/cron/php*/system.cron
-/runtime/generated/cron/php*/.supercronic.cron
 /runtime/generated/cron/php*/.logrotate.conf
 
 /runtime/secrets/*
@@ -106,19 +104,6 @@ compose.d/*.yml
 /runtime/nginx-acme-state/*
 !/runtime/nginx-acme-state/.gitignore
 !/runtime/nginx-acme-state/.gitkeep
-
-/runtime/nginx/vhosts/*
-!/runtime/nginx/vhosts/.gitkeep
-
-/runtime/cron/*
-!/runtime/cron/php84/
-!/runtime/cron/php84/jobs/
-!/runtime/cron/php84/jobs/.gitkeep
-!/runtime/cron/php85/
-!/runtime/cron/php85/jobs/
-!/runtime/cron/php85/jobs/.gitkeep
-/runtime/cron/php*/jobs/*.cron
-/runtime/cron/php*/.supercronic.cron
 
 /runtime/run/*
 !/runtime/run/.gitkeep

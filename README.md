@@ -102,8 +102,6 @@ docker compose up -d --remove-orphans mysql84 redis php84 php85 php84-runner php
 # docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 ```
 
-When upgrading from the former `phpXX-cron` services, run `./manage.py render`, rebuild the PHP images (Supervisord is now included), then use the `up --remove-orphans` command above. This removes the old cron-only containers after the new runners start.
-
 ## Interactive DX
 
 For guided operations, run the no-dependency Python wizard:
@@ -251,7 +249,7 @@ An app has exactly one main domain plus optional alias domains. All domains on a
 ./manage.py app show shop
 ```
 
-Use a separate app slug for a separate codebase; the old multi-site-under-one-user model is deprecated.
+Use a separate app slug for a separate codebase; one app is one isolation unit (Linux user, FPM pool, MySQL user).
 
 ## Deploy app code and run Composer
 
@@ -335,8 +333,6 @@ Re-run `manage.py app create` with another `--php` version to migrate the **prim
 ```bash
 ./manage.py app create shop shop.example.com --php 8.4
 ```
-
-Deprecated compatibility commands remain for now: `user create` creates only the app identity, and `site create` prints guidance or maps to `app create` only for unambiguous new apps.
 
 ## TLS certificates
 

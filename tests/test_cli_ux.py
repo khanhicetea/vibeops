@@ -202,27 +202,6 @@ class WizardMenuRefactorTests(unittest.TestCase):
         confirm.assert_called_once_with("Fix permissions now?", False)
 
 
-class WizardUsesPromptPasswordTests(unittest.TestCase):
-    def test_wizard_create_user_calls_prompt_password(self) -> None:
-        from vibeops.commands import wizard_commands
-
-        with (
-            mock.patch.object(wizard_commands, "prompt_validated", return_value="shop"),
-            mock.patch.object(wizard_commands, "prompt_pick", return_value="8.4"),
-            mock.patch.object(wizard_commands, "prompt_int", return_value=None),
-            mock.patch.object(wizard_commands, "prompt_confirm", side_effect=[True, True, False]),
-            mock.patch.object(wizard_commands, "prompt_password", return_value=None) as pp,
-            mock.patch.object(wizard_commands, "default_mysql_service", return_value="mysql84"),
-            mock.patch.object(wizard_commands, "available_php_versions", return_value=["8.4"]),
-            mock.patch.object(wizard_commands, "print_plan"),
-            mock.patch.object(wizard_commands, "cmd_user_create") as create,
-        ):
-            # no_mysql=False path: first confirm True (create mysql), then reload, then cancel continue
-            wizard_commands.wizard_create_user()
-            # prompt_confirm: Create MySQL? True -> not no_mysql; Reload? True; Continue? False
-            pp.assert_called_once()
-            create.assert_not_called()
-
 
 def _force_numbered_choice():
     """Context that forces the non-TTY number prompt path (for unit tests)."""

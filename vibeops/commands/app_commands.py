@@ -1,4 +1,4 @@
-"""App, domain, user, and legacy site commands."""
+"""App and domain commands."""
 from __future__ import annotations
 
 import argparse
@@ -6,13 +6,13 @@ import json
 from typing import Any
 
 from vibeops.utils.env import default_fpm_profile, default_mysql_service, default_php_version, validate_fpm_profile
-from vibeops.utils.errors import die, info, warn, warn_password_cli_flag
+from vibeops.utils.errors import die, info, warn_password_cli_flag
 from vibeops.os.fsutil import mkdir
 from vibeops.services.mysql import apply_app_mysql_metadata, ensure_mysql_database, require_mysql_ready_for_sql
 from vibeops.services.nginx import app_vhost_path, assert_domain_free, domains_for, nginx_reload, normalize_aliases
 from vibeops.utils.paths import PHP_TEMPLATE_DIR, rel
 from vibeops.commands.permission_commands import initialize_app_permissions
-from vibeops.services.php import app_document_root, app_home, ensure_app_identity, php_service_for, php_version_config_dir
+from vibeops.services.php import app_document_root, ensure_app_identity, php_service_for, php_version_config_dir
 from vibeops.services.rendering import write_template
 from vibeops.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
 from vibeops.ui.table import print_table
@@ -357,33 +357,3 @@ def cmd_app_show(args: argparse.Namespace) -> None:
         die(f"Unknown app: {app_name}")
     print(json.dumps(app, indent=2, sort_keys=True))
 
-def cmd_user_create(args: argparse.Namespace, *, db: dict[str, Any] | None = None, save: bool = True) -> None:
-    warn("'user create' is deprecated; use 'app create <app_name> <main_domain>' for deployable apps")
-    if getattr(args, "mysql_password", None):
-        warn_password_cli_flag("--mysql-password")
-    db = db if db is not None else load_db()
-    ensure_app_identity(args.username, args.php, db, uid=args.uid, no_mysql=args.no_mysql, mysql_password=args.mysql_password, mysql_service=args.mysql_service, no_reload=args.no_reload)
-    if save:
-        save_db(db)
-        initialize_app_permissions(args.username, args.php)
-
-def ensure_user(username: str, php_version: str, db: dict[str, Any], no_reload: bool = False, mysql_service: str | None = None) -> None:
-    ensure_app(username, php_version, db, no_reload=no_reload, mysql_service=mysql_service)
-
-def cmd_site_create(args: argparse.Namespace) -> None:
-    db = load_db()
-    app_name = validate(args.username, APP_NAME_RE, "app_name")
-    domain = validate(args.domain, DOMAIN_RE, "domain")
-    if app_name not in db.get("apps", {}) and not app_home(app_name).exists():
-        warn("'site create' is deprecated; creating an app instead")
-        ns = argparse.Namespace(app_name=app_name, main_domain=domain, db_suffix=args.db_name, php=args.php, mysql_service=args.mysql_service, alias=args.alias, aliases=args.aliases, public_dir="", php_entrypoint="legacy", fpm_profile=None, access_log=None, no_index=args.no_index, no_reload=args.no_reload, uid=None, no_mysql=False, mysql_password=None)
-        cmd_app_create(ns)
-        return
-    app = db.get("apps", {}).get(app_name)
-    if isinstance(app, dict) and domain in (app.get("domains") or []):
-        from vibeops.commands.runtime_commands import apply_generated_config
-        apply_generated_config(db, reload_services=False, validate_services=False)
-        save_db(db)
-        info(f"Regenerated app vhost for {app_name}")
-        return
-    die("site create is deprecated and multi-site users are no longer supported. Use either:\n  ./manage.py app domain add {0} {1}   # same codebase\n  ./manage.py app create <new_app> {1} {2}   # new isolation".format(app_name, domain, args.db_name or ""))

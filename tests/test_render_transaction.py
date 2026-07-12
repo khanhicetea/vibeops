@@ -9,10 +9,11 @@ from unittest.mock import patch
 
 import vibeops.services.cron_runtime as cron_runtime
 import vibeops.utils.env as env
-import vibeops.helpers as helpers
+from vibeops.utils.errors import StackError
+from vibeops.services.state import empty_db
 import vibeops.services.mysql as mysql
 import vibeops.services.nginx as nginx
-import vibeops.utils.paths as paths
+import vibeops.utils.paths as pathmod
 import vibeops.services.php as php
 import vibeops.services.runner as runner
 import vibeops.os.process as process
@@ -45,7 +46,7 @@ class RenderTransactionTests(unittest.TestCase):
         self.secrets = self.runtime_dir / "secrets" / "mysql"
         self.generated.mkdir(parents=True)
         self.secrets.mkdir(parents=True)
-        self.live = helpers.RenderContext(generated_dir=self.generated, secrets_dir=self.secrets)
+        self.live = pathmod.RenderContext(generated_dir=self.generated, secrets_dir=self.secrets)
         # Isolate app homes and avoid repo runtime side effects.
         self.home = self.runtime_dir / "home"
         self.home.mkdir()
@@ -56,15 +57,15 @@ class RenderTransactionTests(unittest.TestCase):
         log_dir = self.runtime_dir / "logs" / "php"
         stack_env = {"DEFAULT_PHP_VERSION": "8.4", "SOCKET_GROUP_NAME": "nginxsock"}
         self.patches = [
-            patch.object(paths, "HOME_DIR", self.home),
-            patch.object(paths, "PHP_SOCKET_DIR", socket_dir),
-            patch.object(paths, "PHP_LOG_DIR", log_dir),
-            patch.object(paths, "RUNTIME_DIR", self.runtime_dir),
-            patch.object(paths, "GENERATED_DIR", self.generated),
-            patch.object(paths, "MYSQL_SECRETS_DIR", self.secrets),
-            patch.object(paths, "PHP_VERSIONS_DIR", php_versions),
-            patch.object(paths, "CRON_RUNTIME_DIR", cron_dir),
-            patch.object(paths, "NGINX_VHOST_DIR", nginx_vhosts),
+            patch.object(pathmod, "HOME_DIR", self.home),
+            patch.object(pathmod, "PHP_SOCKET_DIR", socket_dir),
+            patch.object(pathmod, "PHP_LOG_DIR", log_dir),
+            patch.object(pathmod, "RUNTIME_DIR", self.runtime_dir),
+            patch.object(pathmod, "GENERATED_DIR", self.generated),
+            patch.object(pathmod, "MYSQL_SECRETS_DIR", self.secrets),
+            patch.object(pathmod, "PHP_VERSIONS_DIR", php_versions),
+            patch.object(pathmod, "CRON_RUNTIME_DIR", cron_dir),
+            patch.object(pathmod, "NGINX_VHOST_DIR", nginx_vhosts),
             patch.object(php, "HOME_DIR", self.home),
             patch.object(php, "PHP_SOCKET_DIR", socket_dir),
             patch.object(php, "PHP_LOG_DIR", log_dir),
@@ -98,7 +99,7 @@ class RenderTransactionTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _empty_db(self) -> dict:
-        return helpers.empty_db()
+        return empty_db()
 
     def _app_db(self, name: str = "shop", domain: str = "shop.test") -> dict:
         db = self._empty_db()
@@ -116,8 +117,8 @@ class RenderTransactionTests(unittest.TestCase):
         return db
 
     def test_empty_render_does_not_touch_repo_generated(self) -> None:
-        repo_generated = Path(helpers.ROOT) / "runtime" / "generated"
-        repo_secrets = Path(helpers.ROOT) / "runtime" / "secrets"
+        repo_generated = Path(pathmod.ROOT) / "runtime" / "generated"
+        repo_secrets = Path(pathmod.ROOT) / "runtime" / "secrets"
         before_gen = _snapshot_tree(repo_generated) if repo_generated.exists() else {}
         before_sec = _snapshot_tree(repo_secrets) if repo_secrets.exists() else {}
 
@@ -137,7 +138,7 @@ class RenderTransactionTests(unittest.TestCase):
         self.assertEqual(before_gen, after_gen)
         self.assertEqual(before_sec, after_sec)
         # No leftover transaction dirs after success.
-        self.assertEqual(list(self.runtime_dir.glob(f"{helpers.RENDER_TXN_DIR_PREFIX}*")), [])
+        self.assertEqual(list(self.runtime_dir.glob(f"{pathmod.RENDER_TXN_DIR_PREFIX}*")), [])
 
     def test_multi_app_render_writes_identities_and_vhosts(self) -> None:
         db = self._app_db("shop", "shop.test")
@@ -158,23 +159,23 @@ class RenderTransactionTests(unittest.TestCase):
         blog_vhost = self.generated / "nginx" / "vhosts" / "app-blog.conf"
         self.assertTrue(shop_vhost.is_file())
         self.assertTrue(blog_vhost.is_file())
-        self.assertIn(helpers.GENERATED_NOTICE, shop_vhost.read_text())
+        self.assertIn(pathmod.GENERATED_NOTICE, shop_vhost.read_text())
         self.assertIn("shop.test", shop_vhost.read_text())
         self.assertIn("blog.test", blog_vhost.read_text())
         env = (self.generated / "php" / "versions" / "8.4" / "users.d" / "shop.env").read_text()
         self.assertIn("UID=10001", env)
-        self.assertIn(helpers.GENERATED_NOTICE, env)
+        self.assertIn(pathmod.GENERATED_NOTICE, env)
 
     def test_generation_failure_before_promotion_leaves_live_unchanged(self) -> None:
         # Seed live content.
         marker = self.generated / "nginx" / "vhosts" / "app-old.conf"
-        _write_live_marker(marker, f"# {helpers.GENERATED_NOTICE}\nold-content\n", 0o644)
+        _write_live_marker(marker, f"# {pathmod.GENERATED_NOTICE}\nold-content\n", 0o644)
         before = _snapshot_tree(self.generated)
 
         def boom() -> None:
-            raise helpers.StackError("injected stage failure")
+            raise StackError("injected stage failure")
 
-        with self.assertRaisesRegex(helpers.StackError, "injected stage failure"):
+        with self.assertRaisesRegex(StackError, "injected stage failure"):
             runtime.apply_generated_config(
                 self._app_db(),
                 live=self.live,
@@ -182,7 +183,7 @@ class RenderTransactionTests(unittest.TestCase):
                 fault_during_stage=boom,
             )
         self.assertEqual(before, _snapshot_tree(self.generated))
-        self.assertEqual(list(self.runtime_dir.glob(f"{helpers.RENDER_TXN_DIR_PREFIX}*")), [])
+        self.assertEqual(list(self.runtime_dir.glob(f"{pathmod.RENDER_TXN_DIR_PREFIX}*")), [])
 
     def test_promotion_fault_rolls_back_full_tree(self) -> None:
         db = self._app_db()
@@ -194,7 +195,7 @@ class RenderTransactionTests(unittest.TestCase):
         # Change state so a second render would rewrite files, then fault mid-promote.
         db["apps"]["shop"]["domains"] = ["shop.test", "alias.shop.test"]
         db["domains"]["alias.shop.test"] = {"kind": "php", "app": "shop"}
-        with self.assertRaisesRegex(helpers.StackError, "Injected promotion fault"):
+        with self.assertRaisesRegex(StackError, "Injected promotion fault"):
             runtime.apply_generated_config(
                 db,
                 live=self.live,
@@ -207,7 +208,7 @@ class RenderTransactionTests(unittest.TestCase):
 
     def test_stale_generated_removed_only_after_success(self) -> None:
         stale = self.generated / "nginx" / "vhosts" / "app-gone.conf"
-        _write_live_marker(stale, f"# {helpers.GENERATED_NOTICE}\nstale\n")
+        _write_live_marker(stale, f"# {pathmod.GENERATED_NOTICE}\nstale\n")
         unmanaged = self.generated / "nginx" / "vhosts" / "custom-local.conf"
         _write_live_marker(unmanaged, "# hand-written local override\nserver {}\n")
 
@@ -241,8 +242,8 @@ class RenderTransactionTests(unittest.TestCase):
         db["apps"]["shop"]["domains"] = ["shop.test", "new.shop.test"]
         db["domains"]["new.shop.test"] = {"kind": "php", "app": "shop"}
 
-        with patch.object(runtime, "validate_generated_services", side_effect=helpers.StackError("nginx -t failed")):
-            with self.assertRaisesRegex(helpers.StackError, "nginx -t failed"):
+        with patch.object(runtime, "validate_generated_services", side_effect=StackError("nginx -t failed")):
+            with self.assertRaisesRegex(StackError, "nginx -t failed"):
                 runtime.apply_generated_config(
                     db,
                     live=self.live,
@@ -277,12 +278,12 @@ class RenderTransactionTests(unittest.TestCase):
 
         def fail_validate(_db: dict, **_kwargs) -> None:
             order.append("validate")
-            raise helpers.StackError("bad config")
+            raise StackError("bad config")
 
         with patch.object(runtime, "validate_generated_services", side_effect=fail_validate), patch.object(
             runtime, "reload_generated_services", side_effect=reload
         ):
-            with self.assertRaises(helpers.StackError):
+            with self.assertRaises(StackError):
                 runtime.apply_generated_config(
                     db,
                     live=self.live,
@@ -352,7 +353,7 @@ class RenderTransactionTests(unittest.TestCase):
         original = vhost.read_text()
         before = _snapshot_tree(self.generated)
 
-        txn = self.runtime_dir / f"{helpers.RENDER_TXN_DIR_PREFIX}deadbeef"
+        txn = self.runtime_dir / f"{pathmod.RENDER_TXN_DIR_PREFIX}deadbeef"
         backup = txn / "backup"
         backup_file = backup / "generated" / "nginx" / "vhosts" / "app-shop.conf"
         backup_file.parent.mkdir(parents=True)
@@ -360,7 +361,7 @@ class RenderTransactionTests(unittest.TestCase):
         # Corrupt live as if promotion partially applied.
         vhost.write_text("CORRUPTED")
         journal = {
-            "version": helpers.RENDER_TXN_JOURNAL_VERSION,
+            "version": pathmod.RENDER_TXN_JOURNAL_VERSION,
             "status": "promoting",
             "txn_id": "deadbeef",
             "promotions": [
@@ -395,9 +396,9 @@ class RenderTransactionTests(unittest.TestCase):
         db["apps"]["shop"]["tls"] = {"mode": "acme", "redirect_https": True}
 
         def boom() -> None:
-            raise helpers.StackError("template boom")
+            raise StackError("template boom")
 
-        with self.assertRaisesRegex(helpers.StackError, "template boom"):
+        with self.assertRaisesRegex(StackError, "template boom"):
             runtime.apply_generated_config(
                 db,
                 live=self.live,
@@ -425,7 +426,7 @@ class RenderTransactionTests(unittest.TestCase):
 
         db["apps"]["shop"]["public_dir"] = "public"
         with patch.object(runtime, "promote_manifest", side_effect=counting_promote):
-            with self.assertRaisesRegex(helpers.StackError, "Injected promotion fault"):
+            with self.assertRaisesRegex(StackError, "Injected promotion fault"):
                 runtime.apply_generated_config(db, live=self.live, runtime_dir=self.runtime_dir)
         self.assertEqual(before, _snapshot_tree(self.generated))
         self.assertGreater(staging_count["n"], 1)
@@ -439,7 +440,7 @@ class ApplyValidationOrderTests(unittest.TestCase):
             calls.append(cmd)
             return None
 
-        db = helpers.empty_db()
+        db = empty_db()
         db["apps"]["shop"] = {"name": "shop", "php_version": "8.4"}
         db["crons"]["shop/job"] = {"php_version": "8.4"}
 
