@@ -2,8 +2,8 @@
 
 Reload matrix (service signals only — generated files may still re-render):
 
-| Command                    | nginx | php-fpm | cron |
-|----------------------------|:-----:|:-------:|:----:|
+| Command                    | nginx | php-fpm | runner |
+|----------------------------|:-----:|:-------:|:------:|
 | app domain add/remove/main |  Y    |    -    |  -   |
 | app access-log enable/off  |  Y    |    -    |  -   |
 | proxy create / tls *       |  Y    |    -    |  -   |
@@ -247,7 +247,7 @@ class ReloadScopeTests(unittest.TestCase):
         nginx_mock2.assert_not_called()
         cron_mock2.assert_not_called()
 
-    def test_cron_create_reloads_only_cron_not_nginx_or_fpm(self) -> None:
+    def test_cron_create_reloads_only_runner_not_nginx_or_fpm(self) -> None:
         db = _db_with_app()
         lock = MagicMock()
         lock.return_value.__enter__ = MagicMock(return_value=None)
@@ -258,12 +258,7 @@ class ReloadScopeTests(unittest.TestCase):
             patch.object(cron_commands, "save_db"),
             patch.object(cron_commands, "resolve_app_php_version", return_value="8.5"),
             patch.object(cron_commands, "validate_cron_workdir", return_value="/home/shop/www"),
-            patch.object(cron_commands, "cron_render_values", return_value={}),
             patch.object(cron_commands, "ensure_app", return_value=db["apps"]["shop"]),
-            patch.object(cron_commands, "mkdir"),
-            patch.object(cron_commands, "render_cron_job", return_value=Path("/tmp/job.cron")),
-            patch.object(cron_commands, "rebuild_supercronic_crontab", return_value=Path("/tmp/.supercronic.cron")),
-            patch.object(cron_commands, "cron_reload") as cron_reload,
             patch.object(cron_commands, "upsert_timestamp"),
             patch.object(cron_commands, "info"),
             patch.object(cron_commands, "rel", side_effect=str),
@@ -286,8 +281,8 @@ class ReloadScopeTests(unittest.TestCase):
                     php=None,
                 )
             )
-        cron_reload.assert_called()
-        apply_mock.assert_not_called()
+        apply_mock.assert_called_once()
+        self.assertEqual(set(apply_mock.call_args.kwargs["service_targets"]), {"runner"})
         php_mock.assert_not_called()
         nginx_mock.assert_not_called()
 
@@ -361,7 +356,7 @@ class ReloadScopeTests(unittest.TestCase):
         kwargs = apply.call_args.kwargs
         self.assertTrue(kwargs.get("reload_services"))
         self.assertTrue(kwargs.get("validate_services"))
-        # No service_targets means all groups (nginx + php + cron).
+        # No service_targets means all groups (nginx + php + runner).
         self.assertIsNone(kwargs.get("service_targets"))
 
     def test_normalize_service_targets_defaults_to_all(self) -> None:

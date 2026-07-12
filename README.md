@@ -1,6 +1,6 @@
 # VibeOps — vibe-coding ops stack
 
-VibeOps is a Docker-based LEMP operations stack for vibe-coding workflows, with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions, MySQL, Redis, cron, and ACME-ready TLS.
+VibeOps is a Docker-based LEMP operations stack for vibe-coding workflows, with host-network Nginx, Unix-socket PHP-FPM, multi PHP versions, MySQL, Redis, per-app cron, supervised workers, and ACME-ready TLS.
 
 It is optimized for production performance and DX around isolated apps. The primary deployable unit is an app slug:
 
@@ -34,9 +34,10 @@ vibeops/runtime/home/<app_name>/www
   - logs: `/home/<app_name>/logs`
 - **PHP runtime is split by role** while sharing the same PHP image/version:
   - `php84` / `php85` run PHP-FPM only and expose sockets
-  - `php84-cron` / `php85-cron` run supercronic only
+  - `php84-runner` / `php85-runner` run Supervisord as PID 1
+  - each runner supervises root-only maintenance, one app-owned Supercronic per app, and named long-running workers
   - `php84-cli` / `php85-cli` are ephemeral deploy/shell services
-  - deploy commands, Composer, cron, and PHP-FPM still use the same PHP binary/extensions
+  - deploy commands, Composer, cron, workers, and PHP-FPM use the same PHP binary/extensions
 - **PHP connects to MySQL/Redis** over the Compose backend network:
   - MySQL hosts are versioned services: `mysql57:3306`, `mysql84:3306`, `mysql97:3306`
   - `DEFAULT_MYSQL_SERVICE` defaults generated apps to `mysql84`
@@ -62,12 +63,16 @@ config/                       # committed stack config and templates
   php/                        # PHP common config and templates
   mysql/                      # shared + versioned MySQL config and SQL templates
 runtime/                      # mutable/generated/live data
-  state/stack.json            # local source of truth for apps/domains/proxies/crons
+  state/stack.json            # local source of truth for apps/domains/proxies/crons/workers
   generated/                  # disposable rendered config; regenerate with ./manage.py render
     nginx/vhosts/             # generated vhosts
     php/versions/             # generated PHP-FPM users/pools
-    cron/php84/jobs/          # generated PHP 8.4 cron jobs
-    cron/php85/jobs/          # generated PHP 8.5 cron jobs
+    cron/php84/jobs/          # generated PHP 8.4 cron job snippets
+    cron/php84/apps/          # merged app-owned Supercronic files
+    cron/php85/jobs/          # generated PHP 8.5 cron job snippets
+    cron/php85/apps/          # merged app-owned Supercronic files
+    runner/php84/programs/    # generated Supervisord programs/groups
+    runner/php85/programs/
   custom/                     # user-owned hooks and app-scoped vhost/pool templates
   home/                       # /home bind mount for app homes
   run/php-fpm/php84/          # PHP 8.4 sockets
@@ -90,12 +95,14 @@ cp .env.example .env
 ./manage.py render   # stage full generation, then promote into runtime/generated
 # ./manage.py apply  # same as render, then validate + reload running services
 
-docker compose build php84 php85 php84-cron php85-cron
+docker compose build php84 php85 php84-runner php85-runner
 # mysql84 is the default MySQL service.
-docker compose up -d mysql84 redis php84 php85 php84-cron php85-cron nginx
+docker compose up -d --remove-orphans mysql84 redis php84 php85 php84-runner php85-runner nginx
 # Optional extra majors:
 # docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 ```
+
+When upgrading from the former `phpXX-cron` services, run `./manage.py render`, rebuild the PHP images (Supervisord is now included), then use the `up --remove-orphans` command above. This removes the old cron-only containers after the new runners start.
 
 ## Interactive DX
 
@@ -263,11 +270,12 @@ SSH deploy keys can live in `runtime/home/shop/.ssh/` with normal SSH permission
 
 ## Cron jobs
 
-Cron runs in separate `php84-cron` / `php85-cron` containers. Create cron jobs per app; they inherit the app's recorded PHP version unless you pass a matching `--php`:
+Cron runs under Supervisord in the versioned `php84-runner` / `php85-runner` containers. Each app with cron jobs gets its own Supercronic child running directly as that app's private UID/GID. Root is reserved for a separate stack-maintenance scheduler. Create cron jobs per app; they inherit the app's recorded PHP version unless you pass a matching `--php`:
 
 ```bash
 ./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run'
 ./manage.py cron list
+./manage.py cron reload --app shop
 ./manage.py cron remove shop schedule  # or: ./manage.py cron remove --number 1
 ```
 
@@ -275,12 +283,14 @@ This writes:
 
 ```text
 runtime/generated/cron/php85/jobs/shop-schedule.cron
-runtime/generated/cron/php85/.supercronic.cron
+runtime/generated/cron/php85/apps/shop.cron
+runtime/generated/cron/php85/system.cron
+runtime/generated/runner/php85/programs/vibeops.conf
 ```
 
-The job runs in the `php85-cron` container as the private `shop:shop` identity, from `/home/shop/www`, with the PHP 8.5 binary/extensions and the same container environment as PHP-FPM. The root scheduler uses the narrow `php-cron-as` helper only to validate inputs and drop privileges; it never creates, chowns, or repairs app paths. `manage.py` atomically merges `jobs/*.cron` into `.supercronic.cron`, validates a running scheduler with `supercronic -test`, and reloads PID 1 with `SIGUSR2`.
+The app scheduler and all of its jobs run directly as `shop:shop`, from app-bounded workdirs, with the PHP 8.5 binary/extensions and the same environment as PHP-FPM. The non-privileged `php-cron-job` helper enforces optional timeout, lock, and file-output policy; it does not switch users. `manage.py` validates each app crontab, asks Supervisord to `reread`/`update` generated programs, then sends `SIGUSR2` to the named app scheduler rather than PID 1.
 
-Every PHP version receives a valid crontab during `render`. It always contains a daily maintenance job, so Supercronic remains running even with no app jobs and the first real job never requires a container restart. Do not scale a cron service to multiple replicas, or jobs will run more than once.
+Every PHP runner receives a root-only `system.cron` containing daily maintenance. Do not scale a runner service to multiple replicas, or cron jobs and workers will run more than once.
 
 Cron supports bounded workdirs, IANA timezones, timeouts, app-scoped shared locks, and optional private file output:
 
@@ -291,7 +301,32 @@ Cron supports bounded workdirs, IANA timezones, timeouts, app-scoped shared lock
   --output file
 ```
 
-Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-cron-service>-<job>.log`. The always-present daily logrotate job retains 14 rotations as dated archives such as `.log-2026-07-11` (with older archives compressed), without changing the live file's UID/GID. The same policy covers that version's PHP-FPM error and slow logs. Scheduler health and Prometheus metrics are available inside the backend network at `http://php85-cron:9746/health` and `/metrics` (similarly for PHP 8.4).
+Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-runner-service>-<job>.log`. The root maintenance scheduler rotates those files and PHP-FPM logs daily. Its health and Prometheus metrics are available inside the backend network at `http://php85-runner:9746/health` and `/metrics`; per-app schedulers do not bind metrics ports.
+
+## Long-running workers
+
+Workers are named app processes supervised alongside cron in the matching PHP runner. Supervisord starts them directly as the app UID/GID with explicit `HOME`, `COMPOSER_HOME`, workdir, and `umask 0027`; app commands never run as root.
+
+```bash
+# Laravel queue worker:
+./manage.py worker create shop queue --stop-timeout 120 -- \
+  php artisan queue:work redis --sleep=3 --tries=3 --timeout=90 --max-time=3600
+
+# Horizon or a Node process using the Node 24 runtime bundled in the PHP image:
+./manage.py worker create shop horizon -- php artisan horizon
+./manage.py worker create shop consumer -- node dist/consumer.js
+
+./manage.py worker list --app shop
+./manage.py worker status shop
+./manage.py worker restart shop queue
+./manage.py worker stop shop queue
+./manage.py worker start shop queue
+./manage.py worker remove shop queue
+```
+
+Commands are stored as an argv list, not evaluated by a root shell. Shell syntax such as pipes or redirects must be explicit, for example `-- sh -lc 'command | command'`. Set Laravel's worker timeout lower than `retry_after`, and set `--stop-timeout` longer than the longest expected job. Use `--max-time` or `--max-jobs` to recycle long-lived PHP workers. A worker definition may also run the bundled Node version; use a dedicated app image/container when a different Node major, native system dependencies, host port, or stronger resource isolation is required.
+
+Worker and cron processes share their versioned runner container. They are isolated by UID/GID and filesystem policy, not by per-process cgroups. A runner restart affects all processes on that PHP version.
 
 ## Change an app's PHP version
 
@@ -359,7 +394,7 @@ Or pass explicit paths as seen inside the Nginx container:
 
 ## Add another PHP version
 
-Copy an existing PHP service in `compose.yml` and change both the service suffix (`phpXX`) and PHP version directory (`8.x`) consistently:
+Copy an existing PHP service set in `compose.yml` (FPM, runner, and CLI) and change both the service suffix (`phpXX`) and PHP version directory (`8.x`) consistently:
 
 ```yaml
   phpXX:
@@ -377,14 +412,16 @@ Copy an existing PHP service in `compose.yml` and change both the service suffix
       - ./runtime/generated/php/versions/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
       - ./runtime/generated/php/versions/8.x/users.d:/usr/local/etc/php/users.d:ro
       - ./runtime/generated/cron/phpXX:/usr/local/etc/php/cron.d:ro
+      - ./runtime/generated/runner/phpXX/programs:/etc/vibeops/programs:ro
+      - ./config/php/supervisor/supervisord.conf:/etc/vibeops/supervisord.conf:ro
 ```
 
 Then:
 
 ```bash
-mkdir -p runtime/generated/php/versions/8.x/{pool.d,users.d} runtime/generated/cron/phpXX/jobs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
-docker compose build phpXX
-docker compose up -d phpXX
+mkdir -p runtime/generated/php/versions/8.x/{pool.d,users.d} runtime/generated/cron/phpXX/{jobs,apps} runtime/generated/runner/phpXX/programs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
+docker compose build phpXX phpXX-runner
+docker compose up -d phpXX phpXX-runner
 ./manage.py app create myapp example.com --php 8.x
 ```
 

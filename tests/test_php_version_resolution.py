@@ -167,15 +167,11 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(cron_commands, "cron_state_lock") as lock,
             patch.object(cron_commands, "load_db", return_value=db),
             patch.object(cron_commands, "ensure_app", return_value=db["apps"]["shop"]),
-            patch.object(cron_commands, "mkdir"),
-            patch.object(cron_commands, "app_www", return_value=Path("/tmp/home/shop/www")),
-            patch.object(cron_commands, "render_cron_job", return_value=Path("/tmp/shop-job.cron")) as render,
-            patch.object(cron_commands, "rebuild_supercronic_crontab", return_value=Path("/tmp/.supercronic.cron")),
-            patch.object(cron_commands, "cron_reload"),
             patch.object(cron_commands, "save_db"),
             patch.object(cron_commands, "stack_env", return_value={"TZ": "UTC"}),
             patch.object(cron_commands, "info"),
             patch.object(cron_commands, "rel", side_effect=lambda p: str(p)),
+            patch.object(runtime_commands, "apply_generated_config", return_value=[]) as apply,
         ):
             lock.return_value.__enter__ = lambda s: None
             lock.return_value.__exit__ = lambda s, *a: False
@@ -193,9 +189,8 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             )
             cron_commands.cmd_cron_create(args)
             self.assertEqual(db["crons"]["shop/schedule"]["php_version"], "8.5")
-            render.assert_called_once()
-            cron_arg = render.call_args[0][0]
-            self.assertEqual(cron_arg["php_version"], "8.5")
+            apply.assert_called_once()
+            self.assertEqual(set(apply.call_args.kwargs["service_targets"]), {"runner"})
 
     def test_explicit_mismatch_fails_before_side_effects(self) -> None:
         db = _shop_db("8.5")
@@ -220,10 +215,8 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(cron_commands, "cron_state_lock") as lock,
             patch.object(cron_commands, "load_db", return_value=db),
             patch.object(cron_commands, "ensure_app") as ensure,
-            patch.object(cron_commands, "render_cron_job") as render,
-            patch.object(cron_commands, "rebuild_supercronic_crontab") as rebuild,
-            patch.object(cron_commands, "cron_reload") as reload,
             patch.object(cron_commands, "save_db") as save_db,
+            patch.object(runtime_commands, "apply_generated_config") as apply,
         ):
             lock.return_value.__enter__ = lambda s: None
             lock.return_value.__exit__ = lambda s, *a: False
@@ -242,9 +235,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             with self.assertRaisesRegex(helpers.StackError, r"primary PHP version is 8\.5, not 8\.4"):
                 cron_commands.cmd_cron_create(args)
             ensure.assert_not_called()
-            render.assert_not_called()
-            rebuild.assert_not_called()
-            reload.assert_not_called()
+            apply.assert_not_called()
             save_db.assert_not_called()
             self.assertEqual(db["apps"]["shop"], original)
 

@@ -22,8 +22,8 @@ def php_service_for(version: str) -> str:
     return "php" + version.replace(".", "")
 
 
-def php_cron_service_for(version: str) -> str:
-    return php_service_for(version) + "-cron"
+def php_runner_service_for(version: str) -> str:
+    return php_service_for(version) + "-runner"
 
 
 def php_cli_service_for(version: str) -> str:

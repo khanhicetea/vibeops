@@ -1,0 +1,60 @@
+#!/usr/bin/env sh
+# Execute one scheduled job inside an app-owned Supercronic process. Supervisord
+# already selected the app UID/GID; this helper only enforces workdir, lock,
+# timeout, and output policy.
+set -eu
+
+if [ "$#" -ne 7 ]; then
+  echo "Usage: php-cron-job <job> <workdir> <docker|file> <timeout-seconds> <lock|-> <runner-service> <command-string>" >&2
+  exit 2
+fi
+
+APP_USER="${VIBEOPS_APP:-}"
+APP_JOB="$1"
+APP_WORKDIR="$2"
+OUTPUT="$3"
+TIMEOUT="$4"
+LOCK="$5"
+RUNNER_SERVICE="$6"
+shift 6
+
+case "$APP_USER" in ''|*[!a-z0-9_-]*|[0-9_-]*) echo "Invalid VIBEOPS_APP: $APP_USER" >&2; exit 2;; esac
+case "$APP_JOB" in ''|*[!A-Za-z0-9_.-]*) echo "Invalid cron job: $APP_JOB" >&2; exit 2;; esac
+case "$OUTPUT" in docker|file) ;; *) echo "Invalid output mode: $OUTPUT" >&2; exit 2;; esac
+case "$TIMEOUT" in ''|*[!0-9]*) echo "Invalid timeout: $TIMEOUT" >&2; exit 2;; esac
+case "$LOCK" in -) ;; ''|*[!A-Za-z0-9_.-]*) echo "Invalid lock name: $LOCK" >&2; exit 2;; esac
+case "$RUNNER_SERVICE" in php[0-9]*-runner) ;; *) echo "Invalid runner service: $RUNNER_SERVICE" >&2; exit 2;; esac
+
+actual_user="$(id -un)"
+[ "$actual_user" = "$APP_USER" ] || {
+  echo "Cron scheduler user mismatch: expected $APP_USER, running as $actual_user" >&2
+  exit 1
+}
+
+APP_HOME="/home/$APP_USER"
+APP_LOG="$APP_HOME/logs/cron-$RUNNER_SERVICE-$APP_JOB.log"
+case "$APP_WORKDIR" in "$APP_HOME"|"$APP_HOME"/*) ;; *) echo "Workdir must be inside $APP_HOME: $APP_WORKDIR" >&2; exit 1;; esac
+case "$APP_WORKDIR" in *'/../'*|*/..|*'/./'*|*/.) echo "Workdir contains unsafe path components: $APP_WORKDIR" >&2; exit 1;; esac
+[ -d "$APP_WORKDIR" ] || { echo "Workdir does not exist: $APP_WORKDIR" >&2; exit 1; }
+resolved_home="$(readlink -f "$APP_HOME")"
+resolved_workdir="$(readlink -f "$APP_WORKDIR")"
+case "$resolved_workdir" in "$resolved_home"|"$resolved_home"/*) ;; *) echo "Resolved workdir escapes $APP_HOME: $APP_WORKDIR" >&2; exit 1;; esac
+if [ "$OUTPUT" = file ] && [ ! -d "$APP_HOME/logs" ]; then
+  echo "App log directory is missing; run: manage.py permissions fix $APP_USER" >&2
+  exit 1
+fi
+
+cd "$APP_WORKDIR"
+umask 0027
+export VIBEOPS_CRON_JOB="$APP_JOB" VIBEOPS_CRON_OUTPUT="$OUTPUT" VIBEOPS_RUNNER_SERVICE="$RUNNER_SERVICE"
+set -- sh -lc "$1"
+if [ "$LOCK" != "-" ]; then
+  set -- flock -n "/run/vibeops-cron-locks/${APP_USER}/${LOCK}.lock" -- "$@"
+fi
+if [ "$TIMEOUT" -gt 0 ]; then
+  set -- timeout --foreground --kill-after=30 "$TIMEOUT" "$@"
+fi
+if [ "$OUTPUT" = file ]; then
+  exec "$@" >>"$APP_LOG" 2>&1
+fi
+exec "$@"

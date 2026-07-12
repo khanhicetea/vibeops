@@ -16,6 +16,7 @@ from typing import Any, Callable, Collection
 from vibeops.commands.app_commands import cmd_app_list, ensure_app, resolve_app_php_version
 from vibeops.commands.cron_commands import render_cron_job
 from vibeops.services.cron_runtime import rebuild_supercronic_crontab
+from vibeops.services.runner import reconcile_runner, render_runner_programs, runner_versions, validate_runner
 from vibeops.utils.env import default_php_version, fpm_capacity_warnings, php_fpm_process_max
 from vibeops.utils.errors import StackError, die, info, warn
 from vibeops.os.fsutil import mkdir, write_text_atomic
@@ -28,7 +29,7 @@ from vibeops.utils.paths import (
     live_render_context, rel
 )
 from vibeops.services.php import (
-    app_home, app_www, php_cli_service_for, php_cron_service_for,
+    app_home, app_www, php_cli_service_for,
     php_service_for, php_version_config_dir, render_app_identity, render_php_fallback
 )
 from vibeops.os.process import docker_available, run, running_services, service_running
@@ -133,6 +134,10 @@ def cmd_list(args: argparse.Namespace) -> None:
                 continue
             rows.append([key, str(cron.get("schedule", "") or ""), str(cron.get("command", "") or "")])
         print_table(rows, headers=["JOB", "SCHEDULE", "COMMAND"])
+    elif kind == "workers":
+        from vibeops.commands.worker_commands import cmd_worker_list
+
+        cmd_worker_list(argparse.Namespace(app_name=None))
     else:
         print(json.dumps(db, indent=2, sort_keys=True))
 
@@ -149,6 +154,16 @@ def render_all_into(db: dict[str, Any], ctx: RenderContext) -> list[Path]:
         for app in db.get("apps", {}).values()
         if isinstance(app, dict)
     )
+    php_versions.update(
+        str(cron.get("php_version") or default_php_version())
+        for cron in db.get("crons", {}).values()
+        if isinstance(cron, dict)
+    )
+    php_versions.update(
+        str(worker.get("php_version") or default_php_version())
+        for worker in db.get("workers", {}).values()
+        if isinstance(worker, dict)
+    )
     for version in sorted(php_versions):
         rendered.append(render_php_fallback(version, ctx))
     for app_name, app in sorted(db.get("apps", {}).items()):
@@ -164,17 +179,14 @@ def render_all_into(db: dict[str, Any], ctx: RenderContext) -> list[Path]:
         if isinstance(site, dict) and site.get("type") == "proxy":
             site.setdefault("domain", domain)
             rendered.append(render_proxy_vhost(site, ctx))
-    # Every shipped/configured PHP version gets a valid crontab, even with no
-    # app jobs, so Supercronic always remains PID 1 and can accept SIGUSR2.
-    cron_versions: set[str] = set(php_versions)
+    # Render job snippets, then one app-owned Supercronic crontab per app.
     for cron in db.get("crons", {}).values():
         if not isinstance(cron, dict):
             continue
-        path = render_cron_job(cron, ctx)
-        rendered.append(path)
-        cron_versions.add(str(cron.get("php_version") or default_php_version()))
-    for version in sorted(cron_versions):
+        rendered.append(render_cron_job(cron, ctx))
+    for version in sorted(php_versions):
         rendered.append(rebuild_supercronic_crontab(version, ctx))
+        rendered.append(render_runner_programs(db, version, ctx))
     return rendered
 
 def render_all(db: dict[str, Any]) -> list[Path]:
@@ -200,12 +212,8 @@ def build_render_manifest(staging: RenderContext) -> list[dict[str, Any]]:
                 continue
             if not _is_within(path, staging.generated_dir):
                 die(f"Staged path escaped generated root: {path}")
-            if not content_looks_generated(path) and path.name not in {".supercronic.cron", ".logrotate.conf"}:
-                # Combined crontab/logrotate are generated without the notice header.
-                if path.suffix == ".cron" and path.parent.name == "jobs":
-                    die(f"Staged job missing generated header: {path}")
-                if path.parent.name == "vhosts" or path.parent.name in {"users.d", "pool.d"}:
-                    die(f"Staged config missing generated header: {path}")
+            if not content_looks_generated(path):
+                die(f"Staged managed file missing generated header: {path}")
             rel_path = path.relative_to(staging.generated_dir).as_posix()
             mode = 0o644
             manifest.append({
@@ -337,7 +345,7 @@ def promote_manifest(
             key = ("generated", rel_path)
             if key in candidate_keys:
                 continue
-            if not content_looks_generated(path) and path.name not in {".supercronic.cron", ".logrotate.conf"}:
+            if not content_looks_generated(path) and path.name != ".supercronic.cron":
                 warn(f"Leaving unmanaged file in place: {path}")
                 continue
             entry = {"root": "generated", "rel": rel_path, "mode": 0o644}
@@ -439,8 +447,8 @@ def recover_abandoned_transactions(
 
 # Logical service groups that can be selectively validated/reloaded after a
 # full generation. Domain/proxy/TLS changes only need nginx; identity/pool
-# changes need php; cron job changes need cron. Full apply uses all three.
-SERVICE_TARGETS_ALL = frozenset({"nginx", "php", "cron"})
+# changes need php; cron/worker changes need runner. Full apply uses all three.
+SERVICE_TARGETS_ALL = frozenset({"nginx", "php", "runner"})
 SERVICE_TARGETS_NGINX = frozenset({"nginx"})
 
 
@@ -477,22 +485,9 @@ def validate_generated_services(db: dict[str, Any], *, services: Collection[str]
                 run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
                 run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"], capture=True)
 
-    if "cron" in want:
-        cron_versions = set(available_php_versions())
-        cron_versions.update(
-            str(cron.get("php_version") or default_php_version())
-            for cron in db.get("crons", {}).values()
-            if isinstance(cron, dict)
-        )
-        for version in sorted(cron_versions):
-            service = php_cron_service_for(version)
-            crontab = "/usr/local/etc/php/cron.d/.supercronic.cron"
-            if service_running(service):
-                run(["docker", "compose", "exec", "-T", service, "supercronic", "-test", crontab])
-            else:
-                php_service = service.removesuffix("-cron")
-                if service_running(php_service):
-                    run(["docker", "compose", "exec", "-T", php_service, "supercronic", "-test", crontab])
+    if "runner" in want:
+        for version in sorted(runner_versions(db, available_php_versions())):
+            validate_runner(db, version)
 
 
 def reload_generated_services(db: dict[str, Any], *, services: Collection[str] | None = None) -> None:
@@ -524,21 +519,12 @@ def reload_generated_services(db: dict[str, Any], *, services: Collection[str] |
                 except Exception as exc:
                     warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
 
-    if "cron" in want:
-        cron_versions = set(available_php_versions())
-        cron_versions.update(
-            str(cron.get("php_version") or default_php_version())
-            for cron in db.get("crons", {}).values()
-            if isinstance(cron, dict)
-        )
-        for version in sorted(cron_versions):
-            service = php_cron_service_for(version)
-            if service_running(service):
-                try:
-                    run(["docker", "compose", "kill", "-s", "USR2", service])
-                    info(f"Reloaded {service} cron with SIGUSR2")
-                except Exception as exc:
-                    warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
+    if "runner" in want:
+        for version in sorted(runner_versions(db, available_php_versions())):
+            try:
+                reconcile_runner(db, version)
+            except Exception as exc:
+                warn(f"Failed to reconcile PHP {version} runner after successful validation: {exc}")
 
 
 def apply_generated_config(
@@ -560,7 +546,7 @@ def apply_generated_config(
     successful validation do not roll generated files back.
 
     ``service_targets`` limits which service groups are validated/reloaded
-    (``nginx``, ``php``, ``cron``). Default is all three. Nginx-only mutations
+    (``nginx``, ``php``, ``runner``). Default is all three. Nginx-only mutations
     (domains, proxy, TLS) should pass ``SERVICE_TARGETS_NGINX``.
     """
     targets = normalize_service_targets(service_targets)
@@ -1061,7 +1047,7 @@ def print_plan(lines: list[str]) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     db = load_db()
-    services = ["mysql57", "mysql84", "mysql97", "redis", "nginx", "php84", "php85", "php84-cron", "php85-cron"]
+    services = ["mysql57", "mysql84", "mysql97", "redis", "nginx", "php84", "php85", "php84-runner", "php85-runner"]
     running = running_services()
     info("VibeOps status\n")
     info("Docker services:")

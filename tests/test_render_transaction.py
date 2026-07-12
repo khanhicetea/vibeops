@@ -14,6 +14,7 @@ import vibeops.services.mysql as mysql
 import vibeops.services.nginx as nginx
 import vibeops.utils.paths as paths
 import vibeops.services.php as php
+import vibeops.services.runner as runner
 import vibeops.os.process as process
 import vibeops.commands.runtime_commands as runtime
 
@@ -86,6 +87,7 @@ class RenderTransactionTests(unittest.TestCase):
             patch.object(mysql, "service_running", return_value=False),
             patch.object(nginx, "service_running", return_value=False),
             patch.object(cron_runtime, "service_running", return_value=False),
+            patch.object(runner, "service_running", return_value=False),
         ]
         for p in self.patches:
             p.start()
@@ -127,7 +129,8 @@ class RenderTransactionTests(unittest.TestCase):
         self.assertTrue(paths)
         # Fallback pool for available PHP version always rendered.
         self.assertTrue((self.generated / "php" / "versions" / "8.4" / "pool.d" / "zz-fallback.conf").is_file())
-        self.assertTrue((self.generated / "cron" / "php84" / ".supercronic.cron").is_file())
+        self.assertTrue((self.generated / "cron" / "php84" / "system.cron").is_file())
+        self.assertTrue((self.generated / "runner" / "php84" / "programs" / "vibeops.conf").is_file())
 
         after_gen = _snapshot_tree(repo_generated) if repo_generated.exists() else {}
         after_sec = _snapshot_tree(repo_secrets) if repo_secrets.exists() else {}
@@ -429,7 +432,7 @@ class RenderTransactionTests(unittest.TestCase):
 
 
 class ApplyValidationOrderTests(unittest.TestCase):
-    def test_validate_calls_nginx_php_cron_in_order(self) -> None:
+    def test_validate_calls_nginx_php_runner_in_order(self) -> None:
         calls: list[list[str]] = []
 
         def fake_run(cmd, **kwargs):
@@ -443,6 +446,8 @@ class ApplyValidationOrderTests(unittest.TestCase):
         with patch.object(runtime, "docker_available", return_value=True), patch.object(
             runtime, "service_running", return_value=True
         ), patch.object(runtime, "run", side_effect=fake_run), patch.object(
+            runner, "service_running", return_value=True
+        ), patch.object(runner, "run", side_effect=fake_run), patch.object(
             runtime, "available_php_versions", return_value=["8.4"]
         ):
             runtime.validate_generated_services(db)
@@ -450,12 +455,13 @@ class ApplyValidationOrderTests(unittest.TestCase):
         joined = [" ".join(c) for c in calls]
         self.assertTrue(any("nginx -t" in j for j in joined))
         self.assertTrue(any("php-fpm -tt" in j for j in joined))
+        self.assertTrue(any("supervisorctl" in j and j.endswith(" reread") for j in joined))
         self.assertTrue(any("supercronic -test" in j for j in joined))
         nginx_i = next(i for i, j in enumerate(joined) if "nginx -t" in j)
         fpm_i = next(i for i, j in enumerate(joined) if "php-fpm -tt" in j)
-        cron_i = next(i for i, j in enumerate(joined) if "supercronic -test" in j)
+        runner_i = next(i for i, j in enumerate(joined) if "supervisorctl" in j and j.endswith(" reread"))
         self.assertLess(nginx_i, fpm_i)
-        self.assertLess(fpm_i, cron_i)
+        self.assertLess(fpm_i, runner_i)
 
 
 if __name__ == "__main__":

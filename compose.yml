@@ -16,7 +16,6 @@ x-php-common: &php-common
     TZ: ${TZ:-Asia/Ho_Chi_Minh}
     SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
     SOCKET_GID: ${SOCKET_GID:-101}
-    PHP_SUPERCRONIC_METRICS_ADDRESS: 0.0.0.0:9746
   depends_on:
     mysql84:
       condition: service_healthy
@@ -48,10 +47,12 @@ x-php84-volumes: &php84-volumes
   - ./runtime/generated/php/versions/8.4/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./runtime/generated/php/versions/8.4/users.d:/usr/local/etc/php/users.d:ro
   - ./runtime/generated/cron/php84:/usr/local/etc/php/cron.d:ro
+  - ./runtime/generated/runner/php84/programs:/etc/vibeops/programs:ro
+  - ./config/php/supervisor/supervisord.conf:/etc/vibeops/supervisord.conf:ro
   - ./docker/php/bin/php-identity-sync:/usr/local/bin/php-identity-sync:ro
   - ./docker/php/bin/php-permissions:/usr/local/bin/php-permissions:ro
   - ./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro
-  - ./docker/php/bin/php-cron-as:/usr/local/bin/php-cron-as:ro
+  - ./docker/php/bin/php-cron-job:/usr/local/bin/php-cron-job:ro
   - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
 
 x-php85-volumes: &php85-volumes
@@ -62,10 +63,12 @@ x-php85-volumes: &php85-volumes
   - ./runtime/generated/php/versions/8.5/pool.d:/usr/local/etc/php-fpm.d/pools:ro
   - ./runtime/generated/php/versions/8.5/users.d:/usr/local/etc/php/users.d:ro
   - ./runtime/generated/cron/php85:/usr/local/etc/php/cron.d:ro
+  - ./runtime/generated/runner/php85/programs:/etc/vibeops/programs:ro
+  - ./config/php/supervisor/supervisord.conf:/etc/vibeops/supervisord.conf:ro
   - ./docker/php/bin/php-identity-sync:/usr/local/bin/php-identity-sync:ro
   - ./docker/php/bin/php-permissions:/usr/local/bin/php-permissions:ro
   - ./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro
-  - ./docker/php/bin/php-cron-as:/usr/local/bin/php-cron-as:ro
+  - ./docker/php/bin/php-cron-job:/usr/local/bin/php-cron-job:ro
   - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
 
 x-mysql-healthcheck: &mysql-healthcheck
@@ -118,33 +121,34 @@ services:
     volumes: *php85-volumes
     logging: *default-logging
 
-  # Cron services: scheduler only. manage.py reloads Supercronic with SIGUSR2 after cron changes.
-  php84-cron:
+  # Runner services: Supervisord PID 1 manages root maintenance, per-app
+  # Supercronic schedulers, and named long-running app workers.
+  php84-runner:
     <<: *php-common
     image: *php84-image
     restart: unless-stopped
     build: *php84-build
-    command: ["sh", "-lc", "php-identity-sync && exec php-supercronic"]
+    command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/vibeops/supervisord.conf"]
     volumes: *php84-volumes
     expose: ["9746"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9746/health"]
+      test: ["CMD-SHELL", "supervisorctl -c /etc/vibeops/supervisord.conf status system-cron | grep -q RUNNING && curl -fsS http://127.0.0.1:9746/health >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
     logging: *default-logging
 
-  php85-cron:
+  php85-runner:
     <<: *php-common
     image: *php85-image
     restart: unless-stopped
     build: *php85-build
-    command: ["sh", "-lc", "php-identity-sync && exec php-supercronic"]
+    command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/vibeops/supervisord.conf"]
     volumes: *php85-volumes
     expose: ["9746"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9746/health"]
+      test: ["CMD-SHELL", "supervisorctl -c /etc/vibeops/supervisord.conf status system-cron | grep -q RUNNING && curl -fsS http://127.0.0.1:9746/health >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3

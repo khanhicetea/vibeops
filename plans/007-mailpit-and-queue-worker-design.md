@@ -11,6 +11,11 @@
 
 ## Status
 
+> Update 2026-07-12: the worker portion is now implemented as versioned
+> `phpXX-runner` services with Supervisord PID 1, per-app Supercronic children,
+> and first-class `manage.py worker` commands. Mailpit remains unimplemented.
+> The sections below are retained as the original design-spike brief.
+
 - **Priority**: P3
 - **Effort**: M (design); L if fully implemented later
 - **Risk**: LOW for design-only; MED for implementation (long-running processes, mail relay abuse)

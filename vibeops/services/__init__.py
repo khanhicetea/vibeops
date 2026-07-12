@@ -1,1 +1,1 @@
-"""Stack services: compose, state, rendering, mysql, php, nginx, cron."""
+"""Stack services: compose, state, rendering, data stores, web, cron, and runners."""

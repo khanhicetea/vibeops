@@ -14,6 +14,7 @@ from vibeops.commands import (
     runtime_commands,
     tls_commands,
     wizard_commands,
+    worker_commands,
 )
 from vibeops.utils import env
 
@@ -264,9 +265,12 @@ def build_parser() -> argparse.ArgumentParser:
     cron_remove.add_argument("job_name", nargs="?", help="Cron job name")
     cron_remove.add_argument("--number", type=int, help="Number from 'cron list'")
     cron_remove.set_defaults(func=cron_commands.cmd_cron_remove)
-    cron_reload_cmd = cron_sub.add_parser("reload", help="Rebuild merged crontab and reload Supercronic")
+    cron_reload_cmd = cron_sub.add_parser("reload", help="Regenerate and reload per-app Supercronic schedulers")
     cron_reload_cmd.add_argument("--php", default=env.default_php_version(), help="PHP version")
+    cron_reload_cmd.add_argument("--app", dest="app_name", help="Require this app to have cron jobs")
     cron_reload_cmd.set_defaults(func=cron_commands.cmd_cron_reload)
+
+    worker_commands.add_parser(sub)
 
     app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app")
     app_exec.add_argument("app_name")
@@ -367,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
     wizard.set_defaults(func=wizard_commands.cmd_wizard)
 
     list_cmd = sub.add_parser("list", help="List metadata from state")
-    list_cmd.add_argument("kind", choices=["apps", "domains", "crons", "all", "users", "sites"])
+    list_cmd.add_argument("kind", choices=["apps", "domains", "crons", "workers", "all", "users", "sites"])
     list_cmd.set_defaults(func=runtime_commands.cmd_list)
 
     state = sub.add_parser("state", help="Inspect/init the JSON metadata DB")

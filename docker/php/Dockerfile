@@ -80,6 +80,7 @@ RUN set -eux; \
       gzip \
       openssh-client \
       redis-tools \
+      supervisor \
       unzip \
       vim \
       xz-utils; \
@@ -123,13 +124,13 @@ RUN set -eux; \
 COPY bin/php-identity-sync /usr/local/bin/php-identity-sync
 COPY bin/php-permissions /usr/local/bin/php-permissions
 COPY bin/php-app-run /usr/local/bin/php-app-run
-COPY bin/php-cron-as /usr/local/bin/php-cron-as
+COPY bin/php-cron-job /usr/local/bin/php-cron-job
 COPY bin/php-supercronic /usr/local/bin/php-supercronic
 RUN chmod +x \
       /usr/local/bin/php-identity-sync \
       /usr/local/bin/php-permissions \
       /usr/local/bin/php-app-run \
-      /usr/local/bin/php-cron-as \
+      /usr/local/bin/php-cron-job \
       /usr/local/bin/php-supercronic
 
 WORKDIR /home

@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from vibeops.commands.app_commands import ensure_app, resolve_app_php_version
-from vibeops.services.cron_runtime import cron_jobs_dir_for, cron_reload, rebuild_supercronic_crontab
+from vibeops.services.cron_runtime import cron_jobs_dir_for
 from vibeops.utils.env import default_php_version, stack_env
 from vibeops.utils.errors import die, info
 from vibeops.os.fsutil import mkdir
 from vibeops.utils.paths import DOCROOT_NAME, PHP_TEMPLATE_DIR, RenderContext, rel
-from vibeops.services.php import app_www, php_cron_service_for
+from vibeops.services.php import php_runner_service_for
 from vibeops.services.rendering import write_template
 from vibeops.services.state import cron_state_lock, load_db, save_db, upsert_timestamp
 from vibeops.utils.validation import (
@@ -47,7 +47,7 @@ def cron_render_values(cron: dict[str, Any]) -> dict[str, Any]:
     app_name = validate(str(cron.get("app", "")), APP_NAME_RE, "app_name")
     job_name = validate(str(cron.get("job_name", "")), JOB_RE, "job-name")
     php_version = validate(str(cron.get("php_version") or default_php_version()), PHP_VERSION_RE, "PHP version")
-    php_service = php_cron_service_for(php_version)
+    php_service = php_runner_service_for(php_version)
     workdir = validate_cron_workdir(app_name, str(cron.get("workdir") or f"/home/{app_name}/{DOCROOT_NAME}"))
     schedule = validate_schedule(str(cron.get("schedule", "")))
     command = str(cron.get("command", ""))
@@ -112,7 +112,7 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
             "app": app_name,
             "job_name": job_name,
             "php_version": php_version,
-            "php_service": php_cron_service_for(php_version),
+            "php_service": php_runner_service_for(php_version),
             "schedule": args.schedule,
             "command": args.command,
             "workdir": workdir,
@@ -124,29 +124,25 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         # Validate every field before creating identities or generated config.
         cron_render_values(candidate)
         ensure_app(app_name, php_version, db)
-        mkdir(cron_jobs_dir_for(php_version))
-        mkdir(app_www(app_name))
 
         cron_key = f"{app_name}/{job_name}"
-        previous = db["crons"].get(cron_key)
-        previous_version = str(previous.get("php_version")) if isinstance(previous, dict) and previous.get("php_version") else None
         cron = db["crons"].setdefault(cron_key, {})
         cron.update(candidate)
-        cron_path = render_cron_job(cron)
-        combined_crontab = rebuild_supercronic_crontab(php_version)
-        cron_reload(php_cron_service_for(php_version), [app_name])
-        if previous_version and previous_version != php_version:
-            old_path = cron_jobs_dir_for(previous_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
-            old_path.unlink(missing_ok=True)
-            rebuild_supercronic_crontab(previous_version)
-            cron_reload(php_cron_service_for(previous_version))
         upsert_timestamp(cron)
+        from vibeops.commands.runtime_commands import apply_generated_config
+
+        apply_generated_config(
+            db,
+            reload_services=True,
+            validate_services=True,
+            service_targets=frozenset({"runner"}),
+        )
         save_db(db)
+        cron_path = cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
 
         info(f"Created cron job: vibeops/{rel(cron_path)}")
         info(f"Runs as: {app_name}; workdir: {workdir}; timezone: {timezone}")
         info(f"Output: {output}; timeout: {timeout or 'none'}; lock: {lock or 'same-job (Supercronic)'}")
-        info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
 
 def cmd_cron_list(args: argparse.Namespace) -> None:
     from vibeops.ui.table import print_table
@@ -204,18 +200,36 @@ def cmd_cron_remove(args: argparse.Namespace) -> None:
                 die(f"Unknown cron job: {cron_key}")
 
         php_version = validate(str(cron.get("php_version") or default_php_version()), PHP_VERSION_RE, "PHP version")
-        cron_path = cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
-        cron_path.unlink(missing_ok=True)
         db["crons"].pop(cron_key, None)
-        combined_crontab = rebuild_supercronic_crontab(php_version)
-        cron_reload(php_cron_service_for(php_version))
+        from vibeops.commands.runtime_commands import apply_generated_config
+
+        apply_generated_config(
+            db,
+            reload_services=True,
+            validate_services=True,
+            service_targets=frozenset({"runner"}),
+        )
         save_db(db)
         info(f"Removed cron job: {cron_key}")
-        info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
 
 def cmd_cron_reload(args: argparse.Namespace) -> None:
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
     with cron_state_lock():
-        combined_crontab = rebuild_supercronic_crontab(php_version)
-        cron_reload(php_cron_service_for(php_version))
-    info(f"Updated Supercronic crontab: vibeops/{rel(combined_crontab)}")
+        db = load_db()
+        app_name = getattr(args, "app_name", None)
+        if app_name is not None:
+            app_name = validate(app_name, APP_NAME_RE, "app_name")
+            if not any(
+                isinstance(cron, dict) and cron.get("app") == app_name
+                for cron in db.get("crons", {}).values()
+            ):
+                die(f"No cron jobs for {app_name}")
+        from vibeops.commands.runtime_commands import apply_generated_config
+
+        apply_generated_config(
+            db,
+            reload_services=True,
+            validate_services=True,
+            service_targets=frozenset({"runner"}),
+        )
+    info(f"Reloaded PHP {php_version} app schedulers")

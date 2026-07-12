@@ -30,6 +30,7 @@ def empty_db() -> dict[str, Any]:
         "sites": {},
         "users": {},
         "crons": {},
+        "workers": {},
         "updated_at": now(),
     }
 
@@ -56,6 +57,7 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
     data.setdefault("sites", {})
     data.setdefault("users", {})
     data.setdefault("crons", {})
+    data.setdefault("workers", {})
     for app_name, app in data.get("apps", {}).items():
         if isinstance(app, dict):
             app.setdefault("name", app_name)
@@ -113,7 +115,7 @@ def upsert_timestamp(item: dict[str, Any]) -> None:
 
 @contextmanager
 def cron_state_lock() -> Iterator[None]:
-    """Serialize cron state/render/reload mutations from concurrent manage.py calls."""
+    """Serialize cron/worker state, render, and runner reconciliation mutations."""
     lock_path = STATE_DIR / ".cron.lock"
     mkdir(lock_path.parent)
     with lock_path.open("a+") as lock:
@@ -125,7 +127,7 @@ def cron_state_lock() -> Iterator[None]:
 
 
 def serialized_cron_state(func: Any) -> Any:
-    """Decorator for render/apply operations that also replace cron artifacts."""
+    """Decorator for render/apply operations that replace runner artifacts."""
     @wraps(func)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         with cron_state_lock():
