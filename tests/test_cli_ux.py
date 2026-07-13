@@ -130,7 +130,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args_list[0].args[1],
-            ["Add version", "Open MySQL shell", "Database sizes", "Process list"],
+            ["Open MySQL shell", "Database sizes", "Process list", "Add version"],
         )
         self.assertEqual(stats.call_args.args[0].mysql_service, "mysql57")
 

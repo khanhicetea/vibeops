@@ -96,7 +96,7 @@ def wizard_select_mysql_service() -> str:
 
 
 def wizard_manage_mysql_versions() -> None:
-    actions = ["Add version", "Open MySQL shell", "Database sizes", "Process list"]
+    actions = ["Open MySQL shell", "Database sizes", "Process list", "Add version"]
     while True:
         print_heading("Managed MySQL versions", writer=info)
         cmd_mysql_versions(argparse.Namespace())
