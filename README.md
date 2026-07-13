@@ -324,7 +324,7 @@ Workers are named app processes supervised alongside cron in the matching PHP ru
 
 Commands are stored as an argv list, not evaluated by a root shell. Shell syntax such as pipes or redirects must be explicit, for example `-- sh -lc 'command | command'`. Set Laravel's worker timeout lower than `retry_after`, and set `--stop-timeout` longer than the longest expected job. Use `--max-time` or `--max-jobs` to recycle long-lived PHP workers. A worker definition may also run the bundled Node version; use a dedicated app image/container when a different Node major, native system dependencies, host port, or stronger resource isolation is required.
 
-Worker and cron processes share their versioned runner container. They are isolated by UID/GID and filesystem policy, not by per-process cgroups. A runner restart affects all processes on that PHP version.
+Worker and cron processes share their versioned runner container as flat Supervisord programs (`cron-<app>`, `worker-<app>-<name>`), not process groups—so adding or removing one worker only starts/stops that program. They are isolated by UID/GID and filesystem policy, not by per-process cgroups. A runner restart affects all processes on that PHP version. App-wide `worker status|start|stop|restart <app>` expands worker names from state (cron is separate).
 
 ## Change an app's PHP version
 

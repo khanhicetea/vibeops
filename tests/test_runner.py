@@ -49,7 +49,8 @@ class RunnerRenderTests(unittest.TestCase):
         self.assertIn("command=php artisan queue:work --max-time=3600", text)
         self.assertIn("user=shop", text)
         self.assertIn("directory=/home/shop/www", text)
-        self.assertIn("[group:app-shop]", text)
+        # Flat programs: no process group, so update does not recycle siblings.
+        self.assertNotIn("[group:app-shop]", text)
         self.assertNotIn("php-app-run", text)
 
     def test_percent_is_escaped_for_supervisor_interpolation(self) -> None:
@@ -107,7 +108,37 @@ class WorkerCommandTests(unittest.TestCase):
             )
         command = run.call_args.args[0]
         self.assertIn("php85-runner", command)
-        self.assertEqual(command[-2:], ["restart", "app-shop:worker-shop-queue"])
+        self.assertEqual(command[-2:], ["restart", "worker-shop-queue"])
+
+    def test_app_wide_control_expands_workers_from_state(self) -> None:
+        db = _db()
+        db["workers"]["shop/horizon"] = {
+            "app": "shop",
+            "name": "horizon",
+            "php_version": "8.5",
+            "workdir": "/home/shop/www",
+            "command": ["php", "artisan", "horizon"],
+            "stop_timeout": 120,
+            "enabled": True,
+        }
+        with (
+            patch.object(worker_commands, "load_db", return_value=db),
+            patch.object(worker_commands, "service_running", return_value=True),
+            patch.object(worker_commands, "run") as run,
+        ):
+            worker_commands.cmd_worker_control(
+                argparse.Namespace(worker_action="status", app_name="shop", worker_name=None)
+            )
+        command = run.call_args.args[0]
+        self.assertEqual(command[-3:], ["status", "worker-shop-horizon", "worker-shop-queue"])
+
+    def test_worker_targets_are_flat_program_names(self) -> None:
+        self.assertEqual(runner.worker_program_name("shop", "queue"), "worker-shop-queue")
+        self.assertEqual(runner.cron_program_name("shop"), "cron-shop")
+        self.assertEqual(
+            runner.worker_targets(_db(), "shop"),
+            ["worker-shop-queue"],
+        )
 
 
 if __name__ == "__main__":

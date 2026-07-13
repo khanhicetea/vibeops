@@ -9,7 +9,6 @@ from typing import Any, Iterable
 from bento.os.fsutil import mkdir, write_text_atomic
 from bento.os.process import run, service_running
 from bento.services.compose import compose_command
-from bento.services.cron_runtime import app_crontab_for, system_crontab_for
 from bento.services.php import php_runner_service_for, php_service_for
 from bento.utils.env import default_php_version
 from bento.utils.errors import die, info, warn
@@ -33,17 +32,37 @@ def runner_program_path(version: str, ctx: RenderContext | None = None) -> Path:
     return runner_programs_dir_for(version, ctx) / "bento.conf"
 
 
-def worker_target(app_name: str, worker_name: str | None = None) -> str:
+def cron_program_name(app_name: str) -> str:
+    """Supervisord program name for an app's Supercronic child."""
     app_name = validate(app_name, APP_NAME_RE, "app_name")
-    if worker_name is None:
-        return f"app-{app_name}:*"
+    return f"cron-{app_name}"
+
+
+def worker_program_name(app_name: str, worker_name: str) -> str:
+    """Supervisord program name for one named app worker."""
+    app_name = validate(app_name, APP_NAME_RE, "app_name")
     worker_name = validate(worker_name, JOB_RE, "worker name")
-    return f"app-{app_name}:worker-{app_name}-{worker_name}"
+    return f"worker-{app_name}-{worker_name}"
 
 
-def cron_target(app_name: str) -> str:
+def worker_targets(db: dict[str, Any], app_name: str, worker_name: str | None = None) -> list[str]:
+    """Resolve flat Supervisord program names for worker control.
+
+    Programs are intentionally ungrouped: membership changes then only start/stop
+    the affected program on ``supervisorctl update``, instead of recycling an
+    app process group. App-wide control expands names from state.
+    """
     app_name = validate(app_name, APP_NAME_RE, "app_name")
-    return f"app-{app_name}:cron-{app_name}"
+    if worker_name is not None:
+        return [worker_program_name(app_name, worker_name)]
+    names = [
+        worker_program_name(str(worker["app"]), str(worker["name"]))
+        for raw in db.get("workers", {}).values()
+        if isinstance(raw, dict)
+        for worker in (normalize_worker(raw),)
+        if worker["app"] == app_name
+    ]
+    return sorted(names)
 
 
 def _supervisor_command(argv: Iterable[str]) -> str:
@@ -124,15 +143,16 @@ def render_runner_programs(db: dict[str, Any], version: str, ctx: RenderContext 
         "",
     ]
 
-    app_programs: dict[str, list[str]] = {}
+    # Flat programs (no [group:app-*]): supervisorctl update then only adds/
+    # restarts programs whose individual config changed, so adding a worker does
+    # not recycle the app's cron scheduler or sibling workers.
     cron_apps = sorted({
         validate(str(cron.get("app", "")), APP_NAME_RE, "app_name")
         for cron in db.get("crons", {}).values()
         if isinstance(cron, dict) and str(cron.get("php_version") or default_php_version()) == version
     })
     for app_name in cron_apps:
-        program = f"cron-{app_name}"
-        app_programs.setdefault(app_name, []).append(program)
+        program = cron_program_name(app_name)
         lines.extend([
             f"[program:{program}]",
             f"command=/usr/local/bin/php-supercronic /usr/local/etc/php/cron.d/apps/{app_name}.cron -",
@@ -156,8 +176,7 @@ def render_runner_programs(db: dict[str, Any], version: str, ctx: RenderContext 
             continue
         app_name = str(worker["app"])
         name = str(worker["name"])
-        program = f"worker-{app_name}-{name}"
-        app_programs.setdefault(app_name, []).append(program)
+        program = worker_program_name(app_name, name)
         lines.extend([
             f"[program:{program}]",
             f"command={_supervisor_command(worker['command'])}",
@@ -170,13 +189,6 @@ def render_runner_programs(db: dict[str, Any], version: str, ctx: RenderContext 
             "stopasgroup=true",
             "killasgroup=true",
             f"stopwaitsecs={worker['stop_timeout']}",
-            "",
-        ])
-
-    for app_name, programs in sorted(app_programs.items()):
-        lines.extend([
-            f"[group:app-{app_name}]",
-            f"programs={','.join(programs)}",
             "",
         ])
 
@@ -251,10 +263,13 @@ def reconcile_runner(db: dict[str, Any], version: str) -> None:
     })
     for app_name in cron_apps:
         result = run(
-            compose_command("exec", "-T", service, "supervisorctl", "-c", "/etc/bento/supervisord.conf", "signal", "USR2", cron_target(app_name)),
+            compose_command(
+                "exec", "-T", service, "supervisorctl", "-c", "/etc/bento/supervisord.conf",
+                "signal", "USR2", cron_program_name(app_name),
+            ),
             check=False,
             capture=True,
         )
         if result.returncode != 0:
-            warn(f"Could not signal {cron_target(app_name)} after runner update")
+            warn(f"Could not signal {cron_program_name(app_name)} after runner update")
     info(f"Reconciled {service} cron and worker processes")

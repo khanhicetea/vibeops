@@ -133,7 +133,8 @@ def cron_reload(service: str, usernames: Iterable[str] = ()) -> None:
         validate(app_name, APP_NAME_RE, "app_name")
         container_path = f"/usr/local/etc/php/cron.d/apps/{app_name}.cron"
         run(compose_command("exec", "-T", service, "supercronic", "-test", container_path))
-        target = f"app-{app_name}:cron-{app_name}"
+        # Flat program name (no Supervisord group): see runner.cron_program_name.
+        target = f"cron-{app_name}"
         result = run(
             compose_command("exec", "-T", service, "supervisorctl", "-c", "/etc/bento/supervisord.conf", "signal", "USR2", target),
             check=False,

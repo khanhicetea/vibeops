@@ -9,7 +9,7 @@ from bento.commands.app_commands import resolve_app_php_version
 from bento.os.process import run, service_running
 from bento.services.compose import compose_command
 from bento.services.php import php_runner_service_for
-from bento.services.runner import normalize_worker, worker_target
+from bento.services.runner import normalize_worker, worker_targets
 from bento.services.state import cron_state_lock, load_db, save_db, upsert_timestamp
 from bento.ui.table import print_table
 from bento.utils.errors import die, info
@@ -160,8 +160,14 @@ def cmd_worker_control(args: argparse.Namespace) -> None:
     service = php_runner_service_for(version)
     if not service_running(service):
         die(f"{service} is not running")
-    target = worker_target(app_name, name)
+    targets = worker_targets(db, app_name, name)
+    if not targets:
+        die(f"No workers for {app_name}")
     action = args.worker_action
-    run(compose_command("exec", "-T", service, "supervisorctl", "-c", "/etc/bento/supervisord.conf", action, target))
+    run(
+        compose_command(
+            "exec", "-T", service, "supervisorctl", "-c", "/etc/bento/supervisord.conf", action, *targets
+        )
+    )
     if action != "status":
-        info(f"{action.capitalize()} requested for {target}")
+        info(f"{action.capitalize()} requested for {', '.join(targets)}")
