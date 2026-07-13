@@ -129,6 +129,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(runtime_commands, "ensure_app", return_value=db["apps"]["shop"]) as ensure,
             patch.object(runtime_commands, "save_db") as save_db,
             patch.object(runtime_commands, "docker_available", return_value=True),
+            patch.object(runtime_commands, "render_php_versions_compose") as render_compose,
             patch.object(runtime_commands, "os") as os_mod,
             patch.object(runtime_commands.sys.stdin, "isatty", return_value=False),
             patch.object(runtime_commands.sys.stdout, "isatty", return_value=False),
@@ -138,6 +139,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 runtime_commands.cmd_app_exec(args)
             ensure.assert_called_once_with("shop", "8.5", db)
+            render_compose.assert_called_once_with(db)
             save_db.assert_not_called()
             cmd = os_mod.execvp.call_args[0][1]
             self.assertIn("php85-cli", cmd)
@@ -151,6 +153,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             patch.object(runtime_commands, "ensure_app", return_value=db["apps"]["shop"]),
             patch.object(runtime_commands, "save_db") as save_db,
             patch.object(runtime_commands, "docker_available", return_value=True),
+            patch.object(runtime_commands, "render_php_versions_compose") as render_compose,
             patch.object(runtime_commands, "os") as os_mod,
             patch.object(runtime_commands.sys.stdin, "isatty", return_value=False),
             patch.object(runtime_commands.sys.stdout, "isatty", return_value=False),
@@ -161,6 +164,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
                 runtime_commands.cmd_app_shell(args)
             cmd = os_mod.execvp.call_args[0][1]
             self.assertIn("php85-cli", cmd)
+            render_compose.assert_called_once_with(db)
             save_db.assert_not_called()
 
     def test_cron_omitted_stores_recorded_php(self) -> None:

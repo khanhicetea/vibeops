@@ -32,6 +32,7 @@ from bento.services.php import (
     app_home, app_www, php_cli_service_for,
     php_service_for, php_version_config_dir, render_app_identity, render_php_fallback
 )
+from bento.services.php_versions import render_php_versions_compose
 from bento.os.process import docker_available, run, running_services, service_running
 from bento.commands.proxy_commands import render_proxy_vhost
 from bento.services.rendering import content_looks_generated
@@ -91,6 +92,9 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
 
     if not docker_available():
         die("docker is required")
+    # The Compose topology is disposable state-derived output. Refresh it here
+    # so shell/exec cannot fail because a checkout has a missing or stale CLI role.
+    render_php_versions_compose(db)
     tty_args: list[str] = []
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         tty_args.append("-T")
