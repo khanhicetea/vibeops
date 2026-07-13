@@ -110,9 +110,29 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args.args[1],
-            ["Create app", "Manage app", "Manage PHP versions", "Show services status"],
+            ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Show services status"],
         )
         self.assertEqual(choice.call_args.kwargs["zero"], "Quit")
+
+    def test_mysql_manager_selects_version_for_database_stats(self) -> None:
+        from bento.commands import mysql_admin_commands
+
+        state = {"mysql_versions": ["5.7", "8.4"]}
+        with (
+            mock.patch.object(mysql_admin_commands, "load_db", return_value=state),
+            mock.patch.object(mysql_admin_commands, "cmd_mysql_versions"),
+            mock.patch.object(mysql_admin_commands, "prompt_choice", side_effect=["Database sizes", "Back"]) as choice,
+            mock.patch.object(mysql_admin_commands, "prompt_pick", return_value="MySQL 5.7 (mysql57)"),
+            mock.patch.object(mysql_admin_commands, "cmd_db_stats") as stats,
+            mock.patch.object(mysql_admin_commands, "info"),
+        ):
+            mysql_admin_commands.wizard_manage_mysql_versions()
+
+        self.assertEqual(
+            choice.call_args_list[0].args[1],
+            ["Add version", "Open MySQL shell", "Database sizes", "Process list"],
+        )
+        self.assertEqual(stats.call_args.args[0].mysql_service, "mysql57")
 
     def test_manage_app_menu_passes_selected_app_to_scoped_manager(self) -> None:
         from bento.commands import wizard_commands

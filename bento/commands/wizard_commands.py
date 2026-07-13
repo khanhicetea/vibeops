@@ -41,6 +41,7 @@ from bento.utils.paths import rel
 from bento.commands.permission_commands import cmd_permissions
 from bento.commands.proxy_commands import cmd_proxy_create
 from bento.commands.php_version_commands import cmd_php_add, cmd_php_remove, cmd_php_versions
+from bento.commands.mysql_admin_commands import wizard_manage_mysql_versions
 from bento.commands.runtime_commands import (
     WizardBack,
     available_php_versions,
@@ -672,7 +673,7 @@ def wizard_manage_php_versions() -> None:
 def cmd_wizard(args: argparse.Namespace) -> None:
     if not sys.stdin.isatty():
         die("wizard requires an interactive terminal")
-    actions = ["Create app", "Manage app", "Manage PHP versions", "Show services status"]
+    actions = ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Show services status"]
     while True:
         print_heading("bento", writer=info)
         action = prompt_choice("What do you want to do?", actions, zero="Quit")
@@ -685,6 +686,8 @@ def cmd_wizard(args: argparse.Namespace) -> None:
                 wizard_manage_app()
             elif action == "Manage PHP versions":
                 wizard_manage_php_versions()
+            elif action == "Manage MySQL versions":
+                wizard_manage_mysql_versions()
             else:
                 cmd_status(argparse.Namespace(check_nginx=False))
         except WizardBack:

@@ -115,7 +115,7 @@ For guided operations, run the no-dependency Python wizard:
 ./manage.py tui
 ```
 
-The wizard keeps its main menu focused on **Create app**, **Manage app**, and **Show services status**. **Manage app** first selects an app, then exposes app-scoped domain (including TLS/ACME), database (including backup/restore), cron, supervised workers, shell, and permission-check actions. A failed permission check suggests and can launch an explicit repair. Managers present numbered listings, refresh after changes, preview mutating plans, and print equivalent CLI commands for common flows.
+The wizard keeps its main menu focused on **Create app**, **Manage app**, **Manage PHP versions**, **Manage MySQL versions**, and **Show services status**. **Manage MySQL versions** can add a durable version, open a root shell on a selected managed version, show per-database sizes, and inspect its process list. **Manage app** first selects an app, then exposes app-scoped domain (including TLS/ACME), database (including backup/restore), cron, supervised workers, shell, and permission-check actions. A failed permission check suggests and can launch an explicit repair. Managers present numbered listings, refresh after changes, preview mutating plans, and print equivalent CLI commands for common flows.
 
 For a quick dashboard without entering the wizard:
 
@@ -419,6 +419,9 @@ MySQL versions are managed in stack state and rendered to `compose.d/bento-mysql
 ./manage.py mysql versions
 ./manage.py mysql add 5.7
 ./dc up -d mysql57
+./manage.py db shell --mysql-service mysql57
+./manage.py db stats --mysql-service mysql57
+./manage.py db process-list --mysql-service mysql57
 ```
 
 Back up and migrate databases manually before any intentional retirement.
@@ -464,6 +467,8 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 ./manage.py db user-reset shop
 ./manage.py db shell
 ./manage.py db shell --user shop
+./manage.py db stats
+./manage.py db process-list
 ./manage.py db backup
 ./manage.py db backup shop_app
 ./manage.py db backup --app shop

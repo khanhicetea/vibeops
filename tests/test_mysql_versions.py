@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bento.commands import mysql_admin_commands
 from bento.commands.mysql_version_commands import cmd_mysql_add
 from bento.services.mysql_versions import render_mysql_versions_compose
 
@@ -20,6 +21,40 @@ class MysqlVersionsTests(unittest.TestCase):
                 self.assertIn(f"  {service}:\n", text)
                 self.assertIn(f"      - {service}-data:/var/lib/mysql", text)
                 self.assertIn(f"  {service}-data:\n", text)
+
+    def test_database_stats_formats_allocated_bytes(self) -> None:
+        with (
+            patch.object(
+                mysql_admin_commands,
+                "_mysql_tabular_rows",
+                return_value=(
+                    ["DATABASE_NAME", "TABLES", "SIZE_BYTES"],
+                    [["shop_app", "12", "1572864"], ["empty_db", "0", "0"]],
+                ),
+            ),
+            patch.object(mysql_admin_commands, "print_table") as table,
+        ):
+            mysql_admin_commands.cmd_db_stats(argparse.Namespace(mysql_service="mysql84"))
+
+        self.assertEqual(
+            table.call_args.args[0],
+            [["shop_app", "12", "1.5 MiB"], ["empty_db", "0", "0 B"]],
+        )
+        self.assertEqual(table.call_args.kwargs["headers"], ["DATABASE", "TABLES", "SIZE"])
+
+    def test_process_list_uses_selected_service(self) -> None:
+        with (
+            patch.object(
+                mysql_admin_commands,
+                "_mysql_tabular_rows",
+                return_value=(["ID", "USER"], [["7", "shop"]]),
+            ) as query,
+            patch.object(mysql_admin_commands, "print_table") as table,
+        ):
+            mysql_admin_commands.cmd_db_process_list(argparse.Namespace(mysql_service="mysql57"))
+
+        self.assertEqual(query.call_args.kwargs["service"], "mysql57")
+        table.assert_called_once_with([["7", "shop"]], headers=["ID", "USER"])
 
     def test_add_persists_and_renders_without_a_remove_command(self) -> None:
         db = {"mysql_versions": ["8.4"], "apps": {}}

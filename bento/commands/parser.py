@@ -9,6 +9,7 @@ from bento.commands import (
     app_config_commands,
     cron_commands,
     db_commands,
+    mysql_admin_commands,
     permission_commands,
     php_version_commands,
     mysql_version_commands,
@@ -175,6 +176,14 @@ def build_parser() -> argparse.ArgumentParser:
     db_shell.add_argument("--user", help="App MySQL user (uses runtime/home/<app>/.credentials/<service>.env)")
     db_shell.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_shell.set_defaults(func=db_commands.cmd_db_shell)
+
+    db_stats = db_sub.add_parser("stats", help="Show table counts and allocated size per database")
+    db_stats.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_stats.set_defaults(func=mysql_admin_commands.cmd_db_stats)
+
+    db_process_list = db_sub.add_parser("process-list", aliases=["processlist"], help="Show current MySQL sessions and queries")
+    db_process_list.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_process_list.set_defaults(func=mysql_admin_commands.cmd_db_process_list)
 
     db_backup = db_sub.add_parser("backup", help="Logical dump to runtime/backups/<mysql_service>/")
     db_backup.add_argument("database", nargs="?", help="Single database name (default: all non-system DBs)")
