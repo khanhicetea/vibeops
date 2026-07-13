@@ -1,66 +1,52 @@
-# bento customization guide
+# Customization
 
-bento separates upstream-owned source files from local state and generated runtime config.
-
-The rule of thumb:
+bento keeps upstream files separate from local changes so upgrades remain reviewable.
 
 ```text
-Edit local state/custom/override files.
-Do not edit generated files.
-Avoid editing upstream-owned files unless you intend to maintain a fork.
+Do edit:     .env, Compose overrides, runtime/custom/, state through manage.py
+Do not edit: runtime/generated/, generated bento version fragments, core files for local-only changes
 ```
 
-## File ownership model
+## Environment settings
 
-```text
-config/compose.yml              # upstream-owned; do not customize directly
-config/                         # upstream-owned defaults/templates
-bento/                        # upstream-owned management CLI
-
-runtime/state/stack.json        # local desired state, managed by ./manage.py
-runtime/generated/              # disposable generated config
-runtime/custom/                 # local user-owned customization area
-
-compose.override.yml            # local Compose override, loaded by ./dc
-compose.local.yml               # local Compose override, loaded by ./dc
-compose.d/*.yml                 # local Compose fragments, loaded by ./dc
-.env                            # local secrets/defaults
-```
-
-## Commands
-
-```bash
-./manage.py render              # regenerate runtime/generated from state
-./manage.py apply               # render, validate, reload running services
-./manage.py state init          # create empty runtime/state/stack.json if needed
-./dc up -d                      # short docker compose wrapper with all local fragments
-./manage.py compose up -d       # equivalent long form
-```
-
-## Safe customization surfaces
-
-### 1. Environment defaults
-
-Use `.env` for local defaults and secrets:
+Copy `.env.example` to `.env` and keep it untracked. It contains secrets and defaults such as:
 
 ```env
-MYSQL_ROOT_PASSWORD=change-me
-DEFAULT_PHP_VERSION=8.5
-DEFAULT_MYSQL_SERVICE=mysql84
 TZ=Asia/Ho_Chi_Minh
+MYSQL_ROOT_PASSWORD=<long-random-password>
+DEFAULT_MYSQL_SERVICE=mysql84
+DEFAULT_PHP_VERSION=8.5
+DEFAULT_FPM_PROFILE=balanced
 SOCKET_GID=101
-# Startup only synchronizes identities; use permissions check/fix explicitly.
+REDIS_APP_ACL=false
+REDIS_PASSWORD=<long-random-password>
 ```
 
-Do not commit `.env`.
+Changing `PHP_FPM_PROCESS_MAX` requires rebuilding managed PHP images. Changing a MySQL root password requires `./manage.py render` and recreation of the affected MySQL container so its mounted root option file and environment stay aligned.
 
-### 2. Compose overrides
+## Compose overrides
 
-For simple Docker Compose customization, use `compose.override.yml`. The `./dc` wrapper loads it automatically with the upstream core stack.
+Put local Compose changes in one of:
 
-Example: add resource limits to Redis:
+```text
+compose.override.yml
+compose.local.yml
+compose.d/<name>.yml
+compose.d/<name>.yaml
+```
+
+Do not edit `config/compose.yml` unless maintaining a fork. Always operate through `./dc` or `./manage.py compose` so all fragments load:
+
+```bash
+./dc config
+./dc up -d
+./dc logs -f nginx
+```
+
+Example Redis memory limit:
 
 ```yaml
+# compose.override.yml
 services:
   redis:
     deploy:
@@ -69,152 +55,22 @@ services:
           memory: 256M
 ```
 
-Example: mount an extra host directory into Node:
+Example custom PHP ini for all PHP 8.5 roles:
 
 ```yaml
-services:
-  node:
-    volumes:
-      - ./runtime/home:/home
-      - /srv/shared-assets:/srv/shared-assets:ro
-```
-
-For multiple local fragments, use:
-
-```text
-compose.d/10-monitoring.yml
-compose.d/20-extra-worker.yml
-```
-
-Then use the `./dc` wrapper instead of bare `docker compose`:
-
-```bash
-./dc up -d
-./dc ps
-```
-
-`./dc` delegates to `./manage.py compose`, and both load:
-
-```text
-config/compose.yml
-compose.override.yml      # if present
-compose.local.yml         # if present
-compose.d/*.yml           # if present
-compose.d/*.yaml          # if present
-```
-
-### 3. App/domain/proxy/cron state
-
-Use `manage.py` commands to mutate `runtime/state/stack.json`:
-
-```bash
-./manage.py app create shop shop.example.com app --php 8.5 --public-dir public
-# Optional pool sizing: ondemand | balanced (default) | throughput
-./manage.py app create quiet quiet.example.com --fpm-profile ondemand
-./manage.py app domain add shop www.shop.example.com
-./manage.py proxy create api.example.com http://127.0.0.1:3000
-./manage.py cron create shop schedule '* * * * *' 'php artisan schedule:run' --php 8.5
-./manage.py tls acme shop.example.com
-./manage.py apply
-```
-
-Stack defaults for new apps live in `.env`:
-
-- `DEFAULT_FPM_PROFILE=balanced` — named FPM pool profile when `--fpm-profile` is omitted on create.
-- `PHP_FPM_PROCESS_MAX=32` — global FPM process cap baked into PHP images (`./dc build php84 php85` after changing).
-
-Do not edit generated pool files to tune workers. Choose a profile, re-render/apply, and measure RSS/latency. Do not directly edit generated Nginx, PHP-FPM, or cron files for these changes.
-
-### 4. App-scoped vhost and pool templates
-
-Use the first-class app config commands when one app needs a complete custom Nginx vhost or PHP-FPM pool template:
-
-```bash
-./manage.py app config status shop
-./manage.py app config customize shop vhost
-./manage.py app config customize shop pool
-```
-
-The customize command copies the current upstream template into an ignored, user-owned source and opens it with `$VISUAL`, `$EDITOR`, or `vi`:
-
-```text
-runtime/custom/apps/shop/nginx/vhost.conf.template
-runtime/custom/apps/shop/php/pool.conf.template
-```
-
-After the editor saves and exits successfully, the command records `service_config.<target>.mode = custom` in `runtime/state/stack.json`, stages the custom source into the normal generated destination, validates it, and reloads the affected service. A failed editor exit leaves the source as an inactive draft. Subsequent renders continue reading that custom source, so transactional promotion, rollback, and service validation still apply.
-
-For automation, skip editor launch explicitly:
-
-```bash
-./manage.py app config customize shop vhost --no-edit
-```
-
-Use `--no-reload` when the command should validate but not signal the service. For later manual edits, edit the custom source—not the generated output—then run `./manage.py apply`.
-
-Custom sources remain templates. Preserve the app variables and the vhost TLS marker block; custom pools must preserve the private app identity and expected Unix socket path/group/mode. A missing or invalid selected custom source fails render/apply instead of silently falling back to the upstream template.
-
-If you use `./manage.py app access-log enable`, custom vhost templates must include the opt-in access log block (or equivalent) themselves — the render only sets the `ACCESS_LOG` template flag:
-
-```nginx
-{% if ACCESS_LOG %}
-    access_log /var/log/nginx/apps/${APP_NAME}.access.log bento_combined buffer=64k flush=30s;
-{% endif %}
-```
-
-Check whether upstream changed after customization:
-
-```bash
-./manage.py app config status shop
-```
-
-Return to upstream generation without deleting the inactive custom source:
-
-```bash
-./manage.py app config reset shop vhost
-./manage.py app config reset shop pool
-```
-
-Use `--force` with `app config customize` only when you intentionally want to replace an existing custom source with the current upstream template. The same workflow is available under **Manage app → Customize** in the interactive wizard.
-
-### 5. Runtime custom directory
-
-`runtime/custom/` is reserved for local customizations that should survive upstream updates and renders.
-
-Current layouts:
-
-```text
-runtime/custom/apps/<app>/   # selected automatically by app config customize
-runtime/custom/nginx/        # general local adjuncts
-runtime/custom/php/          # general local adjuncts
-runtime/custom/mysql/        # general local adjuncts
-```
-
-Apart from app templates selected in state, use this area for files mounted by your local Compose override.
-
-Example: mount custom PHP ini snippets:
-
-```yaml
-# compose.override.yml
 services:
   php85:
-    volumes:
-      - ./runtime/custom/php/8.5/conf.d:/usr/local/etc/php/conf.d/custom:ro
-  php85-cli:
     volumes:
       - ./runtime/custom/php/8.5/conf.d:/usr/local/etc/php/conf.d/custom:ro
   php85-runner:
     volumes:
       - ./runtime/custom/php/8.5/conf.d:/usr/local/etc/php/conf.d/custom:ro
+  php85-cli:
+    volumes:
+      - ./runtime/custom/php/8.5/conf.d:/usr/local/etc/php/conf.d/custom:ro
 ```
 
-Then create:
-
-```text
-runtime/custom/php/8.5/conf.d/99-local.ini
-```
-
-Example content:
+Create `runtime/custom/php/8.5/conf.d/99-local.ini`:
 
 ```ini
 memory_limit = 512M
@@ -222,63 +78,100 @@ upload_max_filesize = 128M
 post_max_size = 128M
 ```
 
-Example: add custom MySQL config:
+If the application needs the setting during web requests, deployments, cron, and workers, apply the mount to FPM, CLI, and runner roles.
+
+Compose may replace lists rather than append them as expected. After overriding `volumes`, inspect `./dc config` and verify the core `/home`, generated PHP config, runner config, socket, and log mounts remain present.
+
+## State-managed changes
+
+Use CLI commands rather than editing `runtime/state/stack.json` manually:
+
+```bash
+./manage.py app create shop shop.example.com app --public-dir public
+./manage.py app domain add shop www.shop.example.com
+./manage.py proxy create api.example.com http://127.0.0.1:3000
+./manage.py cron create shop scheduler '* * * * *' 'php artisan schedule:run'
+./manage.py worker create shop queue -- php artisan queue:work
+./manage.py tls acme shop.example.com
+```
+
+These commands render and narrowly validate/reload their affected services. For a planned batch, use `--no-reload` where available and finish with:
+
+```bash
+./manage.py apply
+```
+
+## App-owned Nginx and FPM templates
+
+Use first-class template customization when one app needs a complete custom vhost or pool:
+
+```bash
+./manage.py app config status shop
+./manage.py app config customize shop vhost
+./manage.py app config customize shop pool
+```
+
+The command copies the current upstream template to:
+
+```text
+runtime/custom/apps/shop/nginx/vhost.conf.template
+runtime/custom/apps/shop/php/pool.conf.template
+```
+
+It opens `$VISUAL`, `$EDITOR`, or `vi`, records custom ownership in state, renders transactionally, validates, and reloads the affected service. Automation can use `--no-edit`; `--no-reload` validates without signaling. Use `--force` only to replace an existing custom source with the latest upstream template.
+
+Custom sources are still templates. Preserve:
+
+- required app identity and socket variables in FPM pools
+- TLS marker structure and app variables in vhosts
+- the access-log conditional if app access logging should work
+
+```nginx
+{% if ACCESS_LOG %}
+    access_log /var/log/nginx/apps/${APP_NAME}.access.log bento_combined buffer=64k flush=30s;
+{% endif %}
+```
+
+`app config status` reports whether the upstream template changed since customization. Return to upstream generation without deleting the inactive custom source:
+
+```bash
+./manage.py app config reset shop vhost
+./manage.py app config reset shop pool
+```
+
+Edit the custom source, never its output under `runtime/generated/`. Run `./manage.py apply` after later manual edits.
+
+## General runtime custom files
+
+`runtime/custom/` is ignored local storage for user-owned files:
+
+```text
+runtime/custom/apps/   # state-selected app templates
+runtime/custom/nginx/  # local Nginx files/images
+runtime/custom/php/    # local PHP config
+runtime/custom/mysql/  # local MySQL config
+```
+
+Only app templates selected through `app config customize` are consumed automatically. Mount or include other files with a Compose override.
+
+Example MySQL config:
 
 ```yaml
-# compose.override.yml
 services:
   mysql84:
     volumes:
       - ./runtime/custom/mysql/mysql84/conf.d:/etc/mysql/conf.d/local:ro
 ```
 
-Then create:
-
-```text
-runtime/custom/mysql/mysql84/conf.d/99-local.cnf
-```
-
-Example content:
-
 ```ini
+# runtime/custom/mysql/mysql84/conf.d/99-local.cnf
 [mysqld]
 max_connections = 100
-slow_query_log = ON
 ```
 
-## Generated files
+Use version-appropriate settings and validate the final service before production deployment.
 
-Files under `runtime/generated/` are disposable:
-
-```text
-runtime/generated/nginx/vhosts/*.conf
-runtime/generated/php/versions/*/users.d/*.env
-runtime/generated/php/versions/*/pool.d/*.conf
-runtime/generated/cron/php*/jobs/*.cron
-runtime/generated/cron/php*/apps/*.cron
-runtime/generated/cron/php*/system.cron
-runtime/generated/cron/php*/.logrotate.conf
-runtime/generated/runner/php*/programs/*.conf
-```
-
-These are regenerated by:
-
-```bash
-./manage.py render
-./manage.py apply
-```
-
-Generated files include a header like:
-
-```text
-# GENERATED BY bento. Do not edit directly; update runtime/state/stack.json and run ./manage.py render.
-```
-
-Manual edits here may be overwritten without warning.
-
-## Examples
-
-### Add a local monitoring service
+## Add a local service
 
 ```yaml
 # compose.d/30-monitoring.yml
@@ -295,178 +188,45 @@ services:
       - "127.0.0.1:8080:8080"
 ```
 
-Start with:
-
 ```bash
-./manage.py compose up -d cadvisor
+./dc config
+./dc up -d cadvisor
 ```
 
-### Override Nginx image locally
+For an optional Nginx image with Brotli and Zstandard modules, see [nginx-br-zstd-optin.md](nginx-br-zstd-optin.md).
 
-```yaml
-# compose.override.yml
-services:
-  nginx:
-    image: nginx:1.31-trixie
-```
+## Constraints
 
-Be careful: upstream templates/snippets may assume features from the pinned image. For an opt-in image with Brotli and Zstandard static/dynamic compression, follow [nginx-br-zstd-optin.md](nginx-br-zstd-optin.md).
+### Keep Nginx host-networked
 
-### Add a host-mounted directory to all PHP 8.5 services
+The default ingress assumes `network_mode: host`. Replacing it with bridge `ports:` changes HTTP/3, ACME, host upstreams, and socket/network behavior. Treat that as an ingress redesign, not a local tweak.
 
-```yaml
-# compose.override.yml
-services:
-  php85:
-    volumes:
-      - /srv/private-packages:/srv/private-packages:ro
-  php85-cli:
-    volumes:
-      - /srv/private-packages:/srv/private-packages:ro
-  php85-runner:
-    volumes:
-      - /srv/private-packages:/srv/private-packages:ro
-```
-
-Remember to apply the same mount to FPM, CLI, and runner if app code uses it in all contexts.
-
-### App identity and permission repair
-
-State renders each app's private UID/GID and selected public directory into `runtime/generated/php/versions/<version>/users.d/`. Startup reconciles identities only; it never repairs a complete home tree. App creation initializes its new, small tree once. Shell, exec, and cron run as the app's private UID/GID with `umask 0027`; setgid public directories preserve the Nginx-readable group for new files. Use the first-class commands when an existing filesystem policy needs attention:
-
-```bash
-./manage.py identity sync appuser --php 8.5
-./manage.py permissions check appuser
-./manage.py permissions fix appuser --recursive --dry-run
-./manage.py permissions fix appuser --recursive
-```
-
-Recursive repair is explicit because it can scan large trees. Keep secrets outside the selected document root; only public paths receive the Nginx socket group's read/traverse access.
-
-### Use a custom proxy app on the host
-
-Because Nginx uses host networking, `127.0.0.1` inside the Nginx container points to the host network namespace.
-
-```bash
-./manage.py proxy create app.example.com http://127.0.0.1:3000
-./manage.py tls acme app.example.com
-./manage.py apply
-```
-
-## Edge cases
-
-### Editing `config/compose.yml` blocks upstream updates
-
-If you edit tracked `config/compose.yml`, future `git pull` may conflict. Prefer `compose.override.yml` or `compose.d/*.yml`.
-
-Only edit `config/compose.yml` directly if you intentionally maintain a fork.
-
-### Docker Compose merge semantics can replace lists
-
-Compose merges mappings, but lists such as `volumes` may not merge the way you expect. If you override a service's `volumes`, verify the final config:
-
-```bash
-./manage.py compose config
-```
-
-Make sure required bento mounts are still present, especially:
+### Keep socket paths aligned
 
 ```text
-runtime/home
-runtime/generated/nginx/vhosts
-runtime/generated/php/versions/*/pool.d
-runtime/generated/php/versions/*/users.d
-runtime/run/php-fpm
-runtime/nginx-acme-state
+host:  runtime/run/php-fpm/phpXX/<app>.sock
+nginx: /run/php-fpm/phpXX/<app>.sock
+PHP:   /run/php-fpm/<app>.sock
 ```
 
-### Nginx must remain host-networked unless you redesign ingress
+Do not change `SOCKET_GID` unless the Nginx worker group and all socket permissions change with it.
 
-The default stack expects:
+### Keep runner replicas at one
 
-```yaml
-services:
-  nginx:
-    network_mode: host
-```
+Every `phpXX-runner` owns schedules and workers for that PHP version. Scaling it duplicates those processes.
 
-Do not replace this with `ports:` unless you understand the HTTP/3, ACME, and host-proxy implications.
+### Keep data private
 
-### PHP-FPM sockets must stay aligned
+Do not publish MySQL or Redis ports without a security review. Do not commit `.env`, credentials, cert keys, ACME state, database dumps, or app homes.
 
-Nginx expects sockets at:
-
-```text
-/run/php-fpm/php84/<app>.sock
-/run/php-fpm/php85/<app>.sock
-```
-
-PHP containers write sockets at:
-
-```text
-/run/php-fpm/<app>.sock
-```
-
-The host bind mounts bridge these paths. If you customize PHP/Nginx mounts, keep this mapping intact.
-
-### TLS changes are stateful
-
-Use:
-
-```bash
-./manage.py tls acme example.com
-./manage.py tls cert example.com --cert /etc/letsencrypt/live/example.com/fullchain.pem --key /etc/letsencrypt/live/example.com/privkey.pem
-```
-
-The TLS mode is stored in state and re-applied on render. Do not edit the TLS block in generated vhosts directly.
-
-### Generated fallback PHP pools are required
-
-Before first `./dc up`, run:
-
-```bash
-./manage.py render
-```
-
-This creates fallback PHP-FPM pool files in `runtime/generated/php/versions/*/pool.d/`. Without them, a PHP-FPM container may have no pool config on a fresh checkout.
-
-### Local custom files are not automatically mounted
-
-App templates selected through `app config customize` are rendered automatically into the normal generated mounts. Other files under `runtime/custom/` are preserved and ignored by git, but affect services only when mounted/included through a Compose override or another upstream-supported hook.
-
-## Do and don't
-
-### Do
-
-- Use `./manage.py` to create apps, domains, proxies, cron jobs, and TLS changes.
-- Run `./manage.py render` after state changes if you do not use `apply`.
-- Run `./manage.py apply` to render and reload safely.
-- Put local Compose changes in `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`.
-- Use `./manage.py compose config` to inspect the final Compose model.
-- Keep secrets in `.env` or app-owned credential files under `runtime/home/<app>/.credentials/`.
-- Back up `runtime/state/`, `runtime/home/`, database volumes/dumps, certs, and ACME state.
-
-### Don't
-
-- Do not edit `runtime/generated/*` directly.
-- Do not commit `.env`, cert private keys, ACME state, database dumps, or app secrets.
-- Do not expose MySQL/Redis ports publicly without a security review.
-- Do not remove Nginx host networking casually.
-- Do not change `SOCKET_GID` unless you also understand the Nginx worker group/socket permissions.
-- Do not override service volumes without checking that required bento mounts remain present.
-- Do not scale runner services to multiple replicas; scheduled jobs and workers may run more than once.
-
-## Recommended update workflow
+## Upgrade workflow
 
 ```bash
 git pull
 ./manage.py render
-./manage.py compose config     # optional sanity check
+./dc config
 ./manage.py apply
+make check
 ```
 
-If `config/compose.yml` changed upstream and you have local overrides, inspect the final merged output carefully:
-
-```bash
-./manage.py compose config > /tmp/bento-compose.yml
-```
+Review custom-template status and merged Compose output after upstream template or topology changes.

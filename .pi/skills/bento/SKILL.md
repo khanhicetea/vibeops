@@ -1,117 +1,159 @@
 ---
 name: bento
-description: Understand and operate this repository's bento, host-network Nginx, multi-version PHP-FPM over Unix sockets, MySQL, Redis, ACME TLS, site/user/proxy creation, deployment checks, and troubleshooting. Use when deploying apps, adding domains, changing PHP versions, editing compose/nginx/php config, or diagnosing production issues in this stack.
+description: Operate this repository's bento stack: host-network Nginx, managed PHP-FPM and MySQL versions, Redis, app isolation, Unix sockets, ACME TLS, cron, workers, backups, generated state, customization, deployment, and troubleshooting. Use for app deployment, domains, proxies, runtime versions, databases, Compose/Nginx/PHP changes, or production incidents in this stack.
 ---
 
-# bento Skill
+# bento
 
-Use this skill when working in this `bento` repository or helping a developer deploy an app onto it.
+Use this skill for work in the bento repository or for deploying applications onto a bento host.
 
-## First steps
+## Start here
 
-1. Confirm you are at the stack root: files should include `compose.yml`, `README.md`, `scripts/create-site.sh`, `nginx/`, `php/`, `home/`.
-2. Read `README.md` for the canonical overview before changing deployment behavior.
-3. For implementation details, read the specific file you will touch:
-   - `compose.yml` for service topology, bind mounts, networks, and PHP versions.
-   - `scripts/create-user.sh` for PHP-FPM Linux user/pool creation.
-   - `scripts/create-site.sh` for PHP vhost generation and DB creation.
-   - `scripts/create-proxy.sh` for reverse-proxy vhost generation.
-   - `scripts/acme.sh` and `scripts/use-cert.sh` for certificate switching.
-   - `nginx/templates/*.template` before changing generated vhost behavior.
-4. Use the quick runbook in `references/deploy-runbook.md` for deployment commands and troubleshooting.
-5. Optionally run `scripts/deploy-check.sh` from this skill directory for a fast local readiness report:
-   ```bash
-   .pi/skills/bento/scripts/deploy-check.sh
-   ```
+1. Confirm the stack root contains `config/compose.yml`, `manage.py`, `dc`, `bento/`, `config/`, and `runtime/`.
+2. Read `README.md` for operator workflows and `docs/architecture.md` before changing state/render/service behavior.
+3. Read `docs/customization.md` before changing Compose mounts, Nginx vhosts, or PHP pools.
+4. Inspect the implementation related to the change; `manage.py` is only a thin entrypoint and command parsing is in `bento/commands/parser.py`.
+5. Use `references/deploy-runbook.md` for production checks and incident commands.
 
-## Stack mental model
+The interactive wizard is available as `./manage.py` or `./manage.py wizard`; it is self-guided and prints equivalent CLI commands. Prefer the documented CLI for automation and agent work.
 
-- Nginx uses `network_mode: host`; do **not** add Docker `ports:` for Nginx.
-- Public traffic terminates on host ports `80`, `443/tcp`, and `443/udp` directly in the Nginx container.
-- PHP-FPM services (`php84`, `php85` by default) are on the Compose `backend` network and expose **Unix sockets**, not TCP ports.
-- Socket path mapping:
-  - host: `run/php-fpm/php84/<user>.sock` or `run/php-fpm/php85/<user>.sock`
-  - nginx: `/run/php-fpm/php84/<user>.sock`
-  - PHP container: `/run/php-fpm/<user>.sock`
-- Site roots are `home/<user>/<domain>` and are mounted read-only into Nginx but read-write into PHP.
-- MySQL and Redis are only reachable from backend containers; MySQL services are versioned as `mysql57:3306`, `mysql84:3306`, `mysql97:3306`, and Redis is `redis:6379`.
-- Generated vhosts start with a self-signed cert, then switch to NGINX ACME or explicit cert files.
+## Mental model
 
-## Fast deployment workflows
+- `runtime/state/stack.json` is desired state. `runtime/generated/` is disposable output; never edit it directly.
+- Core topology is `config/compose.yml`. Managed PHP and MySQL services are generated in `compose.d/bento-php-versions.yml` and `compose.d/bento-mysql-versions.yml`.
+- Always use `./dc` or `./manage.py compose`, not bare Compose, so generated and local fragments load.
+- Nginx uses `network_mode: host`, directly binding `80/tcp`, `443/tcp`, and `443/udp`. Do not add `ports:` without redesigning ingress.
+- A fresh state manages PHP 8.5 and MySQL 8.4. `php add` generates FPM, runner, and CLI roles; `mysql add` generates a durable service and named volume.
+- PHP-FPM communicates with Nginx through per-app Unix sockets:
+  - host: `runtime/run/php-fpm/php85/<app>.sock`
+  - Nginx: `/run/php-fpm/php85/<app>.sock`
+  - PHP container: `/run/php-fpm/<app>.sock`
+- An app slug is its Linux user/group, FPM pool, MySQL user, and `runtime/home/<app>/` directory. Code lives at `www/`.
+- Every app is assigned to exactly one MySQL service. Redis and MySQL are private on the Compose `backend` network.
+- `phpXX-runner` uses Supervisord for app-owned Supercronic schedulers and long-running workers. Never scale a runner above one replica.
+- Generated vhosts boot with a self-signed cert, then state may select NGINX ACME or external cert files.
 
-### Bootstrap a new server
+## Bootstrap
 
 ```bash
 cp .env.example .env
-# edit MYSQL_ROOT_PASSWORD and optionally DEFAULT_PHP_VERSION/TZ
-docker compose build php84 php85 redis
-docker compose up -d mysql84 redis php84 php85 nginx
-# Optional extra MySQL majors:
-# docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
-docker compose ps
-docker compose exec -T nginx nginx -t
+${EDITOR:-vi} .env
+./manage.py render
+./dc up -d --build
+./manage.py status --check-nginx
 ```
 
-Before starting Nginx on a real server, ensure no host Nginx/Apache is already bound to ports 80/443.
+On production Linux, first confirm no host web server owns ports 80/443. Require long MySQL/Redis passwords in `.env`.
 
-### Add a PHP site
+## Common operations
+
+### Create and deploy an app
 
 ```bash
-./scripts/create-user.sh <user> --php 8.5
-ALTER_DOMAINS=www.example.com ./scripts/create-site.sh <user> example.com app --php 8.5
-# point DNS A/AAAA to the server, then:
-./scripts/acme.sh example.com
+./manage.py app create shop shop.example.com app --php 8.5 --alias www.shop.example.com
+# Laravel/Symfony:
+./manage.py app create shop shop.example.com app --public-dir public
+
+./manage.py exec shop -- composer install --no-dev --optimize-autoloader
+./manage.py exec shop -- php artisan migrate --force
+./manage.py shell shop
+./manage.py tls acme shop.example.com
 ```
 
-The optional DB argument `app` creates database `<user>_app`. App connection defaults:
+The database suffix `app` creates `shop_app`. Credentials are mode-600 files under `runtime/home/shop/.credentials/`. Use `mysql84:3306` and `redis:6379`, never localhost, from PHP.
 
-```text
-DB_HOST=mysql84
-DB_PORT=3306
-DB_DATABASE=<user>_<db>
-DB_USERNAME=<user>
-REDIS_HOST=redis
-REDIS_PORT=6379
-```
-
-### Add a reverse-proxy vhost
+### Domains and proxies
 
 ```bash
-ALTER_DOMAINS=www.example.com ./scripts/create-proxy.sh app.example.com http://127.0.0.1:3000
-./scripts/acme.sh app.example.com
+./manage.py app domain add shop alt.shop.example.com
+./manage.py app domain set-main shop alt.shop.example.com
+./manage.py app domain remove shop www.shop.example.com
+./manage.py proxy create api.example.com http://127.0.0.1:3000
+./manage.py tls acme api.example.com
 ```
 
-Because Nginx is host-networked, `127.0.0.1:<port>` refers to the host network namespace.
+For host-network Nginx, proxy upstream `127.0.0.1` is the host namespace, not a Compose bridge container.
 
-### Change PHP version for a site
+### Runtime versions
 
 ```bash
-./scripts/create-user.sh <user> --php 8.4
-./scripts/create-site.sh <user> example.com --php 8.4
-docker compose exec -T nginx nginx -t && docker compose exec -T nginx nginx -s reload
+./manage.py php versions
+./manage.py php add 8.4
+./dc up -d --build php84 php84-runner
+./manage.py app create shop shop.example.com --php 8.4
+./manage.py php remove 8.5   # rejected while in use
+
+./manage.py mysql versions
+./manage.py mysql add 5.7
+./dc up -d mysql57
 ```
 
-The vhost's `fastcgi_pass` should point to `/run/php-fpm/php84/<user>.sock` or `/run/php-fpm/php85/<user>.sock`.
+MySQL removal is intentionally unsupported. Back up and migrate before deliberate manual retirement.
+
+### Database operations
+
+```bash
+./manage.py db list --mysql-service mysql84
+./manage.py db shell --mysql-service mysql84
+./manage.py db stats --mysql-service mysql84
+./manage.py db process-list --mysql-service mysql84
+./manage.py db backup --app shop --gzip --keep 14
+./manage.py db list-backups --mysql-service mysql84
+./manage.py db restore <dump.sql.gz> --database shop_app --new-suffix restored
+```
+
+Original replacement requires `--confirm-database shop_app`. Dumps are atomically finalized, but restore is not object-level atomic. Keep off-host copies. Never use `down -v`; it destroys database volumes.
+
+### Cron and workers
+
+```bash
+./manage.py cron create shop scheduler '* * * * *' 'php artisan schedule:run'
+./manage.py cron list --app shop
+./manage.py cron remove shop scheduler
+
+./manage.py worker create shop queue --stop-timeout 120 -- php artisan queue:work
+./manage.py worker status shop
+./manage.py worker restart shop queue
+./manage.py worker remove shop queue
+```
+
+Worker commands are argv. Use `-- sh -lc '...'` only when shell syntax is needed.
+
+### Render and validate
+
+```bash
+./manage.py render
+./manage.py apply
+./manage.py status --check-nginx
+./dc config
+./dc ps
+```
+
+Most mutation commands already render and narrowly reload. Use supported `--no-reload` flags for a batch, then `apply`.
 
 ## Guardrails
 
-- Preserve generated vhost marker comments `# BEGIN TLS_CERTIFICATE` and `# END TLS_CERTIFICATE`; TLS helper scripts depend on them.
-- Do not expose MySQL or Redis with host ports unless explicitly asked and security-reviewed.
-- Keep `SOCKET_GID=101` unless the Nginx worker GID changes; this is what allows Nginx to open PHP-FPM sockets.
-- Do not commit `.env`, live certificates/private keys, database dumps, or generated ACME account state.
-- Test Nginx config before reload: `docker compose exec -T nginx nginx -t`.
-- Test PHP-FPM config after pool changes: `docker compose exec -T php85 php-fpm -tt`.
-- PHP startup synchronizes identities only. Diagnose or repair app filesystem policy explicitly with `./manage.py permissions check <app>` and `./manage.py permissions fix <app> --recursive`.
+- Never edit `runtime/generated/*` or generated managed-version Compose fragments.
+- Use `app config customize <app> vhost|pool` for app-owned templates; preserve required identity, socket, TLS, and access-log template structure.
+- Put local Compose changes in `compose.override.yml`, `compose.local.yml`, or non-managed `compose.d/*`; verify `./dc config` after overriding volume lists.
+- Test Nginx with `./dc exec -T nginx nginx -t` before manual reloads.
+- Test FPM with `./dc exec -T php85 php-fpm -tt` after pool/image changes.
+- Keep `SOCKET_GID=101` unless Nginx's worker GID changes in lockstep.
+- Do not expose MySQL or Redis ports without explicit security review.
+- Do not commit `.env`, app credentials, dumps, cert keys, ACME state, runtime state, or app homes.
+- Startup synchronizes identities only. Use `permissions check`, a recursive dry-run, then explicit repair for imported/drifted trees.
 
-## Troubleshooting shortcuts
+## Troubleshooting baseline
 
 ```bash
-docker compose ps
-docker compose logs --tail=100 nginx
-docker compose logs --tail=100 php85
-docker compose exec -T nginx nginx -T | grep -n "example.com\|fastcgi_pass\|ssl_certificate"
-ls -l run/php-fpm/php85/
-find home/<user>/<domain> -maxdepth 2 -type f -ls | head
+./manage.py status --check-nginx
+./dc ps
+./dc logs --tail=200 nginx
+./dc logs --tail=200 php85
+./dc logs --tail=200 php85-runner
+./dc logs --tail=200 mysql84
+ls -l runtime/run/php-fpm/php85/
+./manage.py permissions check <app>
 ```
 
-If you need deeper detail, read `references/deploy-runbook.md`.
+Read `references/deploy-runbook.md` for symptom-specific checks.

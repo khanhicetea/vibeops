@@ -1,10 +1,10 @@
-# Opt in to Brotli and Zstandard compression
+# Optional Brotli and Zstandard Nginx image
 
-bento uses the official Nginx image and gzip by default. This guide builds a local image with the third-party Brotli and Zstandard dynamic modules. It supports both precompressed static files (`.br`, `.zst`) and on-the-fly compression for static, FastCGI, and proxied responses.
+The stock stack uses the official `nginx:1.30-trixie` image and gzip. This local customization builds ABI-compatible Brotli and Zstandard dynamic modules without changing `config/compose.yml`.
 
-This is a local customization: keep it in `runtime/custom/` and `compose.override.yml` so upstream `compose.yml` remains unchanged. Rebuild the image whenever the configured Nginx version changes.
+Dynamic modules must be rebuilt whenever the Nginx image changes.
 
-## 1. Create the custom Dockerfile
+## Build context
 
 ```bash
 mkdir -p runtime/custom/nginx/br-zstd
@@ -16,13 +16,12 @@ Create `runtime/custom/nginx/br-zstd/Dockerfile`:
 ARG NGINX_IMAGE=nginx:1.30-trixie
 FROM ${NGINX_IMAGE} AS modules
 
-# Pin module sources for reproducible builds. Review and update these commits deliberately.
 ARG BROTLI_COMMIT=a71f9312c2deb28875acc7bacfdd5695a111aa53
 ARG ZSTD_COMMIT=6be764e2bed04f889af824eff2d4dd737ebdab5a
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential ca-certificates cmake curl git libpcre2-dev libssl-dev libzstd-dev zlib1g-dev \
+       build-essential ca-certificates cmake curl git libpcre2-dev libssl-dev libzstd-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src
@@ -33,9 +32,7 @@ RUN curl -fsSLO "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     && git checkout "${BROTLI_COMMIT}" \
     && git submodule update --init --recursive --depth 1 \
     && cmake -S deps/brotli -B deps/brotli/out \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DBROTLI_DISABLE_TESTS=ON \
+       -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBROTLI_DISABLE_TESTS=ON \
     && cmake --build deps/brotli/out --config Release --parallel "$(nproc)" \
     && cd .. \
     && git clone --filter=blob:none https://github.com/tokers/zstd-nginx-module.git \
@@ -43,10 +40,9 @@ RUN curl -fsSLO "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     && git checkout "${ZSTD_COMMIT}"
 
 WORKDIR /usr/src/nginx-${NGINX_VERSION}
-RUN ./configure \
-        --with-compat \
-        --add-dynamic-module=/usr/src/ngx_brotli \
-        --add-dynamic-module=/usr/src/zstd-nginx-module \
+RUN ./configure --with-compat \
+      --add-dynamic-module=/usr/src/ngx_brotli \
+      --add-dynamic-module=/usr/src/zstd-nginx-module \
     && make -j"$(nproc)" modules
 
 FROM ${NGINX_IMAGE}
@@ -59,18 +55,18 @@ COPY --from=modules /usr/src/nginx-${NGINX_VERSION}/objs/ngx_http_zstd_filter_mo
 COPY --from=modules /usr/src/nginx-${NGINX_VERSION}/objs/ngx_http_zstd_static_module.so /usr/lib/nginx/modules/
 ```
 
-The explicit CMake step is required: without it, linking fails because `libbrotlienc` and `libbrotlicommon` have not been built.
+Pinned source commits make builds reviewable. Update them deliberately.
 
-## 2. Create local Nginx configuration
+## Local configuration
 
-Copy the upstream files so this customization starts from the version currently deployed:
+Copy the currently deployed tracked config:
 
 ```bash
 cp config/nginx/nginx.conf runtime/custom/nginx/br-zstd/nginx.conf
 cp config/nginx/global/00-nginx.conf runtime/custom/nginx/br-zstd/00-nginx.conf
 ```
 
-In `runtime/custom/nginx/br-zstd/nginx.conf`, add these lines immediately after the ACME `load_module` line. Load Zstd after Brotli; dynamic filters prepend themselves to the filter chain, giving the desired `zstd > br > gzip` preference.
+In the copied `nginx.conf`, add these after the ACME module load. Keep Zstd after Brotli so the dynamic filter order prefers `zstd`, then `br`, then gzip:
 
 ```nginx
 load_module modules/ngx_http_brotli_filter_module.so;
@@ -79,10 +75,9 @@ load_module modules/ngx_http_zstd_filter_module.so;
 load_module modules/ngx_http_zstd_static_module.so;
 ```
 
-In `runtime/custom/nginx/br-zstd/00-nginx.conf`, insert this block immediately before the existing `gzip on;` block:
+In the copied `00-nginx.conf`, add this before the existing gzip block:
 
 ```nginx
-# Precompressed .zst/.br files and on-the-fly response compression.
 zstd on;
 zstd_static on;
 zstd_min_length 1000;
@@ -98,11 +93,11 @@ brotli_buffers 16 8k;
 brotli_types text/plain text/css application/json application/ld+json application/javascript application/xml application/xml+rss image/svg+xml font/ttf font/otf application/vnd.ms-fontobject;
 ```
 
-Optionally replace the existing `gzip_types` line with the same MIME-type set used above. Keep `gzip_vary on;`; the Zstd static module uses it to emit `Vary: Accept-Encoding`.
+Keep `gzip_vary on`; the static compression modules rely on correct `Vary: Accept-Encoding` behavior.
 
-## 3. Override the Nginx service locally
+## Compose override
 
-Create or extend the ignored `compose.override.yml`:
+Create or extend `compose.override.yml`:
 
 ```yaml
 services:
@@ -118,25 +113,21 @@ services:
       - ./runtime/custom/nginx/br-zstd/00-nginx.conf:/etc/nginx/global/00-nginx.conf:ro
 ```
 
-Check the merged Compose model before deployment. The normal `/home`, vhost, socket, certificate, ACME, and log mounts must still be present:
+Compose volume-list merging can be surprising. Confirm that the merged service still contains bento's `/home`, vhost, socket, cert, ACME-state, and log mounts:
 
 ```bash
-./manage.py compose config
+./dc config
 ```
 
-## 4. Build, validate, and deploy
+## Build and verify
 
 ```bash
-./manage.py compose build nginx
-./manage.py compose up -d nginx
-./manage.py compose exec -T nginx nginx -t
+./dc build nginx
+./dc up -d nginx
+./dc exec -T nginx nginx -t
 ```
 
-If Nginx was already running, `up -d` recreates it with the custom image.
-
-## 5. Verify negotiation and fallback
-
-Use a response larger than `1000` bytes and a compressible MIME type. `HEAD` responses can differ from `GET`, so discard the body from a real `GET`:
+Test a compressible response larger than 1000 bytes with a real GET:
 
 ```bash
 curl -sS -D - -o /dev/null -H 'Host: example.com' -H 'Accept-Encoding: zstd, br, gzip' http://127.0.0.1/
@@ -145,21 +136,9 @@ curl -sS -D - -o /dev/null -H 'Host: example.com' -H 'Accept-Encoding: gzip' htt
 curl -sS -D - -o /dev/null -H 'Host: example.com' -H 'Accept-Encoding: identity' http://127.0.0.1/
 ```
 
-Expected `Content-Encoding` values are `zstd`, `br`, `gzip`, and no header respectively. Compressed responses should also contain:
+Expected encodings are `zstd`, `br`, `gzip`, and none. Compressed responses should include `Vary: Accept-Encoding`.
 
-```text
-Vary: Accept-Encoding
-```
-
-For readable response bodies, let curl negotiate and decompress automatically:
-
-```bash
-curl --compressed -H 'Host: example.com' http://127.0.0.1/
-```
-
-## Static precompression
-
-With `zstd_static on`, `brotli_static on`, and `gzip_static on`, Nginx looks beside an original asset for matching files:
+For static precompression, deploy siblings beside the original asset:
 
 ```text
 app.js
@@ -168,22 +147,21 @@ app.js.br
 app.js.gz
 ```
 
-Keep the original file. Generate compressed siblings during asset deployment, not inside the read-only Nginx container.
+Nginx mounts `/home` read-only, so generate these during application deployment.
 
-## Updating and disabling the customization
+## Upgrade or disable
 
-When changing `NGINX_VERSION`, rebuild without cache so modules are compiled against the exact Nginx version in the final image:
+After changing Nginx version, rebuild modules against the exact final image:
 
 ```bash
-./manage.py compose build --no-cache nginx
-./manage.py compose up -d nginx
+./dc build --no-cache nginx
+./dc up -d nginx
+./dc exec -T nginx nginx -t
 ```
 
-Dynamic Nginx modules are ABI-sensitive; never copy modules compiled for another Nginx build.
-
-To return to stock gzip-only Nginx, remove the `nginx` override from `compose.override.yml`, then recreate the service:
+To return to stock gzip, remove the Nginx override and recreate the service:
 
 ```bash
-./manage.py compose up -d --force-recreate nginx
-./manage.py compose exec -T nginx nginx -t
+./dc up -d --force-recreate nginx
+./dc exec -T nginx nginx -t
 ```
