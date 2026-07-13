@@ -122,7 +122,15 @@ For a quick dashboard without entering the wizard:
 ./manage.py status --check-nginx
 ```
 
-Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`; use `./manage.py compose ...` to include all local fragments. App vhost and PHP-FPM pool templates can be made app-owned with `./manage.py app config customize <app> vhost|pool`; see `docs/customization.md` for the ownership model, examples, and edge cases.
+Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`. Use `./dc ...` as the short `docker compose` replacement (or `./manage.py compose ...`) so every local fragment is always included:
+
+```bash
+./dc config
+./dc up -d
+./dc logs -f nginx
+```
+
+App vhost and PHP-FPM pool templates can be made app-owned with `./manage.py app config customize <app> vhost|pool`; see `docs/customization.md` for the ownership model, examples, and edge cases.
 
 ## Create an app
 

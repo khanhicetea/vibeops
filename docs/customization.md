@@ -33,7 +33,8 @@ compose.d/*.yml                 # local Compose fragments, loaded by ./manage.py
 ./manage.py render              # regenerate runtime/generated from state
 ./manage.py apply               # render, validate, reload running services
 ./manage.py state init          # create empty runtime/state/stack.json if needed
-./manage.py compose up -d       # docker compose with local fragments included
+./dc up -d                      # short docker compose wrapper with all local fragments
+./manage.py compose up -d       # equivalent long form
 ```
 
 ## Safe customization surfaces
@@ -85,14 +86,14 @@ compose.d/10-monitoring.yml
 compose.d/20-extra-worker.yml
 ```
 
-Then run through bento:
+Then use the `./dc` wrapper instead of bare `docker compose`:
 
 ```bash
-./manage.py compose up -d
-./manage.py compose ps
+./dc up -d
+./dc ps
 ```
 
-`./manage.py compose` loads:
+`./dc` delegates to `./manage.py compose`, and both load:
 
 ```text
 compose.yml
