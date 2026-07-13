@@ -59,7 +59,7 @@ from bento.commands.runtime_commands import (
 from bento.services.state import load_db
 from bento.commands.tls_commands import cmd_tls_acme
 from bento.ui.decorations import print_alert, print_heading
-from bento.utils.validation import APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, JOB_RE, MYSQL_SERVICE_RE
+from bento.utils.validation import APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, JOB_RE, MYSQL_SERVICE_RE, validate
 
 
 def wizard_create_app() -> None:
@@ -245,16 +245,16 @@ def wizard_manage_databases(app_name: str | None = None, app: dict[str, Any] | N
             if action == "Back":
                 return
             if action == "Backup app databases":
-                default_service = str(app.get("mysql_service") or default_mysql_service())
-                wizard_db_backup(default_service=default_service, app_name=app_name)
+                app_service = str(app.get("mysql_service") or default_mysql_service())
+                wizard_db_backup(fixed_service=app_service, app_name=app_name)
                 continue
             if action == "Restore a backup":
-                default_service = str(app.get("mysql_service") or default_mysql_service())
-                wizard_db_restore(default_service=default_service)
+                app_service = str(app.get("mysql_service") or default_mysql_service())
+                wizard_db_restore(fixed_service=app_service)
                 continue
             if action == "List backups":
-                default_service = str(app.get("mysql_service") or default_mysql_service())
-                wizard_db_list_backups(default_service=default_service)
+                app_service = str(app.get("mysql_service") or default_mysql_service())
+                wizard_db_list_backups(fixed_service=app_service)
                 continue
             suffix = prompt_validated("Database suffix", DB_NAME_RE, "database suffix")
             mysql_service = str(app.get("mysql_service") or default_mysql_service())
@@ -267,15 +267,19 @@ def wizard_manage_databases(app_name: str | None = None, app: dict[str, Any] | N
             continue
 
 
-def wizard_db_backup(*, default_service: str | None = None, app_name: str | None = None) -> None:
-    """Interactive logical dump (plain .sql or gzip .sql.gz)."""
-    mysql_service = prompt_validated(
-        "MySQL service",
-        MYSQL_SERVICE_RE,
-        "MySQL service",
-        default_service or default_mysql_service(),
-        hint="for example mysql57, mysql84, mysql97",
+def wizard_mysql_service(default_service: str | None, fixed_service: str | None) -> str:
+    if fixed_service:
+        return validate(fixed_service, MYSQL_SERVICE_RE, "MySQL service")
+    return prompt_validated(
+        "MySQL service", MYSQL_SERVICE_RE, "MySQL service",
+        default_service or default_mysql_service(), hint="for example mysql57, mysql84, mysql97",
     )
+
+
+def wizard_db_backup(*, default_service: str | None = None, fixed_service: str | None = None,
+                     app_name: str | None = None) -> None:
+    """Interactive logical dump (plain .sql or gzip .sql.gz)."""
+    mysql_service = wizard_mysql_service(default_service, fixed_service)
     if app_name:
         scope = "App databases"
         selected_app = app_name
@@ -342,27 +346,17 @@ def wizard_db_backup(*, default_service: str | None = None, app_name: str | None
     )
 
 
-def wizard_db_list_backups(*, default_service: str | None = None) -> None:
-    mysql_service = prompt_validated(
-        "MySQL service",
-        MYSQL_SERVICE_RE,
-        "MySQL service",
-        default_service or default_mysql_service(),
-        hint="for example mysql57, mysql84, mysql97",
-    )
+def wizard_db_list_backups(*, default_service: str | None = None,
+                           fixed_service: str | None = None) -> None:
+    mysql_service = wizard_mysql_service(default_service, fixed_service)
     print_heading(f"Backups for {mysql_service}", writer=info)
     cmd_db_list_backups(argparse.Namespace(mysql_service=mysql_service))
 
 
-def wizard_db_restore(*, default_service: str | None = None) -> None:
+def wizard_db_restore(*, default_service: str | None = None,
+                      fixed_service: str | None = None) -> None:
     """Interactive restore of a finalized .sql or .sql.gz dump."""
-    mysql_service = prompt_validated(
-        "MySQL service",
-        MYSQL_SERVICE_RE,
-        "MySQL service",
-        default_service or default_mysql_service(),
-        hint="for example mysql57, mysql84, mysql97",
-    )
+    mysql_service = wizard_mysql_service(default_service, fixed_service)
     backup_dir = mysql_backup_dir(mysql_service)
     files = _list_final_backups(backup_dir)
     if not files:

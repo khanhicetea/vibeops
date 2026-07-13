@@ -290,6 +290,37 @@ class WizardMenuRefactorTests(unittest.TestCase):
         self.assertIn("Backup app databases", actions)
         self.assertIn("Restore a backup", actions)
 
+    def test_app_scoped_backup_helpers_do_not_prompt_for_mysql_service(self) -> None:
+        from bento.commands import wizard_commands
+
+        with (
+            mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
+            mock.patch.object(wizard_commands, "prompt_confirm", side_effect=[True, False]),
+            mock.patch.object(wizard_commands, "prompt_text", return_value=""),
+            mock.patch.object(wizard_commands, "print_plan"),
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_db_backup(fixed_service="mysql84", app_name="shop")
+        service_prompt.assert_not_called()
+
+        with (
+            mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
+            mock.patch.object(wizard_commands, "cmd_db_list_backups") as list_backups,
+            mock.patch.object(wizard_commands, "print_heading"),
+        ):
+            wizard_commands.wizard_db_list_backups(fixed_service="mysql84")
+        service_prompt.assert_not_called()
+        self.assertEqual(list_backups.call_args.args[0].mysql_service, "mysql84")
+
+        with (
+            mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
+            mock.patch.object(wizard_commands, "_list_final_backups", return_value=[]),
+            mock.patch.object(wizard_commands, "prompt_text", return_value=""),
+            mock.patch.object(wizard_commands, "warn"),
+        ):
+            wizard_commands.wizard_db_restore(fixed_service="mysql84")
+        service_prompt.assert_not_called()
+
     def test_failed_permission_check_suggests_and_offers_fix(self) -> None:
         from bento.commands import wizard_commands
         from bento.utils.errors import StackError
