@@ -129,9 +129,94 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args_list[0].args[1],
-            ["Shell", "Databases", "Cronjobs", "Domains", "Audit File Permissions", "Customize"],
+            ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Audit File Permissions", "Customize"],
         )
         domains.assert_called_once_with("shop")
+
+    def test_workers_menu_is_inside_manage_app(self) -> None:
+        from bento.commands import wizard_commands
+
+        app = {"name": "shop", "main_domain": "shop.example.com", "php_version": "8.5"}
+        with (
+            mock.patch.object(wizard_commands, "wizard_select_app", return_value=("shop", app)),
+            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
+            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Workers", "Back"]) as choice,
+            mock.patch.object(wizard_commands, "wizard_manage_workers") as workers,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_app()
+
+        self.assertIn("Workers", choice.call_args_list[0].args[1])
+        workers.assert_called_once_with("shop", app)
+
+    def test_worker_create_splits_command_and_calls_handler(self) -> None:
+        from bento.commands import wizard_commands
+
+        app = {"name": "shop", "php_version": "8.5"}
+        with (
+            mock.patch.object(wizard_commands, "prompt_validated", return_value="queue"),
+            mock.patch.object(
+                wizard_commands,
+                "prompt_text",
+                side_effect=["php artisan queue:work --sleep=1", "", "120"],
+            ),
+            mock.patch.object(wizard_commands, "prompt_confirm", return_value=True),
+            mock.patch.object(wizard_commands, "print_plan"),
+            mock.patch.object(wizard_commands, "cmd_worker_create") as create,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_worker("shop", app)
+
+        args = create.call_args.args[0]
+        self.assertEqual(args.app_name, "shop")
+        self.assertEqual(args.worker_name, "queue")
+        self.assertEqual(args.php, "8.5")
+        self.assertIsNone(args.workdir)
+        self.assertEqual(args.stop_timeout, 120)
+        self.assertEqual(args.worker_command, ["--", "php", "artisan", "queue:work", "--sleep=1"])
+
+    def test_worker_manager_lists_and_can_restart(self) -> None:
+        from bento.commands import wizard_commands
+
+        app = {"name": "shop", "php_version": "8.5"}
+        workers = {
+            "shop/queue": {
+                "app": "shop",
+                "name": "queue",
+                "php_version": "8.5",
+                "command": ["php", "artisan", "queue:work"],
+            }
+        }
+        with (
+            mock.patch.object(
+                wizard_commands,
+                "load_db",
+                return_value={"workers": workers},
+            ),
+            mock.patch.object(wizard_commands, "cmd_worker_list"),
+            mock.patch.object(
+                wizard_commands,
+                "prompt_choice",
+                side_effect=["Restart", "Back"],
+            ) as choice,
+            mock.patch.object(
+                wizard_commands,
+                "prompt_pick",
+                return_value="shop/queue (php artisan queue:work)",
+            ),
+            mock.patch.object(wizard_commands, "prompt_confirm", return_value=True),
+            mock.patch.object(wizard_commands, "print_plan"),
+            mock.patch.object(wizard_commands, "cmd_worker_control") as control,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_workers("shop", app)
+
+        actions = choice.call_args_list[0].args[1]
+        self.assertIn("Create worker", actions)
+        self.assertIn("Restart", actions)
+        self.assertIn("Status", actions)
+        args = control.call_args.args[0]
+        self.assertEqual((args.worker_action, args.app_name, args.worker_name), ("restart", "shop", "queue"))
 
     def test_customize_menu_selects_app_scoped_vhost(self) -> None:
         from bento.commands import wizard_commands

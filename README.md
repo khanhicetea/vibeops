@@ -113,7 +113,7 @@ For guided operations, run the no-dependency Python wizard:
 ./manage.py tui
 ```
 
-The wizard keeps its main menu focused on **Create app**, **Manage app**, and **Show services status**. **Manage app** first selects an app, then exposes app-scoped domain (including TLS/ACME), database (including backup/restore), cron, shell, and permission-check actions. A failed permission check suggests and can launch an explicit repair. Managers present numbered listings, refresh after changes, preview mutating plans, and print equivalent CLI commands for common flows.
+The wizard keeps its main menu focused on **Create app**, **Manage app**, and **Show services status**. **Manage app** first selects an app, then exposes app-scoped domain (including TLS/ACME), database (including backup/restore), cron, supervised workers, shell, and permission-check actions. A failed permission check suggests and can launch an explicit repair. Managers present numbered listings, refresh after changes, preview mutating plans, and print equivalent CLI commands for common flows.
 
 For a quick dashboard without entering the wizard:
 
@@ -303,7 +303,7 @@ Default `--output docker` keeps application output with structured Supercronic l
 
 ## Long-running workers
 
-Workers are named app processes supervised alongside cron in the matching PHP runner. Supervisord starts them directly as the app UID/GID with explicit `HOME`, `COMPOSER_HOME`, workdir, and `umask 0027`; app commands never run as root.
+Workers are named app processes supervised alongside cron in the matching PHP runner. Supervisord starts them directly as the app UID/GID with explicit `HOME`, `COMPOSER_HOME`, workdir, and `umask 0027`; app commands never run as root. Guided create/list/status/start/stop/restart/remove is available under **Manage app → Workers** in `./manage.py wizard`.
 
 ```bash
 # Laravel queue worker:

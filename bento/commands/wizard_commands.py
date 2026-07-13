@@ -22,6 +22,12 @@ from bento.commands.app_config_commands import (
     cmd_app_config_status,
 )
 from bento.commands.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
+from bento.commands.worker_commands import (
+    cmd_worker_control,
+    cmd_worker_create,
+    cmd_worker_list,
+    cmd_worker_remove,
+)
 from bento.commands.db_commands import (
     _list_final_backups,
     cmd_db_backup,
@@ -446,6 +452,128 @@ def wizard_cron(app_name: str, app: dict[str, Any]) -> None:
         cmd_cron_create(argparse.Namespace(app_name=app_name, job_name=job_name, schedule=schedule, command=command, php=php, workdir=workdir, timezone=timezone, output=output, timeout=timeout, lock=lock))
 
 
+def _app_workers(app_name: str) -> list[tuple[str, dict[str, Any]]]:
+    db = load_db()
+    return [
+        (key, worker)
+        for key, worker in sorted(db.get("workers", {}).items())
+        if isinstance(worker, dict) and worker.get("app") == app_name
+    ]
+
+
+def wizard_manage_workers(app_name: str, app: dict[str, Any]) -> None:
+    while True:
+        info(f"\nWorkers for {app_name}:")
+        cmd_worker_list(argparse.Namespace(app_name=app_name))
+        workers = _app_workers(app_name)
+        actions = ["Create worker"]
+        if workers:
+            actions.extend(["Delete worker", "Status", "Restart", "Stop", "Start"])
+        try:
+            action = prompt_choice("Worker action", actions)
+            if action == "Back":
+                return
+            if action == "Create worker":
+                wizard_worker(app_name, app)
+                continue
+            if action == "Status":
+                labels = ["All workers for app"] + [
+                    f"{key} ({' '.join(str(arg) for arg in (worker.get('command') or []))})"
+                    for key, worker in workers
+                ]
+                selected = prompt_pick("Worker to status", labels)
+                worker_name = None if selected == "All workers for app" else workers[labels.index(selected) - 1][1]["name"]
+                info("\nEquivalent command:")
+                cmd = f"./manage.py worker status {shlex.quote(app_name)}"
+                if worker_name:
+                    cmd += f" {shlex.quote(str(worker_name))}"
+                info(f"  {cmd}")
+                cmd_worker_control(
+                    argparse.Namespace(worker_action="status", app_name=app_name, worker_name=worker_name)
+                )
+                continue
+            labels = [
+                f"{key} ({' '.join(str(arg) for arg in (worker.get('command') or []))})"
+                for key, worker in workers
+            ]
+            selected = prompt_pick(f"Worker number to {action.split()[0].lower()}", labels)
+            _key, worker = workers[labels.index(selected)]
+            worker_name = str(worker["name"])
+            if action == "Delete worker":
+                print_plan([f"remove worker {app_name}/{worker_name}", f"PHP {worker.get('php_version', default_php_version())}"])
+                info("\nEquivalent command:")
+                info(f"  ./manage.py worker remove {shlex.quote(app_name)} {shlex.quote(worker_name)}")
+                if prompt_confirm("Continue?", False):
+                    cmd_worker_remove(argparse.Namespace(app_name=app_name, worker_name=worker_name))
+                continue
+            control = action.lower()
+            print_plan([f"{control} worker {app_name}/{worker_name}"])
+            info("\nEquivalent command:")
+            info(f"  ./manage.py worker {control} {shlex.quote(app_name)} {shlex.quote(worker_name)}")
+            if prompt_confirm("Continue?", True):
+                cmd_worker_control(
+                    argparse.Namespace(worker_action=control, app_name=app_name, worker_name=worker_name)
+                )
+        except WizardBack:
+            continue
+
+
+def wizard_worker(app_name: str, app: dict[str, Any]) -> None:
+    php = str(app.get("php_version") or default_php_version())
+    worker_name = prompt_validated("Worker name", JOB_RE, "worker name")
+    command_text = prompt_text("Command", "php artisan queue:work --sleep=1 --tries=3")
+    try:
+        command = shlex.split(command_text)
+    except ValueError as exc:
+        die(f"Invalid command: {exc}")
+    if not command:
+        die("Worker command is required")
+    workdir = prompt_text("Workdir (blank = /home/<app>/www)", "", required=False) or None
+    stop_timeout_text = prompt_text("Stop timeout seconds", "120")
+    try:
+        stop_timeout = int(stop_timeout_text)
+    except ValueError:
+        die(f"Invalid stop timeout: {stop_timeout_text}")
+    workdir_display = workdir or f"/home/{app_name}/www"
+    print_plan(
+        [
+            f"create/update worker {app_name}/{worker_name}",
+            f"PHP {php}",
+            f"command: {shlex.join(command)}",
+            f"workdir: {workdir_display}",
+            f"stop timeout: {stop_timeout}s",
+        ]
+    )
+    info("\nEquivalent command:")
+    cmd_parts = [
+        "./manage.py",
+        "worker",
+        "create",
+        app_name,
+        worker_name,
+        "--php",
+        php,
+        "--stop-timeout",
+        str(stop_timeout),
+    ]
+    if workdir:
+        cmd_parts.extend(["--workdir", workdir])
+    cmd_parts.append("--")
+    cmd_parts.extend(command)
+    info("  " + " ".join(shlex.quote(p) for p in cmd_parts))
+    if prompt_confirm("Continue?", True):
+        cmd_worker_create(
+            argparse.Namespace(
+                app_name=app_name,
+                worker_name=worker_name,
+                php=php,
+                workdir=workdir,
+                stop_timeout=stop_timeout,
+                worker_command=["--", *command],
+            )
+        )
+
+
 def wizard_customize_app(app_name: str) -> None:
     labels = {"Vhost": "vhost", "PHP-FPM pool": "pool"}
     while True:
@@ -489,7 +617,7 @@ def wizard_customize_app(app_name: str) -> None:
 
 def wizard_manage_app() -> None:
     app_name, app = wizard_select_app()
-    actions = ["Shell", "Databases", "Cronjobs", "Domains", "Audit File Permissions", "Customize"]
+    actions = ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Audit File Permissions", "Customize"]
     while True:
         app = load_db().get("apps", {}).get(app_name, app)
         info(f"\nManage app: {app_name} (main: {app.get('main_domain', '-')})")
@@ -503,6 +631,8 @@ def wizard_manage_app() -> None:
                 wizard_manage_databases(app_name, app)
             elif action == "Cronjobs":
                 wizard_manage_crons(app_name, app)
+            elif action == "Workers":
+                wizard_manage_workers(app_name, app)
             elif action == "Domains":
                 wizard_manage_domains(app_name)
             elif action == "Audit File Permissions":
