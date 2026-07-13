@@ -63,11 +63,14 @@ def mysql_client_option_file_content(
     return "\n".join(lines) + "\n"
 
 
-def render_mysql_root_option_files(ctx: RenderContext | None = None) -> list[Path]:
-    """Write root client option files for local container administration."""
+def render_mysql_root_option_files(ctx: RenderContext | None = None, db: dict[str, Any] | None = None) -> list[Path]:
+    """Write root client option files for managed MySQL services."""
+    from bento.services.mysql_versions import managed_mysql_versions, mysql_service_for
+    from bento.services.state import load_db
+
     env = stack_env()
     rendered: list[Path] = []
-    for service in ("mysql57", "mysql84", "mysql97"):
+    for service in (mysql_service_for(version) for version in managed_mysql_versions(db or load_db())):
         password = mysql_root_password(env, service)
         if not password:
             continue

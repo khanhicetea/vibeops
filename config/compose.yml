@@ -8,13 +8,6 @@ x-default-logging: &default-logging
     max-size: "${DOCKER_LOG_MAX_SIZE:-20m}"
     max-file: "${DOCKER_LOG_MAX_FILE:-5}"
 
-x-mysql-healthcheck: &mysql-healthcheck
-  test: ["CMD", "mysqladmin", "--defaults-extra-file=/run/secrets/bento-root.cnf", "ping", "--silent"]
-  interval: 5s
-  timeout: 5s
-  retries: 20
-  start_period: 30s
-
 services:
   nginx:
     image: nginx:1.30-trixie
@@ -36,75 +29,8 @@ services:
       - ./runtime/logs/nginx:/var/log/nginx
     logging: *default-logging
 
-  # MySQL services are versioned so one server can run legacy, LTS, and preview databases side-by-side.
-  # Start one or more explicitly, for example:
-  #   ./dc up -d mysql84
-  #   ./dc up -d mysql57 mysql84 mysql97
-  # Optional legacy MySQL. Start explicitly with: ./dc --profile mysql57 up -d mysql57
-  # Buffer pool size must be a multiple of 128M (innodb_buffer_pool_chunk_size default class).
-  mysql57:
-    image: mysql:${MYSQL57_VERSION:-5.7}
-    profiles: ["mysql57"]
-    restart: unless-stopped
-    logging: *default-logging
-    command:
-      - --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-384M}
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL57_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - mysql57-data:/var/lib/mysql
-      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
-      - ./config/mysql/versions/5.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
-      - ./runtime/backups/mysql57:/backups
-      - ./runtime/logs/mysql57:/var/log/mysql
-      - ./runtime/secrets/mysql/mysql57-root.cnf:/run/secrets/bento-root.cnf:ro
-    healthcheck: *mysql-healthcheck
-    networks:
-      - backend
-
-  # Default MySQL service.
-  mysql84:
-    image: mysql:${MYSQL84_VERSION:-8.4}
-    restart: unless-stopped
-    logging: *default-logging
-    command:
-      - --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-512M}
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL84_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - mysql84-data:/var/lib/mysql
-      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
-      - ./config/mysql/versions/8.4/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
-      - ./runtime/backups/mysql84:/backups
-      - ./runtime/logs/mysql84:/var/log/mysql
-      - ./runtime/secrets/mysql/mysql84-root.cnf:/run/secrets/bento-root.cnf:ro
-    healthcheck: *mysql-healthcheck
-    networks:
-      - backend
-
-  # Optional preview MySQL. Start explicitly with: ./dc --profile mysql97 up -d mysql97
-  mysql97:
-    image: mysql:${MYSQL97_VERSION:-9.7}
-    profiles: ["mysql97"]
-    restart: unless-stopped
-    logging: *default-logging
-    command:
-      - --innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-512M}
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL97_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}}
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - mysql97-data:/var/lib/mysql
-      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro
-      - ./config/mysql/versions/9.7/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro
-      - ./runtime/backups/mysql97:/backups
-      - ./runtime/logs/mysql97:/var/log/mysql
-      - ./runtime/secrets/mysql/mysql97-root.cnf:/run/secrets/bento-root.cnf:ro
-    healthcheck: *mysql-healthcheck
-    networks:
-      - backend
+  # MySQL services and their durable named volumes are generated in
+  # compose.d/bento-mysql-versions.yml by `./manage.py mysql add <version>`.
 
   redis:
     build:
@@ -145,7 +71,4 @@ networks:
   backend:
 
 volumes:
-  mysql57-data:
-  mysql84-data:
-  mysql97-data:
   redis-data:

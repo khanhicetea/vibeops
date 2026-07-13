@@ -16,6 +16,8 @@ DOMAIN_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 PHP_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
 
+MYSQL_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
+
 DB_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 PUBLIC_DIR_RE = re.compile(r"^[A-Za-z0-9._/-]*$")

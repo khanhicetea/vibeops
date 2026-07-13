@@ -26,6 +26,7 @@ def empty_db() -> dict[str, Any]:
             "mysql_service": default_mysql_service(),
         },
         "php_versions": ["8.5"],
+        "mysql_versions": ["8.4"],
         "apps": {},
         "domains": {},
         "sites": {},
@@ -48,6 +49,7 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
     data["defaults"].setdefault("php_version", default_php_version())
     data["defaults"].setdefault("mysql_service", default_mysql_service())
     data.setdefault("php_versions", ["8.5"])
+    data.setdefault("mysql_versions", ["8.4"])
     data.setdefault("apps", {})
     data.setdefault("domains", {})
     data.setdefault("sites", {})

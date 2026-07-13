@@ -39,7 +39,8 @@ bento/runtime/home/<app_name>/www
   - `php85-cli` (and each added version's CLI role) is ephemeral for deploys/shells
   - deploy commands, Composer, cron, workers, and PHP-FPM use the same PHP binary/extensions
 - **PHP connects to MySQL/Redis** over the Compose backend network:
-  - MySQL hosts are versioned services: `mysql57:3306`, `mysql84:3306`, `mysql97:3306`
+  - MySQL hosts are managed versioned services (for example `mysql57:3306`, `mysql84:3306`)
+  - `./manage.py mysql add <version>` generates a service with its own durable named volume
   - `DEFAULT_MYSQL_SERVICE` defaults generated apps to `mysql84`
   - Redis host: `redis:6379`
 - **Nginx reads app files from `/home` read-only** and talks to PHP by Unix sockets.
@@ -98,8 +99,9 @@ cp .env.example .env
 ./dc build php85 php85-runner
 # mysql84 is the default MySQL service.
 ./dc up -d --remove-orphans mysql84 redis php85 php85-runner nginx
-# Optional extra majors:
-# docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
+# Add/start another version when needed:
+# ./manage.py mysql add 5.7
+# ./dc up -d mysql57
 ```
 
 ## Interactive DX
@@ -409,6 +411,18 @@ PHP versions are managed in stack state. The generated `compose.d/bento-php-vers
 
 The same add/remove flow is available in **Wizard → Manage PHP versions**. Reassign apps to another managed version before removing a runtime.
 
+## Manage MySQL versions
+
+MySQL versions are managed in stack state and rendered to `compose.d/bento-mysql-versions.yml`. Each version gets a stable service name and a dedicated named data volume. The CLI intentionally has **no remove command** because removing database topology is too easy to turn into data loss.
+
+```bash
+./manage.py mysql versions
+./manage.py mysql add 5.7
+./dc up -d mysql57
+```
+
+Back up and migrate databases manually before any intentional retirement.
+
 ## Identity and permission management
 
 Each app has a private Linux user and group with the same numeric UID/GID. PHP-FPM workers run as that private group; `nginxsock` (normally GID `101`) is only the shared **socket group** so Nginx can open FPM sockets and read public files. App users are not members of `nginxsock`.
@@ -480,7 +494,7 @@ Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. 
 
 - Table data lives in Docker named volumes (`mysql84-data`, `mysql57-data`, `mysql97-data`; see `config/compose.yml`).
 - Recreating a MySQL container keeps data **if** the volume is not removed.
-- `docker compose down -v` **destroys** MySQL data. Do not use `-v` on production hosts unless you intend to wipe.
+- `docker compose down -v` **destroys** MySQL data. `./dc down -v` and `./dc down --volumes` are blocked; do not bypass the wrapper on production hosts.
 
 #### What is not covered without backups
 

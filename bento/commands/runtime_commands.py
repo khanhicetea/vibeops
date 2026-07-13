@@ -144,7 +144,7 @@ def render_all_into(db: dict[str, Any], ctx: RenderContext) -> list[Path]:
     Does not delete live files. Callers must promote staged output and remove
     stale managed files after a complete successful generation.
     """
-    rendered: list[Path] = render_mysql_root_option_files(ctx)
+    rendered: list[Path] = render_mysql_root_option_files(ctx, db)
     php_versions = set(available_php_versions())
     php_versions.update(
         str(app.get("php_version") or default_php_version())
@@ -632,7 +632,12 @@ def apply_generated_config(
     return live_paths
 
 def cmd_compose(args: argparse.Namespace) -> None:
-    cmd = [*compose_prefix(), *(args.compose_args or ["ps"])]
+    compose_args = args.compose_args or ["ps"]
+    # A typo here can erase every durable database volume. Bento deliberately
+    # provides no bypass; use raw docker compose only for an intentional wipe.
+    if "down" in compose_args and any(arg in {"-v", "--volumes"} or (arg.startswith("-") and not arg.startswith("--") and "v" in arg[1:]) for arg in compose_args):
+        die("Refusing 'compose down -v/--volumes': it can permanently delete MySQL data volumes")
+    cmd = [*compose_prefix(), *compose_args]
     os.execvp("docker", cmd)
 
 @serialized_cron_state
@@ -640,7 +645,9 @@ def cmd_render(args: argparse.Namespace) -> None:
     db = load_db()
     rendered = apply_generated_config(db, reload_services=False, validate_services=False)
     from bento.services.php_versions import render_php_versions_compose
+    from bento.services.mysql_versions import render_mysql_versions_compose
     render_php_versions_compose(db)
+    render_mysql_versions_compose(db)
     save_db(db)
     info(f"Rendered {len(rendered)} file(s) from bento/{rel(DB_PATH)}")
     for path in rendered:
@@ -649,6 +656,10 @@ def cmd_render(args: argparse.Namespace) -> None:
 @serialized_cron_state
 def cmd_apply(args: argparse.Namespace) -> None:
     db = load_db()
+    from bento.services.php_versions import render_php_versions_compose
+    from bento.services.mysql_versions import render_mysql_versions_compose
+    render_php_versions_compose(db)
+    render_mysql_versions_compose(db)
     # --no-reload still validates when services are running; only skips signals.
     rendered = apply_generated_config(
         db,
@@ -1012,8 +1023,11 @@ def print_plan(lines: list[str]) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     db = load_db()
+    from bento.services.mysql_versions import managed_mysql_versions, mysql_service_for
+
     php_services = [service for version in available_php_versions() for service in (php_service_for(version), php_service_for(version) + "-runner")]
-    services = ["mysql57", "mysql84", "mysql97", "redis", "nginx", *php_services]
+    mysql_services = [mysql_service_for(version) for version in managed_mysql_versions(db)]
+    services = [*mysql_services, "redis", "nginx", *php_services]
     running = running_services()
     info("bento status\n")
     info("Docker services:")
@@ -1073,7 +1087,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     info(f"  metadata: bento/{rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
     info(f"  vhosts:   bento/{rel(NGINX_VHOST_DIR)}")
     info(f"  process.max (PHP-FPM global): {php_fpm_process_max()}")
-    for mysql_service in ("mysql57", "mysql84", "mysql97"):
+    for mysql_service in mysql_services:
         if mysql_service in running:
             ok = mysql_admin_ping(mysql_service)
             info(f"  {mysql_service} ping: {'ok' if ok else 'failed'}")
