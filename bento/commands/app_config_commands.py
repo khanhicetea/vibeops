@@ -21,7 +21,7 @@ from bento.services.app_config import (
     upstream_template_path,
 )
 from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
-from bento.ui.table import print_table
+from bento.ui.table import print_ascii_table as print_table
 from bento.utils.errors import die, info, warn
 from bento.utils.paths import rel
 from bento.utils.validation import APP_NAME_RE, validate

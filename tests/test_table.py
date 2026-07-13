@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-from bento.ui.table import format_table, print_table, terminal_width, truncate_cell
+from bento.ui.table import format_ascii_table, format_table, print_table, terminal_width, truncate_cell
 
 
 class TerminalWidthTests(unittest.TestCase):
@@ -87,6 +87,19 @@ class FormatTableTests(unittest.TestCase):
         body = lines[2]
         self.assertNotIn("\t", body)
         self.assertNotIn("\n", body)
+
+    def test_ascii_table_has_borders_and_fits_width(self) -> None:
+        lines = format_ascii_table(
+            [["shop", "very-long-subdomain.example-company.example.com"]],
+            headers=["APP", "DOMAIN"],
+            width=40,
+        )
+        self.assertTrue(lines[0].startswith("+"))
+        self.assertTrue(lines[1].startswith("| APP"))
+        self.assertEqual(lines[0], lines[2])
+        self.assertEqual(lines[0], lines[-1])
+        self.assertTrue(any("…" in line for line in lines))
+        self.assertTrue(all(len(line) <= 40 for line in lines))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from bento.services.compose import compose_command
 from bento.services.php import php_runner_service_for
 from bento.services.runner import normalize_worker, worker_targets
 from bento.services.state import cron_state_lock, load_db, save_db, upsert_timestamp
-from bento.ui.table import print_table
+from bento.ui.table import print_ascii_table as print_table
 from bento.utils.errors import die, info
 from bento.utils.paths import DOCROOT_NAME
 from bento.utils.validation import APP_NAME_RE, JOB_RE, validate, validate_cron_workdir

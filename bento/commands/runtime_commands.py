@@ -37,7 +37,8 @@ from bento.os.process import docker_available, run, running_services, service_ru
 from bento.commands.proxy_commands import render_proxy_vhost
 from bento.services.rendering import content_looks_generated
 from bento.services.state import empty_db, load_db, save_db, serialized_cron_state
-from bento.ui.table import print_table
+from bento.ui.decorations import format_bottom_border, format_menu, left_pad, print_heading, print_list
+from bento.ui.table import print_ascii_table as print_table
 from bento.utils.validation import APP_NAME_RE, DOMAIN_RE, validate, validate_public_dir
 
 def select_app_from_db() -> tuple[str, str]:
@@ -791,9 +792,8 @@ def _prompt_choice_numbered(
 ) -> str:
     """Line-oriented number prompt (pipes, tests, non-TTY)."""
     entries = _choice_entries(choices, default, zero)
-    info(label + ":")
-    for _value, num, text in entries:
-        info(f"  {num} - {text}")
+    for line in format_menu(label, [(num, text) for _value, num, text in entries]):
+        info(line)
     lo = 0 if zero is not None else 1
     while True:
         raw = input(
@@ -886,19 +886,22 @@ def _prompt_choice_interactive(
     hint = f"↑↓ move · Enter select · or type {lo}-{hi}"
     if instant_digits:
         hint += " (digit selects)"
-    body_lines = 1 + len(entries) + 1  # label + options + hint
+    body_lines = 1 + len(entries) + 2  # label + options + hint + bottom border
     first_draw = True
 
     def draw() -> None:
         nonlocal first_draw
-        lines = [f"{label}:"]
-        for i, (_value, num, text) in enumerate(entries):
-            cursor = ">" if i == selected else " "
-            lines.append(f"  {cursor} {num} - {text}")
+        lines = format_menu(
+            label,
+            [(num, text) for _value, num, text in entries],
+            selected_number=entries[selected][1],
+            bottom_border=False,
+        )
         status = hint
         if digit_buf:
             status = f"number: {digit_buf}_  · Enter confirm · Backspace edit"
-        lines.append(status)
+        lines.append(left_pad(status))
+        lines.append(format_bottom_border())
         if not first_draw:
             sys.stdout.write(f"\033[{body_lines}A")
         for line in lines:
@@ -1021,9 +1024,8 @@ def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 def print_plan(lines: list[str]) -> None:
-    info("\nPlan:")
-    for line in lines:
-        info(f"  - {line}")
+    print_heading("Plan", marker="-", leading_blank=True, writer=info)
+    print_list(lines, writer=info)
 
 def cmd_status(args: argparse.Namespace) -> None:
     db = load_db()

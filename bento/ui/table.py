@@ -126,6 +126,63 @@ def format_table(
     return lines
 
 
+def format_ascii_table(
+    rows: Sequence[Sequence[Any]],
+    headers: Sequence[str] | None = None,
+    *,
+    width: int | None = None,
+    show_header: bool = True,
+) -> list[str]:
+    """Format a table with portable ``+``, ``-`` and ``|`` borders."""
+    str_rows = [[_cell_str(c) for c in row] for row in rows]
+    header_cells = [_cell_str(h) for h in headers] if headers else None
+    ncols = max(
+        [len(header_cells) if header_cells else 0, *(len(row) for row in str_rows)],
+        default=0,
+    )
+    if ncols == 0:
+        return []
+
+    str_rows = [row + [""] * (ncols - len(row)) for row in str_rows]
+    if header_cells is not None:
+        header_cells += [""] * (ncols - len(header_cells))
+
+    term_width = width if width is not None else terminal_width()
+    # A bordered row has one outer character and three characters per column
+    # (left padding, right padding, and the following separator).
+    available = max(ncols, term_width - (3 * ncols + 1))
+    col_widths = _fit_widths(_natural_widths(header_cells, str_rows, ncols), available)
+    border = "+" + "+".join("-" * (cell_width + 2) for cell_width in col_widths) + "+"
+
+    def render_row(row: Sequence[str]) -> str:
+        cells = [truncate_cell(row[i], col_widths[i]).ljust(col_widths[i]) for i in range(ncols)]
+        return "| " + " | ".join(cells) + " |"
+
+    lines = [border]
+    if header_cells is not None and show_header:
+        lines.extend([render_row(header_cells), border])
+    lines.extend(render_row(row) for row in str_rows)
+    if lines[-1] != border:
+        lines.append(border)
+    return lines
+
+
+def print_ascii_table(
+    rows: Sequence[Sequence[Any]],
+    headers: Sequence[str] | None = None,
+    *,
+    width: int | None = None,
+    show_header: bool = True,
+    prefix: str = "",
+) -> None:
+    """Print a terminal-width-aware bordered ASCII table."""
+    effective_width = width
+    if effective_width is None:
+        effective_width = max(1, terminal_width() - len(prefix))
+    for line in format_ascii_table(rows, headers=headers, width=effective_width, show_header=show_header):
+        info(f"{prefix}{line}" if prefix else line)
+
+
 def print_table(
     rows: Sequence[Sequence[Any]],
     headers: Sequence[str] | None = None,
@@ -136,5 +193,8 @@ def print_table(
     prefix: str = "",
 ) -> None:
     """Print a terminal-width-aware table via :func:`info`."""
-    for line in format_table(rows, headers=headers, width=width, sep=sep, show_header=show_header):
+    effective_width = width
+    if effective_width is None and prefix:
+        effective_width = max(1, terminal_width() - len(prefix))
+    for line in format_table(rows, headers=headers, width=effective_width, sep=sep, show_header=show_header):
         info(f"{prefix}{line}" if prefix else line)

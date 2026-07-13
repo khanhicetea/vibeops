@@ -35,6 +35,7 @@ FOUNDATIONAL = {
     "cron_runtime": "services/cron_runtime.py",
     "runner": "services/runner.py",
     "redis": "services/redis.py",
+    "decorations": "ui/decorations.py",
     "table": "ui/table.py",
 }
 

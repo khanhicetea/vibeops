@@ -154,7 +154,7 @@ Layout under `bento/`:
 utils/       errors, paths, validation, env, template
 os/          fsutil, process
 services/    compose, state, rendering, mysql, php, nginx, access_log, cron_runtime, runner, redis
-ui/          table
+ui/          decorations, table
 commands/    *_commands, parser, cli
 ```
 
@@ -167,7 +167,7 @@ os (fsutil / process)
         ↓
 services (compose / state / rendering / mysql / php / nginx / cron_runtime / runner)
         ↓
-ui (table)  — presentation only; may import utils
+ui (decorations / table)  — presentation only; may import utils
         ↓
 commands (*_commands / parser / cli / wizard)
 ```
@@ -191,7 +191,8 @@ commands (*_commands / parser / cli / wizard)
 | `services/access_log.py` | App-scoped access log paths, rename+reopen rotation, GoAccess |
 | `services/cron_runtime.py` | Per-job/per-app crontab paths and rebuild |
 | `services/runner.py` | Supervisord program rendering, validation, and reconciliation |
-| `ui/table.py` | Terminal table formatting |
+| `ui/decorations.py` | Wizard headings, menus, screen borders, lists, indentation, and alerts |
+| `ui/table.py` | Terminal table formatting (plain and bordered ASCII) |
 | `commands/*_commands.py` | CLI command handlers (stable callback names) |
 | `commands/parser.py` | Explicit argparse wiring to command modules |
 | `commands/cli.py` | Entrypoint / exit codes |

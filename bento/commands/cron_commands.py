@@ -145,7 +145,7 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         info(f"Output: {output}; timeout: {timeout or 'none'}; lock: {lock or 'same-job (Supercronic)'}")
 
 def cmd_cron_list(args: argparse.Namespace) -> None:
-    from bento.ui.table import print_table
+    from bento.ui.table import print_ascii_table as print_table
 
     db = load_db()
     app_name = getattr(args, "app_name", None)

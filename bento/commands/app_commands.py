@@ -15,7 +15,7 @@ from bento.commands.permission_commands import initialize_app_permissions
 from bento.services.php import app_document_root, ensure_app_identity, php_service_for, php_version_config_dir
 from bento.services.rendering import write_template
 from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
-from bento.ui.table import print_table
+from bento.ui.table import print_ascii_table as print_table
 from bento.utils.validation import (
     APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, MYSQL_SERVICE_RE,
     PHP_VERSION_RE, validate, validate_php_entrypoint, validate_public_dir

@@ -441,7 +441,7 @@ def _apply_retention(backup_dir: Path, *, keep: int) -> None:
         info(f"Removed old backup bento/{rel(path)}")
 
 def cmd_db_list_backups(args: argparse.Namespace) -> None:
-    from bento.ui.table import print_table
+    from bento.ui.table import print_ascii_table as print_table
 
     service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     backup_dir = mysql_backup_dir(service)

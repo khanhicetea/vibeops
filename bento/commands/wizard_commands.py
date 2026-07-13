@@ -57,6 +57,7 @@ from bento.commands.runtime_commands import (
 )
 from bento.services.state import load_db
 from bento.commands.tls_commands import cmd_tls_acme
+from bento.ui.decorations import print_alert, print_heading
 from bento.utils.validation import APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, JOB_RE, MYSQL_SERVICE_RE
 
 
@@ -120,7 +121,7 @@ def wizard_tls_acme(app_name: str) -> None:
     domain = str(app["main_domain"])
     tls = app.get("tls")
     current_mode = tls.get("mode", "self-signed") if isinstance(tls, dict) else "self-signed"
-    info(f"Current TLS mode for {domain}: {current_mode}")
+    print_alert(f"Current TLS mode for {domain}: {current_mode}", writer=info)
     off = not prompt_confirm("Enable ACME? (no switches back to self-signed)", True)
     no_redirect_https = False if off else not prompt_confirm("Redirect HTTP to HTTPS after ACME?", True)
     no_reload = not prompt_confirm("Reload nginx if running?", True)
@@ -137,8 +138,12 @@ def wizard_check_permissions(app_name: str | None = None) -> None:
     try:
         cmd_permissions(argparse.Namespace(permission_action="check", app_name=app_name, all=False, json=False))
     except StackError as exc:
-        warn(str(exc))
-        warn(f"Permission check failed. Suggested fix: ./manage.py permissions fix {shlex.quote(app_name)} --recursive")
+        print_alert(str(exc), kind="error", writer=warn)
+        print_alert(
+            f"Permission check failed. Suggested fix: ./manage.py permissions fix {shlex.quote(app_name)} --recursive",
+            kind="warning",
+            writer=warn,
+        )
         if prompt_confirm("Fix permissions now?", False):
             wizard_fix_permissions(app_name)
 
@@ -177,7 +182,7 @@ def wizard_manage_domains(app_name: str | None = None) -> None:
         warn(f"App {app_name} has no domain. Re-run Create app to add its vhost first.")
         return
     while True:
-        info(f"\nDomains for {app_name}:")
+        print_heading(f"Domains for {app_name}", writer=info)
         cmd_app_domain_list(argparse.Namespace(app_name=app_name))
         db = load_db()
         app = db["apps"][app_name]
@@ -224,7 +229,7 @@ def wizard_manage_databases(app_name: str | None = None, app: dict[str, Any] | N
     if app_name is None or app is None:
         app_name, app = wizard_select_app()
     while True:
-        info(f"\nDatabases for {app_name}:")
+        print_heading(f"Databases for {app_name}", writer=info)
         cmd_app_db_list(argparse.Namespace(app_name=app_name))
         try:
             action = prompt_choice(
@@ -345,7 +350,7 @@ def wizard_db_list_backups(*, default_service: str | None = None) -> None:
         default_service or default_mysql_service(),
         hint="for example mysql57, mysql84, mysql97",
     )
-    info(f"\nBackups for {mysql_service}:")
+    print_heading(f"Backups for {mysql_service}", writer=info)
     cmd_db_list_backups(argparse.Namespace(mysql_service=mysql_service))
 
 
@@ -408,7 +413,7 @@ def wizard_db_restore(*, default_service: str | None = None) -> None:
 
 def wizard_manage_crons(app_name: str, app: dict[str, Any]) -> None:
     while True:
-        info(f"\nCron jobs for {app_name}:")
+        print_heading(f"Cron jobs for {app_name}", writer=info)
         cmd_cron_list(argparse.Namespace(app_name=app_name))
         db = load_db()
         crons = [
@@ -464,7 +469,7 @@ def _app_workers(app_name: str) -> list[tuple[str, dict[str, Any]]]:
 
 def wizard_manage_workers(app_name: str, app: dict[str, Any]) -> None:
     while True:
-        info(f"\nWorkers for {app_name}:")
+        print_heading(f"Workers for {app_name}", writer=info)
         cmd_worker_list(argparse.Namespace(app_name=app_name))
         workers = _app_workers(app_name)
         actions = ["Create worker"]
@@ -578,7 +583,7 @@ def wizard_worker(app_name: str, app: dict[str, Any]) -> None:
 def wizard_customize_app(app_name: str) -> None:
     labels = {"Vhost": "vhost", "PHP-FPM pool": "pool"}
     while True:
-        info(f"\nService configuration for {app_name}:")
+        print_heading(f"Service configuration for {app_name}", writer=info)
         cmd_app_config_status(argparse.Namespace(app_name=app_name))
         try:
             action = prompt_choice("Config action", ["Customize", "Reset to generated"])
@@ -621,7 +626,7 @@ def wizard_manage_app() -> None:
     actions = ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Audit File Permissions", "Customize"]
     while True:
         app = load_db().get("apps", {}).get(app_name, app)
-        info(f"\nManage app: {app_name} (main: {app.get('main_domain', '-')})")
+        print_heading(f"Manage app: {app_name} (main: {app.get('main_domain', '-')})", writer=info)
         try:
             action = prompt_choice("App action", actions)
             if action == "Back":
@@ -646,7 +651,7 @@ def wizard_manage_app() -> None:
 
 def wizard_manage_php_versions() -> None:
     while True:
-        info("\nManaged PHP versions:")
+        print_heading("Managed PHP versions", writer=info)
         cmd_php_versions(argparse.Namespace())
         action = prompt_choice("PHP version action", ["Add version", "Remove version"])
         if action == "Back":
@@ -669,7 +674,7 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         die("wizard requires an interactive terminal")
     actions = ["Create app", "Manage app", "Manage PHP versions", "Show services status"]
     while True:
-        info("\nbento")
+        print_heading("bento", writer=info)
         action = prompt_choice("What do you want to do?", actions, zero="Quit")
         if action == "Quit":
             return

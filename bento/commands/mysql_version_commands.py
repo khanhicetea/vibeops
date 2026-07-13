@@ -6,7 +6,7 @@ from typing import Any
 
 from bento.services.mysql_versions import managed_mysql_versions, mysql_service_for, render_mysql_versions_compose
 from bento.services.state import load_db, save_db, serialized_cron_state
-from bento.ui.table import print_table
+from bento.ui.table import print_ascii_table as print_table
 from bento.utils.env import default_mysql_service
 from bento.utils.errors import info
 from bento.utils.validation import MYSQL_VERSION_RE, validate
