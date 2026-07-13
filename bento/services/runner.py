@@ -229,14 +229,14 @@ def validate_runner(db: dict[str, Any], version: str) -> None:
     apps = runner_app_names(db, version)
     if apps:
         run(compose_command("exec", "-T", service, "php-identity-sync", *apps))
-    run(compose_command("exec", "-T", service, "supercronic", "-test", "/usr/local/etc/php/cron.d/system.cron"))
+    run(compose_command("exec", "-T", service, "supercronic", "-no-reap", "-test", "/usr/local/etc/php/cron.d/system.cron"))
     cron_apps = sorted({
         str(cron.get("app"))
         for cron in db.get("crons", {}).values()
         if isinstance(cron, dict) and str(cron.get("php_version") or default_php_version()) == version
     })
     for app_name in cron_apps:
-        run(compose_command("exec", "-T", service, "supercronic", "-test", f"/usr/local/etc/php/cron.d/apps/{app_name}.cron"))
+        run(compose_command("exec", "-T", service, "supercronic", "-no-reap", "-test", f"/usr/local/etc/php/cron.d/apps/{app_name}.cron"))
     if service == runner:
         # Supervisor has no parse-only mode. `reread` parses the complete
         # promoted configuration without starting/stopping child processes;

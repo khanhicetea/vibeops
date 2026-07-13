@@ -457,7 +457,7 @@ class ApplyValidationOrderTests(unittest.TestCase):
         self.assertTrue(any("nginx -t" in j for j in joined))
         self.assertTrue(any("php-fpm -tt" in j for j in joined))
         self.assertTrue(any("supervisorctl" in j and j.endswith(" reread") for j in joined))
-        self.assertTrue(any("supercronic -test" in j for j in joined))
+        self.assertTrue(any("supercronic" in j and "-test" in j and "-no-reap" in j for j in joined))
         nginx_i = next(i for i, j in enumerate(joined) if "nginx -t" in j)
         fpm_i = next(i for i, j in enumerate(joined) if "php-fpm -tt" in j)
         runner_i = next(i for i, j in enumerate(joined) if "supervisorctl" in j and j.endswith(" reread"))

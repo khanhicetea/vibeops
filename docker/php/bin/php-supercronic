@@ -12,9 +12,11 @@ if [ ! -s "$COMBINED" ]; then
   exit 1
 fi
 
-/usr/local/bin/supercronic -test "$COMBINED"
+# Supervisord is PID 1 and reaps zombies; -no-reap avoids the noisy
+# "process reaping disabled, not pid 1" warning under the runner.
+/usr/local/bin/supercronic -no-reap -test "$COMBINED"
 echo "Starting supercronic with crontab $COMBINED${METRICS_ADDRESS:+; metrics=$METRICS_ADDRESS}"
-set -- /usr/local/bin/supercronic -json -split-logs
+set -- /usr/local/bin/supercronic -no-reap -json -split-logs
 if [ -n "$METRICS_ADDRESS" ]; then
   set -- "$@" -prometheus-listen-address="$METRICS_ADDRESS"
 fi

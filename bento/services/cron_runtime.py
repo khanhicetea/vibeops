@@ -132,7 +132,7 @@ def cron_reload(service: str, usernames: Iterable[str] = ()) -> None:
     for app_name in names:
         validate(app_name, APP_NAME_RE, "app_name")
         container_path = f"/usr/local/etc/php/cron.d/apps/{app_name}.cron"
-        run(compose_command("exec", "-T", service, "supercronic", "-test", container_path))
+        run(compose_command("exec", "-T", service, "supercronic", "-no-reap", "-test", container_path))
         # Flat program name (no Supervisord group): see runner.cron_program_name.
         target = f"cron-{app_name}"
         result = run(
