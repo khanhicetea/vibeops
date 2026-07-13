@@ -312,11 +312,13 @@ class WizardMenuRefactorTests(unittest.TestCase):
         service_prompt.assert_not_called()
         self.assertEqual(list_backups.call_args.args[0].mysql_service, "mysql84")
 
+        from bento.commands import wizard_db_restore_commands
+
         with (
             mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
-            mock.patch.object(wizard_commands, "_list_final_backups", return_value=[]),
-            mock.patch.object(wizard_commands, "prompt_text", return_value=""),
-            mock.patch.object(wizard_commands, "warn"),
+            mock.patch.object(wizard_db_restore_commands, "_list_final_backups", return_value=[]),
+            mock.patch.object(wizard_db_restore_commands, "prompt_text", return_value=""),
+            mock.patch.object(wizard_db_restore_commands, "warn"),
         ):
             wizard_commands.wizard_db_restore(fixed_service="mysql84")
         service_prompt.assert_not_called()

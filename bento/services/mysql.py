@@ -249,6 +249,27 @@ def require_mysql_ready_for_sql(service: str) -> str:
     return service
 
 
+def record_restored_database(old_database: str, target_database: str, service: str) -> None:
+    """Record a newly restored database when its source belongs to a managed app."""
+    if target_database == old_database:
+        return
+    from bento.services.state import load_db, save_db, upsert_timestamp
+
+    db = load_db()
+    for app in db.get("apps", {}).values():
+        databases = app.get("databases", [])
+        services = app.get("database_services", {})
+        source_service = services.get(old_database) or app.get("mysql_service")
+        if old_database not in databases or source_service != service:
+            continue
+        if target_database not in databases:
+            databases.append(target_database)
+        app.setdefault("database_services", {})[target_database] = service
+        upsert_timestamp(app)
+        save_db(db)
+        return
+
+
 def ensure_mysql_database(app_name: str, suffix: str, mysql_service: str) -> str:
     """Create DB app_name_suffix and grant <app_name>_* privileges. Returns full name only after SQL succeeds."""
     mysql_service = require_mysql_ready_for_sql(mysql_service)

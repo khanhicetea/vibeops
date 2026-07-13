@@ -205,10 +205,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     db_backup.set_defaults(func=db_commands.cmd_db_backup)
 
-    db_restore = db_sub.add_parser("restore", help="Restore a .sql or .sql.gz dump into a MySQL service")
+    db_restore = db_sub.add_parser("restore", help="Restore a database-only .sql or .sql.gz dump")
     db_restore.add_argument("backup_file", help="Path or filename under runtime/backups/<service>/ (.sql or .sql.gz)")
+    db_restore.add_argument("--database", required=True, help="Original database name represented by the dump")
+    db_restore.add_argument(
+        "--new-suffix",
+        help="Restore into <original_database>_<suffix>; omit to replace the original database",
+    )
+    db_restore.add_argument(
+        "--confirm-database",
+        help="For non-interactive original restore, must exactly equal --database",
+    )
     db_restore.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
-    db_restore.add_argument("--yes", action="store_true", help="Skip interactive confirmation")
     db_restore.set_defaults(func=db_commands.cmd_db_restore)
 
     db_list_backups = db_sub.add_parser("list-backups", help="List finalized .sql/.sql.gz dumps under runtime/backups/<mysql_service>/")

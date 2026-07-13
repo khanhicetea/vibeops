@@ -287,8 +287,10 @@ class BackupBatchTests(unittest.TestCase):
     def test_multiple_database_batch_and_retention_after_success(self) -> None:
         written_payloads: dict[str, bytes] = {}
         compress_flags: list[bool] = []
+        dump_args: list[list[str]] = []
 
         def fake_dump(mysqldump_args, *, service, output_path, compress=False):
+            dump_args.append(mysqldump_args)
             compress_flags.append(compress)
             content = f"-- dump {mysqldump_args[-1]}\n".encode()
             output_path.write_bytes(content)
@@ -322,6 +324,12 @@ class BackupBatchTests(unittest.TestCase):
         self.assertEqual(len(written_payloads), 2)
         self.assertTrue(all(name.endswith(".sql.gz") for name in written_payloads))
         self.assertEqual(compress_flags, [True, True])
+        self.assertEqual(
+            dump_args,
+            [["--no-create-db", "shop_app"], ["--no-create-db", "shop_reporting"]],
+        )
+        self.assertTrue(all("--databases" not in args for args in dump_args))
+        self.assertTrue(all("--skip-add-drop-table" not in args for args in dump_args))
         self.assertEqual(len(retention_calls), 1)
         keep, database_names, protected = retention_calls[0]
         self.assertEqual(keep, 2)
@@ -399,7 +407,9 @@ class StreamingRestoreTests(unittest.TestCase):
             patch.object(Path, "read_text", side_effect=AssertionError("read_text must not be used")),
             patch.object(db_commands, "mysql_root_exec_sql", side_effect=AssertionError("exec_sql must not be used")),
         ):
-            db_commands.mysql_root_stream_sql_file(self.dump, service="mysql84")
+            db_commands.mysql_root_stream_sql_file(
+                self.dump, service="mysql84", database="shop_app"
+            )
 
         self.assertEqual(len(streamed), 1)
         self.assertEqual(streamed[0], self.payload)
@@ -420,7 +430,9 @@ class StreamingRestoreTests(unittest.TestCase):
             patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]),
             patch.object(db_commands, "run_stdin_stream", side_effect=fake_run_stdin_stream),
         ):
-            db_commands.mysql_root_stream_sql_file(gz_path, service="mysql84")
+            db_commands.mysql_root_stream_sql_file(
+                gz_path, service="mysql84", database="shop_app"
+            )
 
         self.assertEqual(len(streamed), 1)
         self.assertEqual(streamed[0], self.payload)
@@ -437,7 +449,9 @@ class StreamingRestoreTests(unittest.TestCase):
             patch.object(db_commands, "run_stdin_stream", side_effect=fake_run_stdin_stream),
         ):
             with self.assertRaises(StackError) as ctx:
-                db_commands.mysql_root_stream_sql_file(self.dump, service="mysql84")
+                db_commands.mysql_root_stream_sql_file(
+                    self.dump, service="mysql84", database="shop_app"
+                )
         self.assertIn("mysql", str(ctx.exception).lower())
 
     def test_restore_rejects_empty_file(self) -> None:
@@ -448,24 +462,30 @@ class StreamingRestoreTests(unittest.TestCase):
             patch.object(db_commands, "mysql_root_option_file", return_value=self.option),
         ):
             with self.assertRaises(StackError) as ctx:
-                db_commands.mysql_root_stream_sql_file(empty, service="mysql84")
+                db_commands.mysql_root_stream_sql_file(
+                    empty, service="mysql84", database="shop_app"
+                )
         self.assertIn("empty", str(ctx.exception).lower())
 
     def test_cmd_db_restore_streams_and_skips_read_text(self) -> None:
-        stream_calls: list[Path] = []
+        stream_calls: list[tuple[Path, str]] = []
 
-        def fake_stream(path, *, service):
-            stream_calls.append(path)
+        def fake_stream(path, *, service, database):
+            stream_calls.append((path, database))
 
         args = argparse.Namespace(
             mysql_service="mysql84",
             backup_file=str(self.dump),
-            yes=True,
+            database="shop_app",
+            new_suffix="restored",
+            confirm_database=None,
         )
         with (
             patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
             patch.object(db_commands, "_resolve_backup_path", return_value=self.dump),
             patch.object(db_commands, "mysql_root_stream_sql_file", side_effect=fake_stream),
+            patch.object(db_commands, "mysql_root_exec_sql"),
+            patch.object(db_commands, "record_restored_database"),
             patch.object(db_commands, "warn"),
             patch.object(db_commands, "info"),
             patch.object(db_commands, "rel", side_effect=lambda p: str(p)),
@@ -473,7 +493,48 @@ class StreamingRestoreTests(unittest.TestCase):
         ):
             db_commands.cmd_db_restore(args)
 
-        self.assertEqual(stream_calls, [self.dump])
+        self.assertEqual(stream_calls, [(self.dump, "shop_app_restored")])
+
+    def test_original_restore_requires_exact_database_name(self) -> None:
+        args = argparse.Namespace(
+            mysql_service="mysql84",
+            backup_file=str(self.dump),
+            database="shop_app",
+            new_suffix=None,
+            confirm_database="shop_ap",
+        )
+        with (
+            patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
+            patch.object(db_commands, "_resolve_backup_path", return_value=self.dump),
+            patch.object(db_commands, "mysql_root_exec_sql") as exec_sql,
+        ):
+            with self.assertRaises(StackError):
+                db_commands.cmd_db_restore(args)
+        exec_sql.assert_not_called()
+
+    def test_original_restore_drops_recreates_then_streams_into_database(self) -> None:
+        args = argparse.Namespace(
+            mysql_service="mysql84",
+            backup_file=str(self.dump),
+            database="shop_app",
+            new_suffix=None,
+            confirm_database="shop_app",
+        )
+        with (
+            patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
+            patch.object(db_commands, "_resolve_backup_path", return_value=self.dump),
+            patch.object(db_commands, "mysql_root_exec_sql") as exec_sql,
+            patch.object(db_commands, "mysql_root_stream_sql_file") as stream,
+            patch.object(db_commands, "warn"),
+            patch.object(db_commands, "info"),
+            patch.object(db_commands, "rel", side_effect=lambda p: str(p)),
+        ):
+            db_commands.cmd_db_restore(args)
+
+        sql = exec_sql.call_args.args[0]
+        self.assertIn("DROP DATABASE `shop_app`", sql)
+        self.assertIn("CREATE DATABASE `shop_app`", sql)
+        stream.assert_called_once_with(self.dump, service="mysql84", database="shop_app")
 
 
 class ComposeArgvAuditTests(unittest.TestCase):

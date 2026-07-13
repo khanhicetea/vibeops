@@ -28,16 +28,10 @@ from bento.commands.worker_commands import (
     cmd_worker_list,
     cmd_worker_remove,
 )
-from bento.commands.db_commands import (
-    _list_final_backups,
-    cmd_db_backup,
-    cmd_db_list_backups,
-    cmd_db_restore,
-)
+from bento.commands.db_commands import cmd_db_backup, cmd_db_list_backups
+from bento.commands.wizard_db_restore_commands import wizard_db_restore
 from bento.utils.env import FPM_PROFILE_NAMES, default_fpm_profile, default_mysql_service, default_php_version
 from bento.utils.errors import StackError, die, info, warn
-from bento.services.mysql import mysql_backup_dir
-from bento.utils.paths import rel
 from bento.commands.permission_commands import cmd_permissions
 from bento.commands.proxy_commands import cmd_proxy_create
 from bento.commands.php_version_commands import cmd_php_add, cmd_php_remove, cmd_php_versions
@@ -250,7 +244,7 @@ def wizard_manage_databases(app_name: str | None = None, app: dict[str, Any] | N
                 continue
             if action == "Restore a backup":
                 app_service = str(app.get("mysql_service") or default_mysql_service())
-                wizard_db_restore(fixed_service=app_service)
+                wizard_db_restore(fixed_service=app_service, app_name=app_name)
                 continue
             if action == "List backups":
                 app_service = str(app.get("mysql_service") or default_mysql_service())
@@ -351,58 +345,6 @@ def wizard_db_list_backups(*, default_service: str | None = None,
     mysql_service = wizard_mysql_service(default_service, fixed_service)
     print_heading(f"Backups for {mysql_service}", writer=info)
     cmd_db_list_backups(argparse.Namespace(mysql_service=mysql_service))
-
-
-def wizard_db_restore(*, default_service: str | None = None,
-                      fixed_service: str | None = None) -> None:
-    """Interactive restore of a finalized .sql or .sql.gz dump."""
-    mysql_service = wizard_mysql_service(default_service, fixed_service)
-    backup_dir = mysql_backup_dir(mysql_service)
-    files = _list_final_backups(backup_dir)
-    if not files:
-        warn(f"No finalized backups in bento/{rel(backup_dir)}")
-        path_text = prompt_text("Backup file path (or blank to cancel)", "", required=False)
-        if not path_text.strip():
-            return
-        backup_file = path_text.strip()
-        label = backup_file
-    else:
-        labels = []
-        for path in files:
-            st = path.stat()
-            size_kb = max(1, st.st_size // 1024) if st.st_size else 0
-            labels.append(f"{path.name} ({size_kb}K)")
-        labels.append("Enter path manually…")
-        choice = prompt_pick("Backup file", labels)
-        if choice == "Enter path manually…":
-            backup_file = prompt_text("Backup file path or filename under runtime/backups/<service>/")
-            label = backup_file
-        else:
-            path = files[labels.index(choice)]
-            backup_file = str(path)
-            label = path.name
-
-    print_plan(
-        [
-            f"restore {label} into {mysql_service}",
-            "streams dump into mysql (gzip auto-detected for .sql.gz)",
-            "objects in the dump may be overwritten — not atomic at MySQL object level",
-        ]
-    )
-    info("\nEquivalent command:")
-    info(
-        f"  ./manage.py db restore {shlex.quote(backup_file)} "
-        f"--mysql-service {shlex.quote(mysql_service)} --yes"
-    )
-    if not prompt_confirm("Restore now? This may overwrite objects.", False):
-        return
-    cmd_db_restore(
-        argparse.Namespace(
-            mysql_service=mysql_service,
-            backup_file=backup_file,
-            yes=True,
-        )
-    )
 
 
 def wizard_manage_crons(app_name: str, app: dict[str, Any]) -> None:

@@ -475,8 +475,12 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 ./manage.py db backup --gzip
 ./manage.py db backup --app shop --gzip --keep 14
 ./manage.py db list-backups
-./manage.py db restore runtime/backups/mysql84/<file>.sql --yes
-./manage.py db restore runtime/backups/mysql84/<file>.sql.gz --yes
+# Restore to a new database: shop_app_restored
+./manage.py db restore runtime/backups/mysql84/<file>.sql \
+  --database shop_app --new-suffix restored
+# Replace the original database (exact-name confirmation is mandatory)
+./manage.py db restore runtime/backups/mysql84/<file>.sql.gz \
+  --database shop_app --confirm-database shop_app
 ```
 
 `db shell` (root) uses the mounted root option file. `db shell --user <app>` reads the app credential file under `runtime/home/<app>/.credentials/` and transfers credentials into the MySQL container through a short-lived mode-600 option file created over stdin (random path under `/run`, removed after the session). App passwords are **not** placed in host `docker compose` command arguments. This protects process listings and host telemetry; the Docker daemon and container root can still observe in-container state for the duration of the shell.
@@ -490,7 +494,9 @@ Use `--mysql-service mysql57|mysql84|mysql97` for instance-level administration 
 - **No overwrite of existing backups:** final names include a microsecond stamp (and a short random suffix if needed). Existing finalized dumps are never truncated or replaced.
 - **Batch behavior:** one stamp per backup batch; if database *N* of *M* fails, earlier finalized dumps from that batch are kept, retention is **not** applied, and the error names the safely written files.
 - **Listing / retention:** `db list-backups` considers only regular finalized `*.sql` / `*.sql.gz` files (partials and symlinks are ignored). After the whole requested batch succeeds, `--keep N` keeps the N newest dumps **per database backed up by that command**; it never deletes the newly written batch or backups for databases outside the command's scope. `N` must be at least 1; omit `--keep` to retain all finalized dumps. `--keep 0` is rejected.
-- **Streaming restore:** `db restore` streams the dump file on stdin to `mysql` (binary-safe; not loaded fully into Python memory). Restore may overwrite objects present in the dump; it is **not** atomic at the MySQL object level.
+- **Database-neutral dumps:** each dump uses `--no-create-db` without `--databases`, so it contains no database-level create/select statements. The normal `DROP TABLE IF EXISTS` statements are retained.
+- **Two restore destinations:** restore either creates `<original_database>_<new_suffix>`, or replaces the original database by dropping and recreating it first. Original replacement requires typing/passing the full exact database name; a generic yes flag cannot bypass this check.
+- **Streaming restore:** `db restore` selects the destination database explicitly and streams the dump file on stdin to `mysql` (binary-safe; not loaded fully into Python memory). Restore is **not** atomic at the MySQL object level.
 - **Off-box copies still required:** host-local finalized dumps are not a full disaster-recovery plan—copy `runtime/backups/<service>/` off the machine regularly.
 
 ### MySQL data and recovery
@@ -510,7 +516,7 @@ Use `--mysql-service mysql57|mysql84|mysql97` for instance-level administration 
 
 1. Schedule regular `./manage.py db backup` (host cron or manual before risky deploys); use `--keep N` (`N >= 1`) only when you intentionally keep N finalized dumps per backed-up database after a successful batch
 2. Store/copy `runtime/backups/mysql84` (and other majors you run) off-box if the host disk is not enough
-3. Restore with `./manage.py db restore <file.sql> --yes` (streams the dump; may overwrite objects)
+3. Restore to a new database with `./manage.py db restore <file.sql> --database <old_db> --new-suffix <suffix>`, or replace the original with exact-name confirmation
 
 #### Crash vs human error
 

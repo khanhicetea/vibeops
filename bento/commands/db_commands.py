@@ -21,12 +21,12 @@ from bento.os.fsutil import mkdir
 from bento.services.mysql import (
     SYSTEM_MYSQL_DATABASES, apply_app_mysql_metadata, create_mysql_user, ensure_mysql_database,
     generate_password, mysql_backup_dir, mysql_client_option_file_content, mysql_root_exec_sql,
-    mysql_root_option_file, resolve_app_mysql_service,
+    mysql_root_option_file, record_restored_database, resolve_app_mysql_service,
 )
 from bento.utils.paths import HOME_DIR, ROOT, rel
 from bento.os.process import run, run_stdin_stream, run_stdout_to_file, service_running
 from bento.services.state import load_db, save_db, upsert_timestamp
-from bento.utils.validation import APP_NAME_RE, DB_NAME_RE, MYSQL_SERVICE_RE, validate
+from bento.utils.validation import APP_NAME_RE, DATABASE_RE, DB_NAME_RE, MYSQL_SERVICE_RE, validate
 
 def _require_mysql_service(service: str) -> str:
     service = validate(service, MYSQL_SERVICE_RE, "MySQL service")
@@ -37,9 +37,11 @@ def _require_mysql_service(service: str) -> str:
         die(f"Missing protected MySQL option file bento/{rel(option_file)}; run ./manage.py render")
     return service
 
+
 def _stamp() -> str:
     """Human-sortable backup batch stamp with microsecond precision."""
     return _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+
 
 def _list_user_databases(service: str, *, app_name: str | None = None) -> list[str]:
     cp = mysql_root_exec_sql("SHOW DATABASES;", service=service)
@@ -53,8 +55,10 @@ def _list_user_databases(service: str, *, app_name: str | None = None) -> list[s
         names.append(name)
     return names
 
+
 def _backup_extension(*, compress: bool) -> str:
     return ".sql.gz" if compress else ".sql"
+
 
 def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str, *, compress: bool = False) -> Path:
     """Return a final backup path that does not yet exist (never truncate)."""
@@ -113,7 +117,6 @@ def mysql_root_dump(
     if output_path.exists():
         die(f"Refusing to overwrite existing backup bento/{rel(output_path)}")
     mkdir(output_path.parent, 0o700)
-
     token = secrets.token_hex(8)
     partial = output_path.parent / f"{output_path.name}.partial-{token}"
     quoted = " ".join(shlex.quote(a) for a in mysqldump_args)
@@ -165,18 +168,21 @@ def mysql_root_dump(
         if not promoted and partial.exists():
             partial.unlink(missing_ok=True)
 
-def _mysql_import_cmd(service: str) -> list[str]:
+def _mysql_import_cmd(service: str, database: str) -> list[str]:
+    database = validate(database, DATABASE_RE, "database name")
     return compose_command(
         "exec",
         "-T",
         service,
         "sh",
         "-lc",
-        "mysql --defaults-extra-file=/run/secrets/bento-root.cnf --batch --raw",
+        "mysql --defaults-extra-file=/run/secrets/bento-root.cnf --batch --raw "
+        f"{shlex.quote(database)}",
     )
 
-def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
-    """Stream a SQL dump (plain or ``.sql.gz``) into mysql without loading it fully into memory."""
+
+def mysql_root_stream_sql_file(path: Path, *, service: str, database: str) -> None:
+    """Stream a SQL dump into one explicitly selected database without buffering it in memory."""
     service = _require_mysql_service(service)
     if path.is_symlink() or not path.is_file():
         die(f"Backup path is not a regular file: {path}")
@@ -184,8 +190,7 @@ def mysql_root_stream_sql_file(path: Path, *, service: str) -> None:
     if size == 0:
         die(f"Backup file is empty: bento/{rel(path)}")
 
-    cmd = _mysql_import_cmd(service)
-
+    cmd = _mysql_import_cmd(service, database)
     if _is_gzip_backup(path):
         # GzipFile has no usable fileno for Popen; feed decompressed bytes through a pipe.
         read_fd, write_fd = os.pipe()
@@ -374,7 +379,7 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
     targets: list[str] = []
 
     if args.database:
-        targets = [validate(args.database, re.compile(r"^[A-Za-z0-9_-]+$"), "database name")]
+        targets = [validate(args.database, DATABASE_RE, "database name")]
     elif args.app:
         app_name = validate(args.app, APP_NAME_RE, "app_name")
         targets = _list_user_databases(service, app_name=app_name)
@@ -390,7 +395,7 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
         for db_name in targets:
             out = _reserve_backup_path(backup_dir, stamp, db_name, compress=compress)
             mysql_root_dump(
-                ["--databases", db_name],
+                ["--no-create-db", db_name],
                 service=service,
                 output_path=out,
                 compress=compress,
@@ -504,22 +509,42 @@ def _resolve_backup_path(raw: str, service: str) -> Path:
 def cmd_db_restore(args: argparse.Namespace) -> None:
     service = _require_mysql_service(args.mysql_service)
     path = _resolve_backup_path(args.backup_file, service)
-    if not args.yes:
-        if sys.stdin.isatty():
-            answer = input(
-                f"Restore {rel(path)} into {service}? This may overwrite objects. Type 'yes' to continue: "
-            ).strip().lower()
-            if answer != "yes":
-                die("Restore aborted")
-        else:
-            die("Restore requires --yes when stdin is not a TTY")
-
+    old_database = validate(args.database, DATABASE_RE, "database name")
+    new_suffix = getattr(args, "new_suffix", None)
     if path.stat().st_size == 0:
         die(f"Backup file is empty: bento/{rel(path)}")
+    if new_suffix:
+        suffix = validate(new_suffix, DB_NAME_RE, "database suffix")
+        target_database = validate(f"{old_database}_{suffix}", DATABASE_RE, "database name")
+        mysql_root_exec_sql(
+            f"CREATE DATABASE `{target_database}`;\n",
+            service=service,
+        )
+    else:
+        target_database = old_database
+        confirmed = getattr(args, "confirm_database", None)
+        if confirmed is None:
+            if not sys.stdin.isatty():
+                die(
+                    "Restoring to the original database requires --confirm-database "
+                    f"{old_database} when stdin is not a TTY"
+                )
+            confirmed = input(
+                f"This will DROP and recreate {old_database}. "
+                f"Type the full database name '{old_database}' to continue: "
+            ).strip()
+        if confirmed != old_database:
+            die("Restore aborted: database name confirmation did not match")
+        mysql_root_exec_sql(
+            f"DROP DATABASE `{old_database}`;\nCREATE DATABASE `{old_database}`;\n",
+            service=service,
+        )
     kind = "gzip-compressed " if _is_gzip_backup(path) else ""
     warn(
-        f"Restoring {kind}bento/{rel(path)} into {service} "
-        f"(streaming input; objects in the dump may be overwritten — not atomic at the MySQL object level)"
+        f"Restoring {kind}bento/{rel(path)} into {service}/{target_database} "
+        "(the destination database was freshly created; restore is not atomic)"
     )
-    mysql_root_stream_sql_file(path, service=service)
-    info(f"Restored bento/{rel(path)} into {service}")
+    mysql_root_stream_sql_file(path, service=service, database=target_database)
+    if new_suffix:
+        record_restored_database(old_database, target_database, service)
+    info(f"Restored bento/{rel(path)} into {service}/{target_database}")
