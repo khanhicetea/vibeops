@@ -197,6 +197,42 @@ def apply_app_mysql_metadata(app: dict[str, Any], app_name: str, mysql_service: 
         app["mysql_credentials"] = credential_path
 
 
+def resolve_app_mysql_service(
+    db: dict[str, Any],
+    app_name: str,
+    requested: str | None = None,
+    *,
+    allow_new: bool = False,
+) -> str:
+    """Resolve an app's single MySQL service without mutating state.
+
+    Existing apps may not create users or databases on another MySQL instance;
+    changing instances requires an explicit migration workflow.
+    """
+    apps = db.get("apps") if isinstance(db, dict) else None
+    app = apps.get(app_name) if isinstance(apps, dict) else None
+    if isinstance(app, dict):
+        recorded_raw = app.get("mysql_service")
+        if recorded_raw is None or str(recorded_raw).strip() == "":
+            defaults = db.get("defaults") if isinstance(db.get("defaults"), dict) else {}
+            recorded_raw = defaults.get("mysql_service") or default_mysql_service()
+        recorded = validate(str(recorded_raw), MYSQL_SERVICE_RE, "MySQL service")
+        if requested is None:
+            return recorded
+        selected = validate(str(requested), MYSQL_SERVICE_RE, "MySQL service")
+        if selected != recorded:
+            die(
+                f"App {app_name} uses {recorded}, not {selected}. "
+                "Creating app users or databases across multiple MySQL services is not supported; "
+                "migrate the app explicitly before changing MySQL service."
+            )
+        return recorded
+
+    if not allow_new:
+        die(f"Unknown app: {app_name}")
+    return validate(requested or default_mysql_service(), MYSQL_SERVICE_RE, "MySQL service")
+
+
 def require_mysql_ready_for_sql(service: str) -> str:
     """Fail unless the MySQL service can accept root SQL administration.
 

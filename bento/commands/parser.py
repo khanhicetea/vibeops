@@ -42,7 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="PHP version; omit to keep an existing app's version or use the stack default for a new app",
     )
-    app_create.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service for optional database creation, e.g. mysql57/mysql84/mysql97")
+    app_create.add_argument(
+        "--mysql-service",
+        default=None,
+        help="MySQL service; omit to keep an existing app's service or use the stack default for a new app",
+    )
     app_create.add_argument("--alias", action="append", help="Additional server_name; can be passed multiple times or comma-separated")
     app_create.add_argument("--aliases", help="Comma-separated additional server names")
     app_create.add_argument("--public-dir", default="", help="Document root subdirectory inside /home/<app>/www, e.g. 'public' for Laravel; default is app root")
@@ -160,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     db_create = db_sub.add_parser("create", help="Create app_suffix database and refresh prefix grants")
     db_create.add_argument("app_name")
     db_create.add_argument("db_suffix")
-    db_create.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_create.add_argument("--mysql-service", default=None, help="MySQL service (must match the app's configured service)")
     db_create.set_defaults(func=db_commands.cmd_db_create)
 
     db_user_reset = db_sub.add_parser("user-reset", help="Rotate an app MySQL password and rewrite credentials file")
@@ -169,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--password",
         help="New password (discouraged: visible in shell history/process list; omit to auto-generate)",
     )
-    db_user_reset.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
+    db_user_reset.add_argument("--mysql-service", default=None, help="MySQL service (must match the app's configured service)")
     db_user_reset.set_defaults(func=db_commands.cmd_db_user_reset)
 
     db_shell = db_sub.add_parser("shell", help="Open an interactive mysql client (root by default)")

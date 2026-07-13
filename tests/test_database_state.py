@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import bento.services.mysql as mysql
 from bento.utils.errors import StackError
-from bento.commands import app_commands
+from bento.commands import app_commands, db_commands
 
 
 def _empty_db() -> dict:
@@ -155,6 +155,58 @@ class EnsureMysqlDatabaseTests(unittest.TestCase):
             self.assertEqual(name, "shop_app")
             sql.assert_called_once()
 
+
+
+class AppMysqlServiceRestrictionTests(unittest.TestCase):
+    def test_resolver_uses_recorded_service_when_omitted(self) -> None:
+        db = _empty_db()
+        db["apps"]["shop"] = _app_record()
+        self.assertEqual(mysql.resolve_app_mysql_service(db, "shop"), "mysql84")
+
+    def test_app_db_create_rejects_another_service_before_sql(self) -> None:
+        db = _empty_db()
+        db["apps"]["shop"] = _app_record()
+        with (
+            patch.object(app_commands, "load_db", return_value=db),
+            patch.object(app_commands, "ensure_mysql_database") as ensure_db,
+            patch.object(app_commands, "save_db") as save_db,
+        ):
+            with self.assertRaisesRegex(StackError, r"uses mysql84, not mysql97"):
+                app_commands.cmd_app_db_create(
+                    argparse.Namespace(app_name="shop", db_suffix="reports", mysql_service="mysql97")
+                )
+            ensure_db.assert_not_called()
+            save_db.assert_not_called()
+
+    def test_global_db_create_rejects_another_service_before_sql(self) -> None:
+        db = _empty_db()
+        db["apps"]["shop"] = _app_record()
+        with (
+            patch.object(db_commands, "load_db", return_value=db),
+            patch.object(db_commands, "ensure_mysql_database") as ensure_db,
+            patch.object(db_commands, "save_db") as save_db,
+        ):
+            with self.assertRaisesRegex(StackError, r"migrate the app explicitly"):
+                db_commands.cmd_db_create(
+                    argparse.Namespace(app_name="shop", db_suffix="reports", mysql_service="mysql97")
+                )
+            ensure_db.assert_not_called()
+            save_db.assert_not_called()
+
+    def test_user_reset_rejects_another_service_before_creating_user(self) -> None:
+        db = _empty_db()
+        db["apps"]["shop"] = _app_record()
+        with (
+            patch.object(db_commands, "load_db", return_value=db),
+            patch.object(db_commands, "create_mysql_user") as create_user,
+            patch.object(db_commands, "save_db") as save_db,
+        ):
+            with self.assertRaisesRegex(StackError, r"uses mysql84, not mysql97"):
+                db_commands.cmd_db_user_reset(
+                    argparse.Namespace(app_name="shop", mysql_service="mysql97", password=None)
+                )
+            create_user.assert_not_called()
+            save_db.assert_not_called()
 
 
 class AppCreateDatabaseStateTests(unittest.TestCase):

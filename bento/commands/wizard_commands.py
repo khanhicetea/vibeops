@@ -257,11 +257,10 @@ def wizard_manage_databases(app_name: str | None = None, app: dict[str, Any] | N
                 wizard_db_list_backups(default_service=default_service)
                 continue
             suffix = prompt_validated("Database suffix", DB_NAME_RE, "database suffix")
-            default_service = str(app.get("mysql_service") or default_mysql_service())
-            mysql_service = prompt_validated("MySQL service", MYSQL_SERVICE_RE, "MySQL service", default_service, hint="for example mysql57, mysql84, mysql97")
-            print_plan([f"create database {app_name}_{suffix}", f"MySQL service: {mysql_service}"])
+            mysql_service = str(app.get("mysql_service") or default_mysql_service())
+            print_plan([f"create database {app_name}_{suffix}", f"MySQL service: {mysql_service} (app configured service)"])
             if prompt_confirm("Continue?", True):
-                cmd_app_db_create(argparse.Namespace(app_name=app_name, db_suffix=suffix, mysql_service=mysql_service))
+                cmd_app_db_create(argparse.Namespace(app_name=app_name, db_suffix=suffix, mysql_service=None))
             # Return to the top of the loop so the listing immediately reflects a new DB.
             app = load_db()["apps"][app_name]
         except WizardBack:

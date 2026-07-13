@@ -203,7 +203,7 @@ location = /index.php { ... fastcgi_pass ... }
 location ~ \.php$ { return 404; }
 ```
 
-The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed). Supplying a database suffix requires the selected MySQL service to be ready; the command fails rather than recording a skipped database. `--no-mysql` cannot be combined with a database suffix. The app's MySQL user is `shop` on that service and has prefix grants for `shop_*` databases. MySQL grants escape wildcard characters in app names before granting access, so valid app names containing `_` do not broaden privileges.
+The optional DB suffix, `app`, creates `shop_app` on the app's `mysql_service` (default: `.env` `DEFAULT_MYSQL_SERVICE`, usually `mysql84`, unless `--mysql-service` is passed for a new app). Each app is restricted to one MySQL service. Re-running `app create`, creating another database, or resetting the app's MySQL user rejects a different service; changing services requires an explicit database migration rather than silently creating the same app identity on multiple instances. Supplying a database suffix requires the selected MySQL service to be ready; the command fails rather than recording a skipped database. `--no-mysql` cannot be combined with a database suffix. The app's MySQL user is `shop` on that service and has prefix grants for `shop_*` databases. MySQL grants escape wildcard characters in app names before granting access, so valid app names containing `_` do not broaden privileges.
 
 MySQL credentials are written to `runtime/home/<app>/.credentials/<mysql_service>.env` (mode 600). Redis credentials are written separately to `runtime/home/<app>/.credentials/redis.env` (mode 600). Passwords are not printed to stdout. Shared mode is the default (`REDIS_APP_ACL=false`) and uses the stack's optional `REDIS_PASSWORD`, while retaining a per-app client prefix. Set `REDIS_APP_ACL=true` plus `REDIS_ADMIN_PASSWORD` to generate a unique user/password per app and enforce keys and Pub/Sub channels matching `<app>:*` server-side. Client-side prefix configuration is required in either mode. `DB_DATABASE` / full name is `{app}_{db_suffix}` when you pass a database suffix to `app create` or `db create`.
 
@@ -481,7 +481,7 @@ It also generates ignored, mode-600 root client option files under `runtime/secr
 
 `db shell` (root) uses the mounted root option file. `db shell --user <app>` reads the app credential file under `runtime/home/<app>/.credentials/` and transfers credentials into the MySQL container through a short-lived mode-600 option file created over stdin (random path under `/run`, removed after the session). App passwords are **not** placed in host `docker compose` command arguments. This protects process listings and host telemetry; the Docker daemon and container root can still observe in-container state for the duration of the shell.
 
-Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. Guided backup/restore is available via `./manage.py wizard` / `./manage.py tui` under **Manage app → Databases**.
+Use `--mysql-service mysql57|mysql84|mysql97` for instance-level administration when you run more than one major. App-scoped database and user commands infer the app's recorded service; if the flag is supplied, it must match. Guided backup/restore is available via `./manage.py wizard` / `./manage.py tui` under **Manage app → Databases**.
 
 #### Backup and restore semantics
 

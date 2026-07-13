@@ -21,7 +21,7 @@ from bento.os.fsutil import mkdir
 from bento.services.mysql import (
     SYSTEM_MYSQL_DATABASES, apply_app_mysql_metadata, create_mysql_user, ensure_mysql_database,
     generate_password, mysql_backup_dir, mysql_client_option_file_content, mysql_root_exec_sql,
-    mysql_root_option_file
+    mysql_root_option_file, resolve_app_mysql_service,
 )
 from bento.utils.paths import HOME_DIR, ROOT, rel
 from bento.os.process import run, run_stdin_stream, run_stdout_to_file, service_running
@@ -235,33 +235,31 @@ def cmd_db_list(args: argparse.Namespace) -> None:
 def cmd_db_create(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
     suffix = validate(args.db_suffix, DB_NAME_RE, "database suffix")
-    service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
-    db_full_name = ensure_mysql_database(app_name, suffix, service)
     db = load_db()
-    app = db.get("apps", {}).get(app_name)
-    if isinstance(app, dict):
-        if db_full_name not in app.setdefault("databases", []):
-            app["databases"].append(db_full_name)
-        app.setdefault("database_services", {})[db_full_name] = service
-        upsert_timestamp(app)
-        save_db(db)
+    service = resolve_app_mysql_service(db, app_name, args.mysql_service)
+    db_full_name = ensure_mysql_database(app_name, suffix, service)
+    app = db["apps"][app_name]
+    if db_full_name not in app.setdefault("databases", []):
+        app["databases"].append(db_full_name)
+    app.setdefault("database_services", {})[db_full_name] = service
+    upsert_timestamp(app)
+    save_db(db)
 
 def cmd_db_user_reset(args: argparse.Namespace) -> None:
     app_name = validate(args.app_name, APP_NAME_RE, "app_name")
-    service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    db = load_db()
+    service = resolve_app_mysql_service(db, app_name, args.mysql_service)
     if getattr(args, "password", None):
         warn_password_cli_flag("--password")
     password = args.password or generate_password()
     created, cred_path = create_mysql_user(app_name, password, service)
     if not created:
         die(f"Could not reset MySQL user for {app_name} on {service}")
-    db = load_db()
-    app = db.get("apps", {}).get(app_name)
-    if isinstance(app, dict):
-        apply_app_mysql_metadata(app, app_name, service, cred_path)
-        app["mysql_user"] = True
-        upsert_timestamp(app)
-        save_db(db)
+    app = db["apps"][app_name]
+    apply_app_mysql_metadata(app, app_name, service, cred_path)
+    app["mysql_user"] = True
+    upsert_timestamp(app)
+    save_db(db)
 
 def _ephemeral_client_option_path() -> str:
     """Return a root-only in-container path for a one-shot client option file."""

@@ -60,6 +60,7 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
     for app_name, app in data.get("apps", {}).items():
         if isinstance(app, dict):
             app.setdefault("name", app_name)
+            app.setdefault("mysql_service", data["defaults"]["mysql_service"])
             public_dir = validate_public_dir(str(app.get("public_dir", "")))
             app["public_dir"] = public_dir
             app.setdefault("php_entrypoint", default_php_entrypoint(public_dir))

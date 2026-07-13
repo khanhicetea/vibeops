@@ -8,7 +8,10 @@ from typing import Any
 from bento.utils.env import default_fpm_profile, default_mysql_service, default_php_version, validate_fpm_profile
 from bento.utils.errors import die, info, warn_password_cli_flag
 from bento.os.fsutil import mkdir
-from bento.services.mysql import apply_app_mysql_metadata, ensure_mysql_database, require_mysql_ready_for_sql
+from bento.services.mysql import (
+    apply_app_mysql_metadata, ensure_mysql_database, require_mysql_ready_for_sql,
+    resolve_app_mysql_service,
+)
 from bento.services.nginx import app_vhost_path, assert_domain_free, domains_for, nginx_reload, normalize_aliases
 from bento.utils.paths import PHP_TEMPLATE_DIR, rel
 from bento.commands.permission_commands import initialize_app_permissions
@@ -17,7 +20,7 @@ from bento.services.rendering import write_template
 from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
 from bento.ui.table import print_ascii_table as print_table
 from bento.utils.validation import (
-    APP_NAME_RE, DB_NAME_RE, DOMAIN_RE, MYSQL_SERVICE_RE,
+    APP_NAME_RE, DB_NAME_RE, DOMAIN_RE,
     PHP_VERSION_RE, validate, validate_php_entrypoint, validate_public_dir
 )
 
@@ -94,7 +97,9 @@ def cmd_app_create(args: argparse.Namespace) -> None:
 
     if php_version not in managed_php_versions(db):
         die(f"PHP {php_version} is not managed; add it first with: ./manage.py php add {php_version}")
-    mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
+    mysql_service = resolve_app_mysql_service(
+        db, app_name, getattr(args, "mysql_service", None), allow_new=True
+    )
     if args.no_mysql and args.db_suffix:
         die("Cannot create a database suffix with --no-mysql")
     # Explicit database intent must succeed or fail before local app side effects.
@@ -321,7 +326,7 @@ def cmd_app_db_create(args: argparse.Namespace) -> None:
     if not isinstance(app, dict):
         die(f"Unknown app: {app_name}")
     suffix = validate(args.db_suffix, DB_NAME_RE, "database suffix")
-    service = validate(args.mysql_service or str(app.get("mysql_service") or default_mysql_service()), MYSQL_SERVICE_RE, "MySQL service")
+    service = resolve_app_mysql_service(db, app_name, args.mysql_service)
     db_full_name = ensure_mysql_database(app_name, suffix, service)
     if db_full_name not in app.setdefault("databases", []):
         app["databases"].append(db_full_name)
