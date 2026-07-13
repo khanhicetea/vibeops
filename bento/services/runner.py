@@ -127,7 +127,7 @@ def render_runner_programs(db: dict[str, Any], version: str, ctx: RenderContext 
         f"; PHP {version} runner programs",
         "",
         "[program:system-cron]",
-        "command=/usr/local/bin/php-supercronic /usr/local/etc/php/cron.d/system.cron 0.0.0.0:9746",
+        "command=/usr/local/bin/php-supercronic /usr/local/etc/php/cron.d/system.cron",
         "autostart=true",
         "autorestart=true",
         "startsecs=2",
@@ -155,7 +155,7 @@ def render_runner_programs(db: dict[str, Any], version: str, ctx: RenderContext 
         program = cron_program_name(app_name)
         lines.extend([
             f"[program:{program}]",
-            f"command=/usr/local/bin/php-supercronic /usr/local/etc/php/cron.d/apps/{app_name}.cron -",
+            f"command=/usr/local/bin/php-supercronic /usr/local/etc/php/cron.d/apps/{app_name}.cron",
             *_common_program_lines(app_name, f"/home/{app_name}/{DOCROOT_NAME}"),
             "autostart=true",
             "autorestart=true",

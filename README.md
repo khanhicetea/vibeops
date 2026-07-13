@@ -309,7 +309,7 @@ Cron supports bounded workdirs, IANA timezones, timeouts, app-scoped shared lock
   --output file
 ```
 
-Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-runner-service>-<job>.log`. The root maintenance scheduler rotates those files and PHP-FPM logs daily. Its health and Prometheus metrics are available inside the backend network at `http://php85-runner:9746/health` and `/metrics`; per-app schedulers do not bind metrics ports.
+Default `--output docker` keeps application output with structured Supercronic lifecycle/exit logs. Docker's `local` logging driver rotates and compresses service stdout/stderr (`20m` × 5 files). `--output file` writes as the app user to `/home/<app>/logs/cron-<php-runner-service>-<job>.log`. The root maintenance scheduler rotates those files and PHP-FPM logs daily. Supercronic does not expose a metrics endpoint.
 
 ## Long-running workers
 

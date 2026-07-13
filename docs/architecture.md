@@ -119,7 +119,7 @@ runtime/generated/runner/php85/programs/bento.conf
 
 `php84-runner` / `php85-runner` run Supervisord as PID 1. Docker restarts the runner container; Supervisord restarts its children. Its root-only Unix control socket is not exposed on the backend network.
 
-`manage.py cron create` writes one job snippet, then atomically rebuilds one merged crontab per app. Supervisord starts that app's Supercronic directly with `user=<app>`, explicit `HOME`/Composer environment, app workdir, and `umask 0027`. The non-privileged `php-cron-job` helper validates per-job workdirs and applies optional `flock`, timeout, and file-output policy. A separate root Supercronic runs only stack maintenance/logrotate. App schedulers bind no metrics ports; the root maintenance scheduler retains backend-only `/health` and `/metrics` on port 9746.
+`manage.py cron create` writes one job snippet, then atomically rebuilds one merged crontab per app. Supervisord starts that app's Supercronic directly with `user=<app>`, explicit `HOME`/Composer environment, app workdir, and `umask 0027`. The non-privileged `php-cron-job` helper validates per-job workdirs and applies optional `flock`, timeout, and file-output policy. A separate root Supercronic runs only stack maintenance/logrotate. Supercronic does not bind a metrics port.
 
 Runner changes validate Supervisord and all affected crontabs, then call `supervisorctl reread` and `update`. Because crontab bytes are external to program configuration, existing app schedulers receive `SIGUSR2` by process name after reconciliation. Adding the first cron creates a process; removing the final cron removes it. The runner service must never be scaled to multiple replicas.
 

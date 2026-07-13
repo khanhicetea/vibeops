@@ -3,8 +3,6 @@ set -eu
 
 CRON_DIR="${PHP_CRON_DIR:-/usr/local/etc/php/cron.d}"
 COMBINED="${1:-${PHP_SUPERCRONIC_CRONTAB:-$CRON_DIR/system.cron}}"
-METRICS_ADDRESS="${2:-${PHP_SUPERCRONIC_METRICS_ADDRESS:-}}"
-[ "$METRICS_ADDRESS" = "-" ] && METRICS_ADDRESS=""
 
 if [ ! -s "$COMBINED" ]; then
   echo "Supercronic crontab is missing or empty: $COMBINED" >&2
@@ -15,9 +13,5 @@ fi
 # Supervisord is PID 1 and reaps zombies; -no-reap avoids the noisy
 # "process reaping disabled, not pid 1" warning under the runner.
 /usr/local/bin/supercronic -no-reap -test "$COMBINED"
-echo "Starting supercronic with crontab $COMBINED${METRICS_ADDRESS:+; metrics=$METRICS_ADDRESS}"
-set -- /usr/local/bin/supercronic -no-reap -json -split-logs
-if [ -n "$METRICS_ADDRESS" ]; then
-  set -- "$@" -prometheus-listen-address="$METRICS_ADDRESS"
-fi
-exec "$@" "$COMBINED"
+echo "Starting supercronic with crontab $COMBINED"
+exec /usr/local/bin/supercronic -no-reap -json -split-logs "$COMBINED"

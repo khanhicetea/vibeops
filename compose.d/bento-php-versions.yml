@@ -65,7 +65,6 @@ services:
       - ./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro
     restart: unless-stopped
     command: ["sh", "-lc", "php-identity-sync && exec supervisord -n -c /etc/bento/supervisord.conf"]
-    expose: ["9746"]
   php85-cli:
     <<: *common-php
     image: bento-php85:${PHP85_VERSION:-8.5}

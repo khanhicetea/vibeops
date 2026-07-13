@@ -76,7 +76,7 @@ def render_php_versions_compose(db: dict[str, Any], path: Path = PHP_COMPOSE_PAT
             *[f"      - {mount}\n" for mount in mounts],
         ]
         lines.extend([f"  {service}:\n", *shared, "    restart: unless-stopped\n", "    command: [\"sh\", \"-lc\", \"php-identity-sync && exec php-fpm -F\"]\n"])
-        lines.extend([f"  {_service(version, 'runner')}:\n", *shared, "    restart: unless-stopped\n", "    command: [\"sh\", \"-lc\", \"php-identity-sync && exec supervisord -n -c /etc/bento/supervisord.conf\"]\n", "    expose: [\"9746\"]\n"])
+        lines.extend([f"  {_service(version, 'runner')}:\n", *shared, "    restart: unless-stopped\n", "    command: [\"sh\", \"-lc\", \"php-identity-sync && exec supervisord -n -c /etc/bento/supervisord.conf\"]\n"])
         lines.extend([f"  {_service(version, 'cli')}:\n", *shared, "    profiles: [\"cli\"]\n", "    entrypoint: [\"php-app-run\"]\n", "    command: [\"bash\"]\n"])
     mkdir(path.parent)
     write_text_atomic(path, "".join(lines))
