@@ -229,22 +229,49 @@ class ListingAndRetentionTests(unittest.TestCase):
         with self.assertRaises(StackError):
             db_commands._validate_keep(-1)
 
-    def test_retention_only_touches_final_sql(self) -> None:
-        newer = self.backup_dir / "b.sql"
-        older = self.backup_dir / "a.sql"
-        partial = self.backup_dir / "c.sql.partial-x"
-        newer.write_text("n", encoding="utf-8")
-        older.write_text("o", encoding="utf-8")
-        partial.write_text("p", encoding="utf-8")
-        os.utime(newer, (2_000_000_000, 2_000_000_000))
-        os.utime(older, (1_000_000_000, 1_000_000_000))
+    def test_retention_keeps_n_per_database_and_ignores_other_files(self) -> None:
+        shop_new = self.backup_dir / "20260713-120000-000000_shop_app.sql"
+        shop_old = self.backup_dir / "20260712-120000-000000_shop_app.sql.gz"
+        reporting_new = self.backup_dir / "20260713-120000-000000_shop_reporting.sql"
+        reporting_old = self.backup_dir / "20260712-120000-000000_shop_reporting.sql"
+        other_app = self.backup_dir / "20260711-120000-000000_blog_app.sql"
+        partial = self.backup_dir / "20260714-120000-000000_shop_app.sql.partial-x"
+        for path in (shop_new, shop_old, reporting_new, reporting_old, other_app, partial):
+            path.write_text(path.name, encoding="utf-8")
 
         with patch.object(db_commands, "info"):
-            db_commands._apply_retention(self.backup_dir, keep=1)
+            db_commands._apply_retention(
+                self.backup_dir,
+                keep=1,
+                database_names=["shop_app", "shop_reporting"],
+                protected=[shop_new, reporting_new],
+            )
 
-        self.assertTrue(newer.exists())
-        self.assertFalse(older.exists())
+        self.assertTrue(shop_new.exists())
+        self.assertFalse(shop_old.exists())
+        self.assertTrue(reporting_new.exists())
+        self.assertFalse(reporting_old.exists())
+        self.assertTrue(other_app.exists())
         self.assertTrue(partial.exists())
+
+    def test_retention_never_removes_just_written_dump_when_mtime_is_older(self) -> None:
+        current = self.backup_dir / "20260713-120000-000000_shop_app.sql"
+        previous = self.backup_dir / "20260712-120000-000000_shop_app.sql"
+        current.write_text("current", encoding="utf-8")
+        previous.write_text("previous", encoding="utf-8")
+        os.utime(current, (1_000_000_000, 1_000_000_000))
+        os.utime(previous, (2_000_000_000, 2_000_000_000))
+
+        with patch.object(db_commands, "info"):
+            db_commands._apply_retention(
+                self.backup_dir,
+                keep=1,
+                database_names=["shop_app"],
+                protected=[current],
+            )
+
+        self.assertTrue(current.exists())
+        self.assertFalse(previous.exists())
 
 
 class BackupBatchTests(unittest.TestCase):
@@ -267,10 +294,10 @@ class BackupBatchTests(unittest.TestCase):
             output_path.write_bytes(content)
             written_payloads[output_path.name] = content
 
-        retention_calls: list[int] = []
+        retention_calls: list[tuple[int, list[str], list[Path]]] = []
 
-        def fake_retention(backup_dir, *, keep):
-            retention_calls.append(keep)
+        def fake_retention(backup_dir, *, keep, database_names, protected):
+            retention_calls.append((keep, database_names, protected))
 
         args = argparse.Namespace(
             mysql_service="mysql84",
@@ -295,7 +322,11 @@ class BackupBatchTests(unittest.TestCase):
         self.assertEqual(len(written_payloads), 2)
         self.assertTrue(all(name.endswith(".sql.gz") for name in written_payloads))
         self.assertEqual(compress_flags, [True, True])
-        self.assertEqual(retention_calls, [2])
+        self.assertEqual(len(retention_calls), 1)
+        keep, database_names, protected = retention_calls[0]
+        self.assertEqual(keep, 2)
+        self.assertEqual(database_names, ["shop_app", "shop_reporting"])
+        self.assertEqual({path.name for path in protected}, set(written_payloads))
 
     def test_mid_batch_failure_keeps_earlier_dumps_skips_retention(self) -> None:
         calls: list[str] = []

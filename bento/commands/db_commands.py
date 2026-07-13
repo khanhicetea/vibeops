@@ -407,7 +407,7 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
         raise
 
     if keep is not None:
-        _apply_retention(backup_dir, keep=keep)
+        _apply_retention(backup_dir, keep=keep, database_names=targets, protected=written)
 
     if not written:
         die("No backups written")
@@ -432,11 +432,44 @@ def _list_final_backups(backup_dir: Path) -> list[Path]:
     files = [p for p in backup_dir.iterdir() if _is_final_sql_backup(p)]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
-def _apply_retention(backup_dir: Path, *, keep: int) -> None:
-    files = _list_final_backups(backup_dir)
-    for path in files[keep:]:
-        path.unlink(missing_ok=True)
-        info(f"Removed old backup bento/{rel(path)}")
+def _apply_retention(
+    backup_dir: Path,
+    *,
+    keep: int,
+    database_names: list[str],
+    protected: list[Path] | None = None,
+) -> None:
+    """Keep *keep* dumps per requested database, never deleting the new batch.
+
+    Retention is scoped to databases backed up by this command. This prevents a
+    multi-database batch (or a backup of another app) from consuming a global
+    file count and deleting dumps that were just written.
+    """
+    protected_paths = {path.resolve() for path in (protected or [])}
+    groups: dict[str, list[Path]] = {name: [] for name in database_names}
+    patterns = {
+        name: re.compile(
+            rf"^\d{{8}}-\d{{6}}-\d{{6}}_{re.escape(name)}\.sql(?:\.gz)?$"
+        )
+        for name in groups
+    }
+
+    for path in _list_final_backups(backup_dir):
+        for name, pattern in patterns.items():
+            if pattern.fullmatch(path.name):
+                groups[name].append(path)
+                break
+
+    for paths in groups.values():
+        # A newly promoted dump must count toward retention and must survive,
+        # even on filesystems whose mtime resolution makes ordering ambiguous.
+        paths.sort(
+            key=lambda path: (path.resolve() in protected_paths, path.stat().st_mtime, path.name),
+            reverse=True,
+        )
+        for path in paths[keep:]:
+            path.unlink(missing_ok=True)
+            info(f"Removed old backup bento/{rel(path)}")
 
 def cmd_db_list_backups(args: argparse.Namespace) -> None:
     from bento.ui.table import print_ascii_table as print_table

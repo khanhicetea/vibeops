@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     db_backup.add_argument(
         "--keep",
         type=int,
-        help="After a fully successful backup batch, keep only the N newest finalized .sql/.sql.gz files (N >= 1)",
+        help="After a fully successful batch, keep the N newest dumps per backed-up database (N >= 1)",
     )
     db_backup.set_defaults(func=db_commands.cmd_db_backup)
 

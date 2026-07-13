@@ -302,7 +302,7 @@ def wizard_db_backup(*, default_service: str | None = None, fixed_service: str |
             )
 
     use_gzip = prompt_confirm("Compress with gzip (.sql.gz)?", True)
-    keep_text = prompt_text("Keep N newest after success (blank = keep all)", "", required=False)
+    keep_text = prompt_text("Keep N newest per database after success (blank = keep all)", "", required=False)
     keep: int | None = None
     if keep_text.strip():
         try:
@@ -318,7 +318,7 @@ def wizard_db_backup(*, default_service: str | None = None, fixed_service: str |
     else:
         plan.append("all non-system databases")
     if keep is not None:
-        plan.append(f"retention --keep {keep}")
+        plan.append(f"retention --keep {keep} per database")
     print_plan(plan)
 
     cmd_parts = ["./manage.py", "db", "backup", "--mysql-service", mysql_service]

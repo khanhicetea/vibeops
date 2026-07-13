@@ -489,7 +489,7 @@ Use `--mysql-service mysql57|mysql84|mysql97` for instance-level administration 
 - **Gzip option:** `--gzip` pipes dump SQL through streaming gzip compression and writes `*.sql.gz`. Restore auto-detects `.sql.gz` and decompresses on the fly while streaming into `mysql`.
 - **No overwrite of existing backups:** final names include a microsecond stamp (and a short random suffix if needed). Existing finalized dumps are never truncated or replaced.
 - **Batch behavior:** one stamp per backup batch; if database *N* of *M* fails, earlier finalized dumps from that batch are kept, retention is **not** applied, and the error names the safely written files.
-- **Listing / retention:** `db list-backups` and `--keep` consider only regular finalized `*.sql` / `*.sql.gz` files (partials and symlinks are ignored). `--keep N` requires `N >= 1` and runs only after the whole requested batch succeeds; omit `--keep` to retain all finalized dumps. `--keep 0` is rejected.
+- **Listing / retention:** `db list-backups` considers only regular finalized `*.sql` / `*.sql.gz` files (partials and symlinks are ignored). After the whole requested batch succeeds, `--keep N` keeps the N newest dumps **per database backed up by that command**; it never deletes the newly written batch or backups for databases outside the command's scope. `N` must be at least 1; omit `--keep` to retain all finalized dumps. `--keep 0` is rejected.
 - **Streaming restore:** `db restore` streams the dump file on stdin to `mysql` (binary-safe; not loaded fully into Python memory). Restore may overwrite objects present in the dump; it is **not** atomic at the MySQL object level.
 - **Off-box copies still required:** host-local finalized dumps are not a full disaster-recovery plan—copy `runtime/backups/<service>/` off the machine regularly.
 
@@ -508,7 +508,7 @@ Use `--mysql-service mysql57|mysql84|mysql97` for instance-level administration 
 
 #### Recommended recovery path
 
-1. Schedule regular `./manage.py db backup` (host cron or manual before risky deploys); use `--keep N` (`N >= 1`) only when you intentionally prune old finalized dumps after a successful batch
+1. Schedule regular `./manage.py db backup` (host cron or manual before risky deploys); use `--keep N` (`N >= 1`) only when you intentionally keep N finalized dumps per backed-up database after a successful batch
 2. Store/copy `runtime/backups/mysql84` (and other majors you run) off-box if the host disk is not enough
 3. Restore with `./manage.py db restore <file.sql> --yes` (streams the dump; may overwrite objects)
 
