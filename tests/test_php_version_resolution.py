@@ -282,7 +282,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
                 self.assertEqual(identity.call_args[0][1], "8.5")
 
     def test_new_app_omitted_uses_stack_default(self) -> None:
-        db = {"apps": {}, "domains": {}, "crons": {}, "proxies": {}}
+        db = {"php_versions": ["8.4"], "apps": {}, "domains": {}, "crons": {}, "proxies": {}}
         created = {"name": "fresh", "php_version": "8.4"}
         with (
             patch.object(app_commands, "load_db", return_value=db),
@@ -324,6 +324,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
 
     def test_app_create_explicit_migration_allowed(self) -> None:
         db = _shop_db("8.5")
+        db["php_versions"] = ["8.4", "8.5"]
         migrated = dict(db["apps"]["shop"], php_version="8.4")
         with (
             patch.object(app_commands, "load_db", return_value=db),

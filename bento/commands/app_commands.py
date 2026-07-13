@@ -90,6 +90,10 @@ def cmd_app_create(args: argparse.Namespace) -> None:
         php_version = resolve_app_php_version(db, app_name, None, allow_new=True)
     else:
         php_version = validate(str(args.php), PHP_VERSION_RE, "PHP version")
+    from bento.services.php_versions import managed_php_versions
+
+    if php_version not in managed_php_versions(db):
+        die(f"PHP {php_version} is not managed; add it first with: ./manage.py php add {php_version}")
     mysql_service = validate(args.mysql_service, MYSQL_SERVICE_RE, "MySQL service")
     if args.no_mysql and args.db_suffix:
         die("Cannot create a database suffix with --no-mysql")

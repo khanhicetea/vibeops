@@ -20,23 +20,23 @@ bento/runtime/home/<app_name>/www
   - no Docker TCP/UDP port publishing
   - no bridge NAT for public HTTP/HTTPS traffic
   - binds directly to host `:80` / `:443` TCP and `:443` UDP for HTTP/3
-- **Multiple PHP-FPM versions** run as separate Debian Trixie-based containers:
-  - `php84` from `php:8.4-fpm-trixie`
-  - `php85` from `php:8.5-fpm-trixie`
+- **Managed PHP-FPM versions** run as separate Debian Trixie-based containers:
+  - a fresh stack manages only PHP 8.5
+  - `./manage.py php add <version>` generates each version's FPM, runner, and CLI services in `compose.d/bento-php-versions.yml`
   - OPcache is installed only when `php -m` shows it is missing, so PHP 8.5 can use its built-in Zend OPcache without reinstalling it.
 - **PHP-FPM exposes per-app Unix sockets** in versioned shared dirs:
-  - host path: `bento/runtime/run/php-fpm/php84/<app_name>.sock`
-  - nginx path: `/run/php-fpm/php84/<app_name>.sock`
+  - host path: `bento/runtime/run/php-fpm/php85/<app_name>.sock`
+  - nginx path: `/run/php-fpm/php85/<app_name>.sock`
   - PHP container path: `/run/php-fpm/<app_name>.sock`
 - **Each app is a Linux user / PHP-FPM pool / MySQL user** inside PHP containers:
   - app home: `/home/<app_name>`
   - document root: `/home/<app_name>/www`
   - logs: `/home/<app_name>/logs`
 - **PHP runtime is split by role** while sharing the same PHP image/version:
-  - `php84` / `php85` run PHP-FPM only and expose sockets
-  - `php84-runner` / `php85-runner` run Supervisord as PID 1
+  - `php85` (and each added version) runs PHP-FPM and exposes sockets
+  - `php85-runner` (and each added version's runner) runs Supervisord as PID 1
   - each runner supervises root-only maintenance, one app-owned Supercronic per app, and named long-running workers
-  - `php84-cli` / `php85-cli` are ephemeral deploy/shell services
+  - `php85-cli` (and each added version's CLI role) is ephemeral for deploys/shells
   - deploy commands, Composer, cron, workers, and PHP-FPM use the same PHP binary/extensions
 - **PHP connects to MySQL/Redis** over the Compose backend network:
   - MySQL hosts are versioned services: `mysql57:3306`, `mysql84:3306`, `mysql97:3306`
@@ -95,9 +95,9 @@ cp .env.example .env
 ./manage.py render   # stage full generation, then promote into runtime/generated
 # ./manage.py apply  # same as render, then validate + reload running services
 
-./dc build php84 php85 php84-runner php85-runner
+./dc build php85 php85-runner
 # mysql84 is the default MySQL service.
-./dc up -d --remove-orphans mysql84 redis php84 php85 php84-runner php85-runner nginx
+./dc up -d --remove-orphans mysql84 redis php85 php85-runner nginx
 # Optional extra majors:
 # docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 ```
@@ -396,38 +396,18 @@ Or pass explicit paths as seen inside the Nginx container:
   --key /etc/letsencrypt/live/example.com/privkey.pem
 ```
 
-## Add another PHP version
+## Manage PHP versions
 
-Copy an existing PHP service set into a local `compose.d/*.yml` fragment (FPM, runner, and CLI) and change both the service suffix (`phpXX`) and PHP version directory (`8.x`) consistently:
-
-```yaml
-  phpXX:
-    <<: *php-common
-    build:
-      context: ./docker/php
-      args:
-        PHP_VERSION: 8.x
-        TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - ./runtime/home:/home
-      - ./runtime/run/php-fpm/phpXX:/run/php-fpm
-      - ./runtime/logs/php/phpXX:/var/log/php
-      - ./config/php/common/conf.d/90-custom.ini:/usr/local/etc/php/conf.d/90-custom.ini:ro
-      - ./runtime/generated/php/versions/8.x/pool.d:/usr/local/etc/php-fpm.d/pools:ro
-      - ./runtime/generated/php/versions/8.x/users.d:/usr/local/etc/php/users.d:ro
-      - ./runtime/generated/cron/phpXX:/usr/local/etc/php/cron.d:ro
-      - ./runtime/generated/runner/phpXX/programs:/etc/bento/programs:ro
-      - ./config/php/supervisor/supervisord.conf:/etc/bento/supervisord.conf:ro
-```
-
-Then:
+PHP versions are managed in stack state. The generated `compose.d/bento-php-versions.yml` contains FPM, runner, and CLI roles inheriting `x-common-php` properties.
 
 ```bash
-mkdir -p runtime/generated/php/versions/8.x/{pool.d,users.d} runtime/generated/cron/phpXX/{jobs,apps} runtime/generated/runner/phpXX/programs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
-./dc build phpXX phpXX-runner
-./dc up -d phpXX phpXX-runner
-./manage.py app create myapp example.com --php 8.x
+./manage.py php versions
+./manage.py php add 8.4
+./dc up -d --build php84 php84-runner
+./manage.py php remove 8.4   # rejected while any app uses PHP 8.4
 ```
+
+The same add/remove flow is available in **Wizard → Manage PHP versions**. Reassign apps to another managed version before removing a runtime.
 
 ## Identity and permission management
 

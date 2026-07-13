@@ -26,7 +26,7 @@ from bento.services.nginx import render_app_vhost
 from bento.utils.paths import (
     DB_PATH, DOCROOT_NAME, GENERATED_MANAGED_GLOBS, NGINX_VHOST_DIR,
     PHP_VERSIONS_DIR, RENDER_TXN_DIR_PREFIX, RENDER_TXN_JOURNAL_VERSION, ROOT,
-    RUNTIME_DIR, SUPPORTED_PHP_VERSIONS, RenderContext, live_render_context, rel
+    RUNTIME_DIR, RenderContext, live_render_context, rel
 )
 from bento.services.php import (
     app_home, app_www, php_cli_service_for,
@@ -639,6 +639,8 @@ def cmd_compose(args: argparse.Namespace) -> None:
 def cmd_render(args: argparse.Namespace) -> None:
     db = load_db()
     rendered = apply_generated_config(db, reload_services=False, validate_services=False)
+    from bento.services.php_versions import render_php_versions_compose
+    render_php_versions_compose(db)
     save_db(db)
     info(f"Rendered {len(rendered)} file(s) from bento/{rel(DB_PATH)}")
     for path in rendered:
@@ -996,12 +998,9 @@ def prompt_pick(
     return value
 
 def available_php_versions() -> list[str]:
-    version_set: set[str] = set(SUPPORTED_PHP_VERSIONS)
-    if PHP_VERSIONS_DIR.exists():
-        version_set.update(p.name for p in PHP_VERSIONS_DIR.iterdir() if p.is_dir())
-    default = default_php_version()
-    version_set.add(default)
-    return sorted(version_set)
+    from bento.services.php_versions import managed_php_versions
+
+    return managed_php_versions(load_db())
 
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -1013,7 +1012,8 @@ def print_plan(lines: list[str]) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     db = load_db()
-    services = ["mysql57", "mysql84", "mysql97", "redis", "nginx", "php84", "php85", "php84-runner", "php85-runner"]
+    php_services = [service for version in available_php_versions() for service in (php_service_for(version), php_service_for(version) + "-runner")]
+    services = ["mysql57", "mysql84", "mysql97", "redis", "nginx", *php_services]
     running = running_services()
     info("bento status\n")
     info("Docker services:")

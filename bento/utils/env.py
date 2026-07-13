@@ -68,7 +68,7 @@ def stack_env() -> dict[str, str]:
 
 
 def default_php_version() -> str:
-    return stack_env().get("DEFAULT_PHP_VERSION", "8.4")
+    return stack_env().get("DEFAULT_PHP_VERSION", "8.5")
 
 
 def default_mysql_service() -> str:

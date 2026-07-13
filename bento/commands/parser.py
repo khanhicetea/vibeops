@@ -10,6 +10,7 @@ from bento.commands import (
     cron_commands,
     db_commands,
     permission_commands,
+    php_version_commands,
     proxy_commands,
     runtime_commands,
     tls_commands,
@@ -242,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     cron_reload_cmd.set_defaults(func=cron_commands.cmd_cron_reload)
 
     worker_commands.add_parser(sub)
+    php_version_commands.add_parser(sub)
 
     app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app")
     app_exec.add_argument("app_name")

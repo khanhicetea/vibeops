@@ -169,7 +169,7 @@ class ModuleSizeWarningTests(unittest.TestCase):
 
     KNOWN_LARGE = {
         "runtime_commands.py": 1150,  # render/apply transaction orchestration
-        "wizard_commands.py": 550,
+        "wizard_commands.py": 700,
         "db_commands.py": 550,
         "app_commands.py": 400,
         "parser.py": 400,

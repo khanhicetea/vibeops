@@ -9,6 +9,7 @@ compose.override.yml
 compose.local.yml
 compose.d/*.yml
 compose.d/*.yaml
+!compose.d/bento-php-versions.yml
 
 # Runtime state, generated config, customization, and mutable data
 /runtime/.render-txn-*/
@@ -22,20 +23,12 @@ compose.d/*.yaml
 !/runtime/generated/nginx/vhosts/.gitkeep
 !/runtime/generated/php/
 !/runtime/generated/php/versions/
-!/runtime/generated/php/versions/8.4/
-!/runtime/generated/php/versions/8.4/pool.d/
-!/runtime/generated/php/versions/8.4/pool.d/.gitkeep
-!/runtime/generated/php/versions/8.4/users.d/
-!/runtime/generated/php/versions/8.4/users.d/.gitkeep
 !/runtime/generated/php/versions/8.5/
 !/runtime/generated/php/versions/8.5/pool.d/
 !/runtime/generated/php/versions/8.5/pool.d/.gitkeep
 !/runtime/generated/php/versions/8.5/users.d/
 !/runtime/generated/php/versions/8.5/users.d/.gitkeep
 !/runtime/generated/cron/
-!/runtime/generated/cron/php84/
-!/runtime/generated/cron/php84/jobs/
-!/runtime/generated/cron/php84/jobs/.gitkeep
 !/runtime/generated/cron/php85/
 !/runtime/generated/cron/php85/jobs/
 !/runtime/generated/cron/php85/jobs/.gitkeep
@@ -70,8 +63,6 @@ compose.d/*.yaml
 /runtime/logs/nginx/*
 !/runtime/logs/nginx/.gitkeep
 !/runtime/logs/php/
-!/runtime/logs/php/php84/
-!/runtime/logs/php/php84/.gitkeep
 !/runtime/logs/php/php85/
 !/runtime/logs/php/php85/.gitkeep
 !/runtime/logs/mysql57/
@@ -109,8 +100,6 @@ compose.d/*.yaml
 /runtime/run/*
 !/runtime/run/.gitkeep
 !/runtime/run/php-fpm/
-!/runtime/run/php-fpm/php84/
-!/runtime/run/php-fpm/php84/.gitkeep
 !/runtime/run/php-fpm/php85/
 !/runtime/run/php-fpm/php85/.gitkeep
 

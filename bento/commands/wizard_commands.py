@@ -40,6 +40,7 @@ from bento.services.mysql import mysql_backup_dir
 from bento.utils.paths import rel
 from bento.commands.permission_commands import cmd_permissions
 from bento.commands.proxy_commands import cmd_proxy_create
+from bento.commands.php_version_commands import cmd_php_add, cmd_php_remove, cmd_php_versions
 from bento.commands.runtime_commands import (
     WizardBack,
     available_php_versions,
@@ -643,10 +644,30 @@ def wizard_manage_app() -> None:
             continue
 
 
+def wizard_manage_php_versions() -> None:
+    while True:
+        info("\nManaged PHP versions:")
+        cmd_php_versions(argparse.Namespace())
+        action = prompt_choice("PHP version action", ["Add version", "Remove version"])
+        if action == "Back":
+            return
+        if action == "Add version":
+            version = prompt_validated("PHP version", re.compile(r"^[0-9]+\.[0-9]+$"), "PHP version", "8.5")
+            print_plan([f"add PHP {version}", "generate compose.d/bento-php-versions.yml"])
+            if prompt_confirm("Continue?", True):
+                cmd_php_add(argparse.Namespace(version=version))
+        else:
+            versions = available_php_versions()
+            version = prompt_pick("PHP version to remove", versions)
+            print_plan([f"remove PHP {version}", "only allowed when no app uses it"])
+            if prompt_confirm("Continue?", False):
+                cmd_php_remove(argparse.Namespace(version=version))
+
+
 def cmd_wizard(args: argparse.Namespace) -> None:
     if not sys.stdin.isatty():
         die("wizard requires an interactive terminal")
-    actions = ["Create app", "Manage app", "Show services status"]
+    actions = ["Create app", "Manage app", "Manage PHP versions", "Show services status"]
     while True:
         info("\nbento")
         action = prompt_choice("What do you want to do?", actions, zero="Quit")
@@ -657,6 +678,8 @@ def cmd_wizard(args: argparse.Namespace) -> None:
                 wizard_create_app()
             elif action == "Manage app":
                 wizard_manage_app()
+            elif action == "Manage PHP versions":
+                wizard_manage_php_versions()
             else:
                 cmd_status(argparse.Namespace(check_nginx=False))
         except WizardBack:

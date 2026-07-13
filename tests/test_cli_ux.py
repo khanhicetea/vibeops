@@ -110,7 +110,7 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args.args[1],
-            ["Create app", "Manage app", "Show services status"],
+            ["Create app", "Manage app", "Manage PHP versions", "Show services status"],
         )
         self.assertEqual(choice.call_args.kwargs["zero"], "Quit")
 
