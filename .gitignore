@@ -9,8 +9,6 @@ compose.override.yml
 compose.local.yml
 compose.d/*.yml
 compose.d/*.yaml
-!compose.d/bento-php-versions.yml
-!compose.d/bento-mysql-versions.yml
 
 # Runtime state, generated config, customization, and mutable data
 /runtime/.render-txn-*/
