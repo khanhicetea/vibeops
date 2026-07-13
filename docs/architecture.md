@@ -3,7 +3,7 @@
 This repository separates upstream source, local desired state, disposable generated config, and live runtime data. The primary isolation unit is an app slug, which is also the Linux user, PHP-FPM pool, and MySQL user.
 
 ```text
-compose.yml                 # upstream-owned service topology
+config/compose.yml          # upstream-owned service topology
 compose.override.yml        # optional ignored local Docker Compose overrides
 manage.py                   # thin CLI entrypoint into bento.commands.cli
 bento/                    # management CLI package (see module map below)
@@ -84,15 +84,15 @@ Service signals only (not file re-render). Contract tests live in `tests/test_re
 - **Unmanaged files**: local files under managed globs that lack the bento generated notice are left in place and reported.
 - **Abandoned transactions**: a leftover mid-promotion journal is restored on the next render/apply when the journal is deterministic.
 
-Users should customize Docker Compose with ignored override files instead of editing `compose.yml`:
+Users should customize Docker Compose with ignored override files instead of editing `config/compose.yml`:
 
 ```text
-compose.override.yml        # auto-loaded by docker compose
-compose.local.yml           # loaded by ./manage.py compose
-compose.d/*.yml             # loaded by ./manage.py compose
+compose.override.yml        # loaded by ./dc
+compose.local.yml           # loaded by ./dc
+compose.d/*.yml             # loaded by ./dc
 ```
 
-Use `./manage.py compose ...` when you want all local fragments included. See `docs/customization.md` for examples, edge cases, and do/don't guidance.
+Use `./dc ...` (or `./manage.py compose ...`) so all local fragments are included. See `docs/customization.md` for examples, edge cases, and do/don't guidance.
 
 ## Identity and permission planes
 

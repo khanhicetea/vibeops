@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import datetime as dt
 import gzip
 import os
@@ -73,7 +75,7 @@ def nginx_reopen_logs() -> None:
     if not service_running("nginx"):
         warn("nginx is not running; rotated files are on disk but reopen was skipped")
         return
-    run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-s", "reopen"])
+    run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-s", "reopen"])
     info("Reopened nginx log files")
 
 

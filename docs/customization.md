@@ -13,7 +13,7 @@ Avoid editing upstream-owned files unless you intend to maintain a fork.
 ## File ownership model
 
 ```text
-compose.yml                     # upstream-owned; do not customize directly
+config/compose.yml              # upstream-owned; do not customize directly
 config/                         # upstream-owned defaults/templates
 bento/                        # upstream-owned management CLI
 
@@ -21,9 +21,9 @@ runtime/state/stack.json        # local desired state, managed by ./manage.py
 runtime/generated/              # disposable generated config
 runtime/custom/                 # local user-owned customization area
 
-compose.override.yml            # local Compose override, auto-loaded by docker compose
-compose.local.yml               # local Compose override, loaded by ./manage.py compose
-compose.d/*.yml                 # local Compose fragments, loaded by ./manage.py compose
+compose.override.yml            # local Compose override, loaded by ./dc
+compose.local.yml               # local Compose override, loaded by ./dc
+compose.d/*.yml                 # local Compose fragments, loaded by ./dc
 .env                            # local secrets/defaults
 ```
 
@@ -56,7 +56,7 @@ Do not commit `.env`.
 
 ### 2. Compose overrides
 
-For simple Docker Compose customization, use `compose.override.yml`. Docker Compose loads this automatically with `compose.yml`.
+For simple Docker Compose customization, use `compose.override.yml`. The `./dc` wrapper loads it automatically with the upstream core stack.
 
 Example: add resource limits to Redis:
 
@@ -96,7 +96,7 @@ Then use the `./dc` wrapper instead of bare `docker compose`:
 `./dc` delegates to `./manage.py compose`, and both load:
 
 ```text
-compose.yml
+config/compose.yml
 compose.override.yml      # if present
 compose.local.yml         # if present
 compose.d/*.yml           # if present
@@ -121,7 +121,7 @@ Use `manage.py` commands to mutate `runtime/state/stack.json`:
 Stack defaults for new apps live in `.env`:
 
 - `DEFAULT_FPM_PROFILE=balanced` — named FPM pool profile when `--fpm-profile` is omitted on create.
-- `PHP_FPM_PROCESS_MAX=32` — global FPM process cap baked into PHP images (`docker compose build php84 php85` after changing).
+- `PHP_FPM_PROCESS_MAX=32` — global FPM process cap baked into PHP images (`./dc build php84 php85` after changing).
 
 Do not edit generated pool files to tune workers. Choose a profile, re-render/apply, and measure RSS/latency. Do not directly edit generated Nginx, PHP-FPM, or cron files for these changes.
 
@@ -355,11 +355,11 @@ Because Nginx uses host networking, `127.0.0.1` inside the Nginx container point
 
 ## Edge cases
 
-### Editing `compose.yml` blocks upstream updates
+### Editing `config/compose.yml` blocks upstream updates
 
-If you edit tracked `compose.yml`, future `git pull` may conflict. Prefer `compose.override.yml` or `compose.d/*.yml`.
+If you edit tracked `config/compose.yml`, future `git pull` may conflict. Prefer `compose.override.yml` or `compose.d/*.yml`.
 
-Only edit `compose.yml` directly if you intentionally maintain a fork.
+Only edit `config/compose.yml` directly if you intentionally maintain a fork.
 
 ### Docker Compose merge semantics can replace lists
 
@@ -422,7 +422,7 @@ The TLS mode is stored in state and re-applied on render. Do not edit the TLS bl
 
 ### Generated fallback PHP pools are required
 
-Before first `docker compose up`, run:
+Before first `./dc up`, run:
 
 ```bash
 ./manage.py render
@@ -465,7 +465,7 @@ git pull
 ./manage.py apply
 ```
 
-If `compose.yml` changed upstream and you have local overrides, inspect the final merged output carefully:
+If `config/compose.yml` changed upstream and you have local overrides, inspect the final merged output carefully:
 
 ```bash
 ./manage.py compose config > /tmp/bento-compose.yml

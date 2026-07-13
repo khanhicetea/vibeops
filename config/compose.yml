@@ -152,7 +152,7 @@ services:
       start_period: 10s
     logging: *default-logging
 
-  # Ephemeral CLI/shell services for deploy work. Use docker compose run --rm php85-cli ...
+  # Ephemeral CLI/shell services for deploy work. Use ./dc run --rm php85-cli ...
   php84-cli:
     <<: *php-common
     image: *php84-image
@@ -175,9 +175,9 @@ services:
 
   # MySQL services are versioned so one server can run legacy, LTS, and preview databases side-by-side.
   # Start one or more explicitly, for example:
-  #   docker compose up -d mysql84
-  #   docker compose up -d mysql57 mysql84 mysql97
-  # Optional legacy MySQL. Start explicitly with: docker compose --profile mysql57 up -d mysql57
+  #   ./dc up -d mysql84
+  #   ./dc up -d mysql57 mysql84 mysql97
+  # Optional legacy MySQL. Start explicitly with: ./dc --profile mysql57 up -d mysql57
   # Buffer pool size must be a multiple of 128M (innodb_buffer_pool_chunk_size default class).
   mysql57:
     image: mysql:${MYSQL57_VERSION:-5.7}
@@ -221,7 +221,7 @@ services:
     networks:
       - backend
 
-  # Optional preview MySQL. Start explicitly with: docker compose --profile mysql97 up -d mysql97
+  # Optional preview MySQL. Start explicitly with: ./dc --profile mysql97 up -d mysql97
   mysql97:
     image: mysql:${MYSQL97_VERSION:-9.7}
     profiles: ["mysql97"]

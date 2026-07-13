@@ -18,10 +18,10 @@ class PhpReloadTests(unittest.TestCase):
         self.assertEqual(
             run.call_args_list,
             [
-                call(["docker", "compose", "exec", "-T", "php85", "php-identity-sync", "shop"]),
-                call(["docker", "compose", "exec", "-T", "php85", "php-fpm", "-tt"], capture=True),
+                call([*php.compose_prefix(), "exec", "-T", "php85", "php-identity-sync", "shop"]),
+                call([*php.compose_prefix(), "exec", "-T", "php85", "php-fpm", "-tt"], capture=True),
                 call(
-                    ["docker", "compose", "exec", "-T", "php85", "sh", "-lc", "kill -USR2 1"],
+                    [*php.compose_prefix(), "exec", "-T", "php85", "sh", "-lc", "kill -USR2 1"],
                     capture=True,
                 ),
             ],

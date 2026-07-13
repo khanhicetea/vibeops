@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import gzip
 import shutil
 import subprocess
@@ -157,7 +159,7 @@ def running_services() -> set[str]:
     if not docker_available():
         return set()
     cp = run(
-        ["docker", "compose", "ps", "--services", "--filter", "status=running"],
+        [*compose_prefix(), "ps", "--services", "--filter", "status=running"],
         check=False,
         capture=True,
     )

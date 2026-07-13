@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import re
 from pathlib import Path
 from typing import Any, Iterable
@@ -20,11 +22,11 @@ def nginx_reload(no_reload: bool = False) -> None:
     if no_reload:
         return
     if service_running("nginx"):
-        run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])
-        run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-s", "reload"])
+        run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-t"])
+        run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-s", "reload"])
         info("Reloaded nginx")
     else:
-        info("nginx container is not running; start it then run: docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload")
+        info("nginx container is not running; start it then run: ./dc exec nginx nginx -t && ./dc exec nginx nginx -s reload")
 
 
 def app_vhost_path(app_name: str, ctx: RenderContext | None = None) -> Path:

@@ -18,9 +18,9 @@ def compose_files(root: Path = ROOT) -> list[Path]:
     Duplicate paths (including symlink aliases of already-listed files) are skipped.
     """
     root = Path(root)
-    base = root / "compose.yml"
+    base = root / "config" / "compose.yml"
     if not base.is_file():
-        raise StackError(f"Missing compose.yml under {root}")
+        raise StackError(f"Missing config/compose.yml under {root}")
 
     files: list[Path] = [base]
     seen: set[Path] = {base.resolve()}
@@ -58,7 +58,7 @@ def _file_arg(path: Path, root: Path) -> str:
 
 def compose_prefix(root: Path = ROOT) -> list[str]:
     """Return ``['docker', 'compose', '-f', ...]`` for the overlay context."""
-    prefix = ["docker", "compose"]
+    prefix = ["docker", "compose", "--project-directory", str(Path(root).resolve())]
     for path in compose_files(root):
         prefix.extend(["-f", _file_arg(path, root)])
     return prefix

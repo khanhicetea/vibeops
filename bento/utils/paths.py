@@ -19,7 +19,7 @@ PHP_CONFIG_DIR = CONFIG_DIR / "php"
 PHP_GENERATED_DIR = GENERATED_DIR / "php"
 PHP_VERSIONS_DIR = PHP_GENERATED_DIR / "versions"
 PHP_TEMPLATE_DIR = PHP_CONFIG_DIR / "templates"
-# PHP majors shipped in compose.yml (php84 / php85).
+# PHP majors shipped in config/compose.yml (php84 / php85).
 SUPPORTED_PHP_VERSIONS = ("8.4", "8.5")
 MYSQL_TEMPLATE_DIR = CONFIG_DIR / "mysql" / "templates"
 MYSQL_SECRETS_DIR = RUNTIME_DIR / "secrets" / "mysql"

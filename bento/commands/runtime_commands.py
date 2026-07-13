@@ -15,6 +15,7 @@ from typing import Any, Callable, Collection
 
 from bento.commands.app_commands import cmd_app_list, ensure_app, resolve_app_php_version
 from bento.commands.cron_commands import render_cron_job
+from bento.services.compose import compose_command, compose_prefix
 from bento.services.cron_runtime import rebuild_supercronic_crontab
 from bento.services.runner import reconcile_runner, render_runner_programs, runner_versions, validate_runner
 from bento.utils.env import default_php_version, fpm_capacity_warnings, php_fpm_process_max
@@ -93,12 +94,12 @@ def cmd_app_exec(args: argparse.Namespace) -> None:
     tty_args: list[str] = []
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         tty_args.append("-T")
-    os.execvp("docker", [
-        "docker", "compose", "run", "--rm", *tty_args,
+    os.execvp("docker", compose_command(
+        "run", "--rm", *tty_args,
         php_cli_service,
         app_name, workdir,
         *command,
-    ])
+    ))
 
 def cmd_list(args: argparse.Namespace) -> None:
     db = load_db()
@@ -467,7 +468,7 @@ def validate_generated_services(db: dict[str, Any], *, services: Collection[str]
     want = normalize_service_targets(services)
 
     if "nginx" in want and docker_available() and service_running("nginx"):
-        run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])
+        run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-t"])
 
     if "php" in want:
         apps_by_version: dict[str, list[str]] = {}
@@ -478,8 +479,8 @@ def validate_generated_services(db: dict[str, Any], *, services: Collection[str]
         for version, app_names in sorted(apps_by_version.items()):
             service = php_service_for(version)
             if service_running(service):
-                run(["docker", "compose", "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
-                run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"], capture=True)
+                run([*compose_prefix(), "exec", "-T", service, "php-identity-sync", *sorted(app_names)])
+                run([*compose_prefix(), "exec", "-T", service, "php-fpm", "-tt"], capture=True)
 
     if "runner" in want:
         for version in sorted(runner_versions(db, available_php_versions())):
@@ -492,10 +493,10 @@ def reload_generated_services(db: dict[str, Any], *, services: Collection[str] |
 
     if "nginx" in want:
         if service_running("nginx"):
-            run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-s", "reload"])
+            run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-s", "reload"])
             info("Reloaded nginx")
         else:
-            info("nginx container is not running; start it then run: docker compose exec nginx nginx -s reload")
+            info("nginx container is not running; start it then run: ./dc exec nginx nginx -s reload")
 
     if "php" in want:
         apps_by_version: dict[str, list[str]] = {}
@@ -507,13 +508,13 @@ def reload_generated_services(db: dict[str, Any], *, services: Collection[str] |
             service = php_service_for(version)
             if service_running(service):
                 try:
-                    run([
-                        "docker", "compose", "exec", "-T", service, "sh", "-lc",
+                    run([*compose_prefix(),
+                         "exec", "-T", service, "sh", "-lc",
                         "kill -USR2 1",
                     ], capture=True)
                     info(f"Reloaded {service}")
                 except Exception as exc:
-                    warn(f"Failed to reload {service} after successful validation: {exc}; retry: docker compose kill -s USR2 {service}")
+                    warn(f"Failed to reload {service} after successful validation: {exc}; retry: ./dc kill -s USR2 {service}")
 
     if "runner" in want:
         for version in sorted(runner_versions(db, available_php_versions())):
@@ -630,23 +631,8 @@ def apply_generated_config(
 
     return live_paths
 
-def compose_files() -> list[Path]:
-    files = [ROOT / "compose.yml"]
-    for path in [ROOT / "compose.override.yml", ROOT / "compose.local.yml"]:
-        if path.exists():
-            files.append(path)
-    compose_d = ROOT / "compose.d"
-    if compose_d.exists():
-        files.extend(sorted(compose_d.glob("*.yml")))
-        files.extend(sorted(compose_d.glob("*.yaml")))
-    return files
-
 def cmd_compose(args: argparse.Namespace) -> None:
-    files = compose_files()
-    cmd = ["docker", "compose"]
-    for path in files:
-        cmd.extend(["-f", str(path)])
-    cmd.extend(args.compose_args or ["ps"])
+    cmd = [*compose_prefix(), *(args.compose_args or ["ps"])]
     os.execvp("docker", cmd)
 
 @serialized_cron_state
@@ -1093,4 +1079,4 @@ def cmd_status(args: argparse.Namespace) -> None:
             info(f"  {mysql_service} ping: {'ok' if ok else 'failed'}")
             info(f"  {mysql_service} logs: bento/{rel(mysql_log_dir(mysql_service))}")
     if args.check_nginx and "nginx" in running:
-        run(["docker", "compose", "exec", "-T", "nginx", "nginx", "-t"])
+        run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-t"])

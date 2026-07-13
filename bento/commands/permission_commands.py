@@ -1,6 +1,8 @@
 """Explicit PHP identity synchronization and app permission commands."""
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import argparse
 import json
 import sys
@@ -43,9 +45,9 @@ def _select_apps(args: argparse.Namespace) -> list[tuple[str, dict[str, Any], st
 def _container_command(version: str, helper: str, helper_args: list[str]) -> list[str]:
     service = php_service_for(version)
     if service_running(service):
-        return ["docker", "compose", "exec", "-T", service, helper, *helper_args]
-    return [
-        "docker", "compose", "run", "--rm", "--entrypoint", helper,
+        return [*compose_prefix(), "exec", "-T", service, helper, *helper_args]
+    return [*compose_prefix(),
+        "run", "--rm", "--entrypoint", helper,
         php_cli_service_for(version), *helper_args,
     ]
 

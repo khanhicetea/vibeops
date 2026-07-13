@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import re
 import secrets
 import subprocess
@@ -113,8 +115,8 @@ def mysql_root_exec_sql(sql: str, *, service: str | None = None, check: bool = T
     if not service_running(service):
         die(f"{service} service is not running")
     cp = run(
-        [
-            "docker", "compose", "exec", "-T", service,
+        [*compose_prefix(),
+             "exec", "-T", service,
             "sh", "-lc",
             'mysql --defaults-extra-file=/run/secrets/bento-root.cnf --batch --raw',
         ],
@@ -134,8 +136,8 @@ def mysql_admin_ping(service: str | None = None) -> bool:
     if not service_running(service):
         return False
     cp = run(
-        [
-            "docker", "compose", "exec", "-T", service,
+        [*compose_prefix(),
+             "exec", "-T", service,
             "sh", "-lc",
             'mysqladmin --defaults-extra-file=/run/secrets/bento-root.cnf ping --silent',
         ],

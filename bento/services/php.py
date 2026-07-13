@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -38,14 +40,14 @@ def php_version_config_dir(version: str, ctx: RenderContext | None = None) -> Pa
 
 def php_reload(service: str, username: str, no_reload: bool = False) -> None:
     if service_running(service):
-        run(["docker", "compose", "exec", "-T", service, "php-identity-sync", username])
+        run([*compose_prefix(), "exec", "-T", service, "php-identity-sync", username])
         if not no_reload:
             try:
                 # php-fpm -tt writes its full configuration dump to stderr even
                 # when validation succeeds. Keep app creation output concise.
-                run(["docker", "compose", "exec", "-T", service, "php-fpm", "-tt"], capture=True)
-                run([
-                    "docker", "compose", "exec", "-T", service, "sh", "-lc",
+                run([*compose_prefix(), "exec", "-T", service, "php-fpm", "-tt"], capture=True)
+                run([*compose_prefix(),
+                     "exec", "-T", service, "sh", "-lc",
                     "kill -USR2 1",
                 ], capture=True)
             except subprocess.CalledProcessError:

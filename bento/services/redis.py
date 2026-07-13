@@ -1,6 +1,8 @@
 """Redis ACL account provisioning and app credential files."""
 from __future__ import annotations
 
+from bento.services.compose import compose_prefix
+
 import re
 from typing import Any
 
@@ -33,10 +35,10 @@ def validate_redis_password(value: str, field: str) -> str:
 def redis_acl_exec(*command: str) -> None:
     admin_password = validate_redis_password(stack_env().get("REDIS_ADMIN_PASSWORD", ""), "REDIS_ADMIN_PASSWORD")
     payload = _resp("AUTH", "admin", admin_password) + _resp(*command)
-    cp = run(["docker", "compose", "exec", "-T", "redis", "redis-cli", "--pipe"], input_text=payload, check=False, capture=True)
+    cp = run([*compose_prefix(), "exec", "-T", "redis", "redis-cli", "--pipe"], input_text=payload, check=False, capture=True)
     output = f"{cp.stdout or ''}\n{cp.stderr or ''}"
     if cp.returncode != 0 or "errors: 0" not in output:
-        die("Redis ACL command failed; inspect docker compose logs redis")
+        die("Redis ACL command failed; inspect ./dc logs redis")
 
 
 def ensure_redis_user(app_name: str) -> tuple[bool, str]:

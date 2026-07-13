@@ -52,7 +52,7 @@ bento/runtime/home/<app_name>/www
 ## Layout
 
 ```text
-compose.yml
+config/compose.yml              # upstream-owned core Compose stack
 .env.example
 manage.py                     # create apps/domains/crons and run app commands
 docs/architecture.md          # current file-layout/architecture notes
@@ -95,9 +95,9 @@ cp .env.example .env
 ./manage.py render   # stage full generation, then promote into runtime/generated
 # ./manage.py apply  # same as render, then validate + reload running services
 
-docker compose build php84 php85 php84-runner php85-runner
+./dc build php84 php85 php84-runner php85-runner
 # mysql84 is the default MySQL service.
-docker compose up -d --remove-orphans mysql84 redis php84 php85 php84-runner php85-runner nginx
+./dc up -d --remove-orphans mysql84 redis php84 php85 php84-runner php85-runner nginx
 # Optional extra majors:
 # docker compose --profile mysql57 --profile mysql97 up -d mysql57 mysql97
 ```
@@ -122,7 +122,7 @@ For a quick dashboard without entering the wizard:
 ./manage.py status --check-nginx
 ```
 
-Keep `compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`. Use `./dc ...` as the short `docker compose` replacement (or `./manage.py compose ...`) so every local fragment is always included:
+Keep `config/compose.yml` upstream-owned. Put local Docker Compose customization in ignored `compose.override.yml`, `compose.local.yml`, or `compose.d/*.yml`. Use `./dc ...` as the short `docker compose` replacement (or `./manage.py compose ...`) so every local fragment is always included:
 
 ```bash
 ./dc config
@@ -398,7 +398,7 @@ Or pass explicit paths as seen inside the Nginx container:
 
 ## Add another PHP version
 
-Copy an existing PHP service set in `compose.yml` (FPM, runner, and CLI) and change both the service suffix (`phpXX`) and PHP version directory (`8.x`) consistently:
+Copy an existing PHP service set into a local `compose.d/*.yml` fragment (FPM, runner, and CLI) and change both the service suffix (`phpXX`) and PHP version directory (`8.x`) consistently:
 
 ```yaml
   phpXX:
@@ -424,8 +424,8 @@ Then:
 
 ```bash
 mkdir -p runtime/generated/php/versions/8.x/{pool.d,users.d} runtime/generated/cron/phpXX/{jobs,apps} runtime/generated/runner/phpXX/programs runtime/run/php-fpm/phpXX runtime/logs/php/phpXX
-docker compose build phpXX phpXX-runner
-docker compose up -d phpXX phpXX-runner
+./dc build phpXX phpXX-runner
+./dc up -d phpXX phpXX-runner
 ./manage.py app create myapp example.com --php 8.x
 ```
 
@@ -498,7 +498,7 @@ Use `--mysql-service mysql57|mysql84|mysql97` when you run more than one major. 
 
 #### What is durable by default
 
-- Table data lives in Docker named volumes (`mysql84-data`, `mysql57-data`, `mysql97-data`; see `compose.yml`).
+- Table data lives in Docker named volumes (`mysql84-data`, `mysql57-data`, `mysql97-data`; see `config/compose.yml`).
 - Recreating a MySQL container keeps data **if** the volume is not removed.
 - `docker compose down -v` **destroys** MySQL data. Do not use `-v` on production hosts unless you intend to wipe.
 
