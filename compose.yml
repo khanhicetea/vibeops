@@ -16,11 +16,8 @@ x-php-common: &php-common
     TZ: ${TZ:-Asia/Ho_Chi_Minh}
     SOCKET_GROUP_NAME: ${SOCKET_GROUP_NAME:-nginxsock}
     SOCKET_GID: ${SOCKET_GID:-101}
-  depends_on:
-    mysql84:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
+  # No depends_on mysql/redis: PHP roles can start for debug/partial stacks.
+  # App code handles DB/cache readiness; start mysql84+redis via full compose up.
   networks:
     - backend
 
