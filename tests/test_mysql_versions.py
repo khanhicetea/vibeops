@@ -61,11 +61,15 @@ class MysqlVersionsTests(unittest.TestCase):
         with (
             patch("bento.commands.mysql_version_commands.load_db", return_value=db),
             patch("bento.commands.mysql_version_commands.render_mysql_versions_compose") as render,
+            patch("bento.commands.mysql_version_commands.render_mysql_root_option_files") as render_secrets,
+            patch("bento.commands.mysql_version_commands.mysql_root_option_file") as option_file,
             patch("bento.commands.mysql_version_commands.save_db") as save,
         ):
             cmd_mysql_add.__wrapped__(argparse.Namespace(version="5.7"))
         self.assertEqual(db["mysql_versions"], ["5.7", "8.4"])
         render.assert_called_once_with(db)
+        render_secrets.assert_called_once_with(db=db)
+        option_file.assert_called_once_with("mysql57")
         save.assert_called_once_with(db)
 
 

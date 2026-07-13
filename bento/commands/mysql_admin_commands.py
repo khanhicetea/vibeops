@@ -105,7 +105,11 @@ def wizard_manage_mysql_versions() -> None:
             return
         if action == "Add version":
             version = prompt_validated("MySQL version", re.compile(r"^[0-9]+\.[0-9]+$"), "MySQL version", "8.4")
-            print_plan([f"add MySQL {version}", "create a durable named data volume", "generate compose.d/bento-mysql-versions.yml"])
+            print_plan([
+                f"add MySQL {version}",
+                "create a durable named data volume",
+                "generate its Compose service and protected root option file",
+            ])
             if prompt_confirm("Continue?", True):
                 cmd_mysql_add(argparse.Namespace(version=version))
             continue
