@@ -30,10 +30,25 @@ class MysqlVersionsTests(unittest.TestCase):
             render_mysql_versions_compose({"mysql_versions": ["5.7", "8.4"]}, path, machine="aarch64")
             text = path.read_text()
 
-        self.assertIn("  mysql57:\n    image: biarms/mysql:5.7\n", text)
+        self.assertIn(
+            "  mysql57:\n"
+            "    image: biarms/mysql:5.7\n"
+            "    entrypoint: [\"/bin/bash\", \"/usr/local/bin/bento-biarms-entrypoint.sh\"]\n",
+            text,
+        )
+        self.assertIn(
+            "      - ./docker/mysql/5.7/biarms-entrypoint.sh:"
+            "/usr/local/bin/bento-biarms-entrypoint.sh:ro\n",
+            text,
+        )
         self.assertIn("    image: mysql:${MYSQL84_VERSION:-8.4}\n", text)
         self.assertNotIn("image: mysql:${MYSQL57_VERSION:-5.7}", text)
         self.assertNotIn("context: ./docker/mysql/5.7", text)
+
+    def test_biarms_entrypoint_prepares_bind_mounted_log_directory(self) -> None:
+        entrypoint = Path("docker/mysql/5.7/biarms-entrypoint.sh").read_text()
+        self.assertIn("chown -R mysql:mysql /var/log/mysql", entrypoint)
+        self.assertIn('exec /usr/local/bin/docker-entrypoint.sh "$@"', entrypoint)
 
     def test_arm64_architecture_aliases(self) -> None:
         self.assertTrue(host_is_arm64("arm64"))

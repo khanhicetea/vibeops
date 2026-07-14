@@ -56,10 +56,16 @@ def render_mysql_versions_compose(
             f"      - ./config/mysql/versions/{version}/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro\n"
             if version_config.is_file() else ""
         )
+        biarms_mysql57 = version == "5.7" and arm64
         image_source = (
             "    image: biarms/mysql:5.7\n"
-            if version == "5.7" and arm64
+            "    entrypoint: [\"/bin/bash\", \"/usr/local/bin/bento-biarms-entrypoint.sh\"]\n"
+            if biarms_mysql57
             else f"    image: mysql:${{MYSQL{compact}_VERSION:-{version}}}\n"
+        )
+        compatibility_mount = (
+            "      - ./docker/mysql/5.7/biarms-entrypoint.sh:/usr/local/bin/bento-biarms-entrypoint.sh:ro\n"
+            if biarms_mysql57 else ""
         )
         lines.extend([
             f"  {service}:\n",
@@ -72,6 +78,7 @@ def render_mysql_versions_compose(
             "      TZ: ${TZ:-Asia/Ho_Chi_Minh}\n",
             "    volumes:\n",
             f"      - {service}-data:/var/lib/mysql\n",
+            compatibility_mount,
             "      - ./config/mysql/common/conf.d/10-common.cnf:/etc/mysql/conf.d/10-common.cnf:ro\n",
             version_mount,
             f"      - ./runtime/backups/{service}:/backups\n",

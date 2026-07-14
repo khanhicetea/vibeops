@@ -9,7 +9,7 @@ paths=[p for p in pathlib.Path(".").rglob("*.py") if ".git" not in p.parts and "
 [ast.parse(p.read_text(), filename=str(p)) for p in paths]; \
 print(f"syntax ok ({len(paths)} files)")'
 	@sh -n docker/php/bin/* 2>/dev/null || true
-	@bash -n docker/mysql/5.7/docker-entrypoint.sh
+	@bash -n docker/mysql/5.7/docker-entrypoint.sh docker/mysql/5.7/biarms-entrypoint.sh
 
 test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -v
