@@ -1,6 +1,11 @@
 ---
 name: bento
-description: Operate this repository's bento stack: host-network Nginx, managed PHP-FPM and MySQL versions, Redis, app isolation, Unix sockets, ACME TLS, cron, workers, backups, generated state, customization, deployment, and troubleshooting. Use for app deployment, domains, proxies, runtime versions, databases, Compose/Nginx/PHP changes, or production incidents in this stack.
+description: >-
+  Operate this repository's bento stack: host-network Nginx, managed PHP-FPM
+  and MySQL versions, Redis, app isolation, Unix sockets, ACME TLS, cron,
+  workers, backups, generated state, customization, deployment, and
+  troubleshooting. Use for app deployment, domains, proxies, runtime versions,
+  databases, Compose/Nginx/PHP changes, or production incidents in this stack.
 ---
 
 # bento

@@ -110,4 +110,4 @@ else
 fi
 
 say "Summary"
-echo "Use README.md and .pi/skills/bento/references/deploy-runbook.md for exact deployment workflows."
+echo "Use README.md and .agents/skills/bento/references/deploy-runbook.md for exact deployment workflows."
