@@ -210,7 +210,7 @@ FPM sizing is selected per app with `--fpm-profile ondemand|balanced|throughput`
 ```bash
 ./manage.py mysql versions
 ./manage.py mysql add 5.7
-./dc up -d mysql57
+./dc up -d --build mysql57
 
 ./manage.py db shell --mysql-service mysql57
 ./manage.py db stats --mysql-service mysql57
@@ -218,6 +218,8 @@ FPM sizing is selected per app with `--fpm-profile ondemand|balanced|throughput`
 ```
 
 There is intentionally no MySQL remove command. Retire a version only after manual backup/migration and deliberate removal of its service and named volume.
+
+On ARM64 hosts, MySQL 5.7 is built from `docker/mysql/5.7/Dockerfile` because the official 5.7 image has no ARM64 variant. Other versions and x86-64 hosts continue to use official MySQL images. MySQL 5.7 is end-of-life, and compiling it can take significantly longer than pulling an image.
 
 ### Backups and restore
 

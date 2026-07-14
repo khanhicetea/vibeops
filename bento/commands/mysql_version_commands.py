@@ -56,5 +56,5 @@ def cmd_mysql_add(args: argparse.Namespace) -> None:
             f"Root password is unset; set {service.upper()}_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD "
             "in .env, then run ./manage.py render before starting this service"
         )
-    info(f"Start it with: ./dc up -d {service}")
+    info(f"Start it with: ./dc up -d --build {service}")
     info(f"Its data is retained in the named volume {service}-data; CLI removal is intentionally unavailable")
