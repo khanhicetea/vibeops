@@ -219,7 +219,7 @@ FPM sizing is selected per app with `--fpm-profile ondemand|balanced|throughput`
 
 There is intentionally no MySQL remove command. Retire a version only after manual backup/migration and deliberate removal of its service and named volume.
 
-On ARM64 hosts, MySQL 5.7 uses `biarms/mysql:5.7` because the official 5.7 image has no ARM64 variant. A small compatibility entrypoint prepares the bind-mounted log directory before delegating to the image's entrypoint. The custom `docker/mysql/5.7/Dockerfile` remains available for testing or fallback builds. Other versions and x86-64 hosts continue to use official MySQL images. MySQL 5.7 is end-of-life.
+On ARM64 hosts, MySQL 5.7 uses the custom `docker/mysql/5.7/Dockerfile`, based on `biarms/mysql:5.7`, because the official 5.7 image has no ARM64 variant. The custom image adds a compatibility entrypoint that prepares the bind-mounted log directory before delegating to the base image's entrypoint. Other versions and x86-64 hosts continue to use official MySQL images. MySQL 5.7 is end-of-life.
 
 ### Backups and restore
 

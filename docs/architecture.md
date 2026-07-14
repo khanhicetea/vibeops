@@ -85,7 +85,7 @@ A PHP version creates three roles:
 
 All roles use the same image, PHP binary, extensions, user metadata, and `/home` mount. The runner must stay at one replica.
 
-A MySQL version creates a service such as `mysql84` and a named volume such as `mysql84-data`. MySQL version removal is intentionally not automated. On ARM64, the MySQL 5.7 service uses `biarms/mysql:5.7` because the official 5.7 image does not provide an ARM64 variant. A compatibility entrypoint fixes ownership of the bind-mounted log directory before delegating to the image's entrypoint; the retained `docker/mysql/5.7/` build context remains available for testing or fallback builds. All other host/version combinations use official images.
+A MySQL version creates a service such as `mysql84` and a named volume such as `mysql84-data`. MySQL version removal is intentionally not automated. On ARM64, the MySQL 5.7 service builds the custom `docker/mysql/5.7/` image from `biarms/mysql:5.7` because the official 5.7 image does not provide an ARM64 variant. The custom image adds a compatibility entrypoint that fixes ownership of the bind-mounted log directory before delegating to the base image's entrypoint. All other host/version combinations use official images.
 
 ## Render and apply transaction
 

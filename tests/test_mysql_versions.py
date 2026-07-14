@@ -24,7 +24,7 @@ class MysqlVersionsTests(unittest.TestCase):
             self.assertIn("    image: mysql:${MYSQL57_VERSION:-5.7}\n", text)
             self.assertNotIn("context: ./docker/mysql/5.7", text)
 
-    def test_mysql_57_uses_biarms_image_on_arm64(self) -> None:
+    def test_mysql_57_builds_biarms_based_custom_image_on_arm64(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bento-mysql-versions.yml"
             render_mysql_versions_compose({"mysql_versions": ["5.7", "8.4"]}, path, machine="aarch64")
@@ -32,18 +32,15 @@ class MysqlVersionsTests(unittest.TestCase):
 
         self.assertIn(
             "  mysql57:\n"
-            "    image: biarms/mysql:5.7\n"
-            "    entrypoint: [\"/bin/bash\", \"/usr/local/bin/bento-biarms-entrypoint.sh\"]\n",
-            text,
-        )
-        self.assertIn(
-            "      - ./docker/mysql/5.7/biarms-entrypoint.sh:"
-            "/usr/local/bin/bento-biarms-entrypoint.sh:ro\n",
+            "    build:\n"
+            "      context: ./docker/mysql/5.7\n"
+            "      dockerfile: Dockerfile\n"
+            "    image: bento/mysql:5.7-arm64\n",
             text,
         )
         self.assertIn("    image: mysql:${MYSQL84_VERSION:-8.4}\n", text)
         self.assertNotIn("image: mysql:${MYSQL57_VERSION:-5.7}", text)
-        self.assertNotIn("context: ./docker/mysql/5.7", text)
+        self.assertNotIn("biarms-entrypoint.sh:/usr/local/bin", text)
 
     def test_biarms_entrypoint_prepares_bind_mounted_log_directory(self) -> None:
         entrypoint = Path("docker/mysql/5.7/biarms-entrypoint.sh").read_text()
@@ -55,18 +52,14 @@ class MysqlVersionsTests(unittest.TestCase):
         self.assertTrue(host_is_arm64("AARCH64"))
         self.assertFalse(host_is_arm64("x86_64"))
 
-    def test_retained_custom_arm64_build_inputs_are_pinned(self) -> None:
+    def test_custom_arm64_image_wraps_biarms_entrypoint(self) -> None:
         dockerfile = Path("docker/mysql/5.7/Dockerfile").read_text()
-        pinned_base = (
-            "FROM debian:bullseye-slim@sha256:"
-            "256e2eb1c47e91d91d1332b436b2efac5cd2511dc82fb78850fd01770cce2162"
+        self.assertTrue(dockerfile.startswith("FROM biarms/mysql:5.7\n"))
+        self.assertIn(
+            "COPY biarms-entrypoint.sh /usr/local/bin/bento-biarms-entrypoint.sh",
+            dockerfile,
         )
-        self.assertEqual(dockerfile.count(pinned_base), 2)
-        self.assertEqual(dockerfile.count("snapshot.debian.org/archive/debian/20250201T000000Z"), 2)
-        self.assertNotIn("https://snapshot.debian.org", dockerfile)
-        self.assertIn("MYSQL_VERSION=5.7.44", dockerfile)
-        self.assertIn("MYSQL_SOURCE_SHA256=b8fe262c4679cb7bbc379a3f1addc723844db168628ce2acf78d33906849e491", dockerfile)
-        self.assertIn("sha256sum --check --strict", dockerfile)
+        self.assertIn('ENTRYPOINT ["/usr/local/bin/bento-biarms-entrypoint.sh"]', dockerfile)
 
     def test_database_stats_formats_allocated_bytes(self) -> None:
         with (
