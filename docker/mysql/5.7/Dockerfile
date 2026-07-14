@@ -19,12 +19,12 @@ RUN rm -f /etc/apt/sources.list.d/* \
         cmake \
         curl \
         libaio-dev \
+        libc-dev-bin \
         libncurses5-dev \
         libnuma-dev \
         libssl-dev \
         libtirpc-dev \
         pkg-config \
-        rpcsvc-proto \
         xz-utils \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
