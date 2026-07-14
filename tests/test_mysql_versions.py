@@ -54,6 +54,7 @@ class MysqlVersionsTests(unittest.TestCase):
         )
         self.assertEqual(dockerfile.count(pinned_base), 2)
         self.assertEqual(dockerfile.count("snapshot.debian.org/archive/debian/20250201T000000Z"), 2)
+        self.assertNotIn("https://snapshot.debian.org", dockerfile)
         self.assertIn("MYSQL_VERSION=5.7.44", dockerfile)
         self.assertIn("MYSQL_SOURCE_SHA256=b8fe262c4679cb7bbc379a3f1addc723844db168628ce2acf78d33906849e491", dockerfile)
         self.assertIn("sha256sum --check --strict", dockerfile)

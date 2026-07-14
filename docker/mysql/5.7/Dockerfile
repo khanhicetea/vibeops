@@ -4,10 +4,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV MYSQL_VERSION=5.7.44
 ENV MYSQL_SOURCE_SHA256=b8fe262c4679cb7bbc379a3f1addc723844db168628ce2acf78d33906849e491
 
+# The slim base has no CA bundle yet. APT authenticates these HTTP snapshot
+# downloads through Debian's signed InRelease metadata and package hashes.
 RUN rm -f /etc/apt/sources.list.d/* \
     && printf '%s\n' \
-        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250201T000000Z bullseye main' \
-        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250201T000000Z bullseye-security main' \
+        'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20250201T000000Z bullseye main' \
+        'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20250201T000000Z bullseye-security main' \
         > /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
@@ -58,10 +60,12 @@ ENV MYSQL_MAJOR=5.7
 ENV MYSQL_VERSION=5.7.44
 ENV PATH=/usr/local/mysql/bin:$PATH
 
+# The slim base has no CA bundle yet. APT authenticates these HTTP snapshot
+# downloads through Debian's signed InRelease metadata and package hashes.
 RUN rm -f /etc/apt/sources.list.d/* \
     && printf '%s\n' \
-        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250201T000000Z bullseye main' \
-        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250201T000000Z bullseye-security main' \
+        'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20250201T000000Z bullseye main' \
+        'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20250201T000000Z bullseye-security main' \
         > /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
