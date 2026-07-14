@@ -24,29 +24,23 @@ class MysqlVersionsTests(unittest.TestCase):
             self.assertIn("    image: mysql:${MYSQL57_VERSION:-5.7}\n", text)
             self.assertNotIn("context: ./docker/mysql/5.7", text)
 
-    def test_mysql_57_uses_local_arm64_build(self) -> None:
+    def test_mysql_57_uses_biarms_image_on_arm64(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bento-mysql-versions.yml"
             render_mysql_versions_compose({"mysql_versions": ["5.7", "8.4"]}, path, machine="aarch64")
             text = path.read_text()
 
-        self.assertIn(
-            "  mysql57:\n"
-            "    build:\n"
-            "      context: ./docker/mysql/5.7\n"
-            "      dockerfile: Dockerfile\n"
-            "    image: bento/mysql:5.7-arm64\n",
-            text,
-        )
+        self.assertIn("  mysql57:\n    image: biarms/mysql:5.7\n", text)
         self.assertIn("    image: mysql:${MYSQL84_VERSION:-8.4}\n", text)
         self.assertNotIn("image: mysql:${MYSQL57_VERSION:-5.7}", text)
+        self.assertNotIn("context: ./docker/mysql/5.7", text)
 
     def test_arm64_architecture_aliases(self) -> None:
         self.assertTrue(host_is_arm64("arm64"))
         self.assertTrue(host_is_arm64("AARCH64"))
         self.assertFalse(host_is_arm64("x86_64"))
 
-    def test_arm64_build_inputs_are_pinned(self) -> None:
+    def test_retained_custom_arm64_build_inputs_are_pinned(self) -> None:
         dockerfile = Path("docker/mysql/5.7/Dockerfile").read_text()
         pinned_base = (
             "FROM debian:bullseye-slim@sha256:"

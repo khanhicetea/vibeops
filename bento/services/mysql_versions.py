@@ -57,10 +57,7 @@ def render_mysql_versions_compose(
             if version_config.is_file() else ""
         )
         image_source = (
-            "    build:\n"
-            "      context: ./docker/mysql/5.7\n"
-            "      dockerfile: Dockerfile\n"
-            "    image: bento/mysql:5.7-arm64\n"
+            "    image: biarms/mysql:5.7\n"
             if version == "5.7" and arm64
             else f"    image: mysql:${{MYSQL{compact}_VERSION:-{version}}}\n"
         )
