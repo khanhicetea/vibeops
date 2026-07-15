@@ -24,6 +24,7 @@ class MysqlVersionsTests(unittest.TestCase):
             self.assertIn("      context: ./docker/mysql\n", text)
             self.assertIn("        MYSQL_BASE_IMAGE: mysql:${MYSQL57_VERSION:-5.7}\n", text)
             self.assertIn("    image: bento/mysql:${MYSQL57_VERSION:-5.7}\n", text)
+            self.assertEqual(text.count("--innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-128M}"), 2)
 
     def test_mysql_57_builds_biarms_based_custom_image_on_arm64(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

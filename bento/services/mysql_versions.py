@@ -50,7 +50,7 @@ def render_mysql_versions_compose(
     for version in managed_mysql_versions(db):
         service = mysql_service_for(version)
         compact = version.replace(".", "")
-        default_pool = "384M" if version.startswith("5.") else "512M"
+        default_pool = "128M"
         version_config = ROOT / "config" / "mysql" / "versions" / version / "conf.d" / "90-version.cnf"
         version_mount = (
             f"      - ./config/mysql/versions/{version}/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro\n"
