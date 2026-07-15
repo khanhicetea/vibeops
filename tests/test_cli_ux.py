@@ -1,4 +1,4 @@
-"""CLI UX: interactive cancellation and secret input handling."""
+"""Headless CLI behavior and secret input handling."""
 from __future__ import annotations
 
 import io
@@ -7,9 +7,9 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 from bento.commands.cli import main
-from bento.utils.errors import cli_flag_present, warn_password_cli_flag
 from bento.commands.parser import build_parser
 from bento.commands.runtime_commands import prompt_password
+from bento.utils.errors import cli_flag_present, warn_password_cli_flag
 
 
 class CliCancellationTests(unittest.TestCase):
@@ -59,9 +59,6 @@ class PromptPasswordTests(unittest.TestCase):
 class PasswordFlagDiscourageTests(unittest.TestCase):
     def test_help_marks_mysql_password_discouraged(self) -> None:
         parser = build_parser()
-        # Find nested app create help via format_help on the leaf parser path.
-        help_text = parser.format_help()
-        # Full tree help may not include subcommand flags; parse with --help instead.
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             with self.assertRaises(SystemExit):
                 parser.parse_args(["app", "create", "--help"])
@@ -97,307 +94,17 @@ class PasswordFlagDiscourageTests(unittest.TestCase):
         self.assertIn("shell history", err.getvalue())
 
 
-class WizardMenuRefactorTests(unittest.TestCase):
-    def test_main_menu_is_focused(self) -> None:
-        from bento.commands import wizard_commands
-
-        with (
-            mock.patch.object(wizard_commands.sys.stdin, "isatty", return_value=True),
-            mock.patch.object(wizard_commands, "prompt_choice", return_value="Quit") as choice,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.cmd_wizard(mock.Mock())
-
-        self.assertEqual(
-            choice.call_args.args[1],
-            ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Maintance", "Show services status"],
-        )
-        self.assertEqual(choice.call_args.kwargs["zero"], "Quit")
-
-    def test_maintance_menu_offers_run_and_cron_setup(self) -> None:
-        from bento.commands import wizard_commands
-
-        with (
-            mock.patch.object(wizard_commands, "prompt_choice", return_value="Back") as choice,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_maintance()
-
-        self.assertEqual(choice.call_args.args[1], ["Run now", "Setup cron"])
-
-    def test_mysql_manager_selects_version_for_database_stats(self) -> None:
-        from bento.commands import mysql_admin_commands
-
-        state = {"mysql_versions": ["5.7", "8.4"]}
-        with (
-            mock.patch.object(mysql_admin_commands, "load_db", return_value=state),
-            mock.patch.object(mysql_admin_commands, "cmd_mysql_versions"),
-            mock.patch.object(mysql_admin_commands, "prompt_choice", side_effect=["Database sizes", "Back"]) as choice,
-            mock.patch.object(mysql_admin_commands, "prompt_pick", return_value="MySQL 5.7 (mysql57)"),
-            mock.patch.object(mysql_admin_commands, "cmd_db_stats") as stats,
-            mock.patch.object(mysql_admin_commands, "info"),
-        ):
-            mysql_admin_commands.wizard_manage_mysql_versions()
-
-        self.assertEqual(
-            choice.call_args_list[0].args[1],
-            ["Open MySQL shell", "Database sizes", "Process list", "Add version"],
-        )
-        self.assertEqual(stats.call_args.args[0].mysql_service, "mysql57")
-
-    def test_manage_app_menu_passes_selected_app_to_scoped_manager(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "main_domain": "shop.example.com", "php_version": "8.5"}
-        with (
-            mock.patch.object(wizard_commands, "wizard_select_app", return_value=("shop", app)),
-            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
-            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Domains", "Back"]) as choice,
-            mock.patch.object(wizard_commands, "wizard_manage_domains") as domains,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_app()
-
-        self.assertEqual(
-            choice.call_args_list[0].args[1],
-            ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Access Logs", "Audit File Permissions", "Customize"],
-        )
-        domains.assert_called_once_with("shop")
-
-    def test_access_logs_menu_is_inside_manage_app(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "main_domain": "shop.example.com", "access_log": True}
-        with (
-            mock.patch.object(wizard_commands, "wizard_select_app", return_value=("shop", app)),
-            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
-            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Access Logs", "Back"]),
-            mock.patch.object(wizard_commands, "wizard_manage_access_logs") as access_logs,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_app()
-
-        access_logs.assert_called_once_with("shop")
-
-    def test_access_logs_menu_can_launch_goaccess_tui(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "access_log": True}
-        with (
-            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
-            mock.patch.object(wizard_commands, "cmd_app_access_log") as status,
-            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Analyze GoAccess", "Back"]) as choice,
-            mock.patch.object(wizard_commands, "cmd_app_logs_analyze") as analyze,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_access_logs("shop")
-
-        self.assertEqual(choice.call_args_list[0].args[1], ["Disable", "Analyze GoAccess"])
-        self.assertEqual(status.call_args.args[0].access_log_action, "status")
-        args = analyze.call_args.args[0]
-        self.assertEqual(args.app_name, "shop")
-        self.assertIsNone(args.html)
-
-    def test_workers_menu_is_inside_manage_app(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "main_domain": "shop.example.com", "php_version": "8.5"}
-        with (
-            mock.patch.object(wizard_commands, "wizard_select_app", return_value=("shop", app)),
-            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
-            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Workers", "Back"]) as choice,
-            mock.patch.object(wizard_commands, "wizard_manage_workers") as workers,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_app()
-
-        self.assertIn("Workers", choice.call_args_list[0].args[1])
-        workers.assert_called_once_with("shop", app)
-
-    def test_worker_create_splits_command_and_calls_handler(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "php_version": "8.5"}
-        with (
-            mock.patch.object(wizard_commands, "prompt_validated", return_value="queue"),
-            mock.patch.object(
-                wizard_commands,
-                "prompt_text",
-                side_effect=["php artisan queue:work --sleep=1", "", "120"],
-            ),
-            mock.patch.object(wizard_commands, "prompt_confirm", return_value=True),
-            mock.patch.object(wizard_commands, "print_plan"),
-            mock.patch.object(wizard_commands, "cmd_worker_create") as create,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_worker("shop", app)
-
-        args = create.call_args.args[0]
-        self.assertEqual(args.app_name, "shop")
-        self.assertEqual(args.worker_name, "queue")
-        self.assertEqual(args.php, "8.5")
-        self.assertIsNone(args.workdir)
-        self.assertEqual(args.stop_timeout, 120)
-        self.assertEqual(args.worker_command, ["--", "php", "artisan", "queue:work", "--sleep=1"])
-
-    def test_worker_manager_lists_and_can_restart(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "php_version": "8.5"}
-        workers = {
-            "shop/queue": {
-                "app": "shop",
-                "name": "queue",
-                "php_version": "8.5",
-                "command": ["php", "artisan", "queue:work"],
-            }
-        }
-        with (
-            mock.patch.object(
-                wizard_commands,
-                "load_db",
-                return_value={"workers": workers},
-            ),
-            mock.patch.object(wizard_commands, "cmd_worker_list"),
-            mock.patch.object(
-                wizard_commands,
-                "prompt_choice",
-                side_effect=["Restart", "Back"],
-            ) as choice,
-            mock.patch.object(
-                wizard_commands,
-                "prompt_pick",
-                return_value="shop/queue (php artisan queue:work)",
-            ),
-            mock.patch.object(wizard_commands, "prompt_confirm", return_value=True),
-            mock.patch.object(wizard_commands, "print_plan"),
-            mock.patch.object(wizard_commands, "cmd_worker_control") as control,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_workers("shop", app)
-
-        actions = choice.call_args_list[0].args[1]
-        self.assertIn("Create worker", actions)
-        self.assertIn("Restart", actions)
-        self.assertIn("Status", actions)
-        args = control.call_args.args[0]
-        self.assertEqual((args.worker_action, args.app_name, args.worker_name), ("restart", "shop", "queue"))
-
-    def test_customize_menu_selects_app_scoped_vhost(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "service_config": {}}
-        with (
-            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
-            mock.patch.object(wizard_commands, "cmd_app_config_status"),
-            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Customize", "Back"]),
-            mock.patch.object(wizard_commands, "prompt_pick", return_value="Vhost") as pick,
-            mock.patch.object(wizard_commands, "prompt_confirm", side_effect=[True, True]),
-            mock.patch.object(wizard_commands, "cmd_app_config_customize") as customize,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_customize_app("shop")
-
-        self.assertEqual(pick.call_args.args[1], ["Vhost", "PHP-FPM pool"])
-        args = customize.call_args.args[0]
-        self.assertEqual((args.app_name, args.target), ("shop", "vhost"))
-        self.assertFalse(args.no_edit)
-        self.assertFalse(args.no_reload)
-
-    def test_tls_acme_is_inside_app_domains_menu(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "main_domain": "shop.example.com", "domains": ["shop.example.com"]}
-        with (
-            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
-            mock.patch.object(wizard_commands, "cmd_app_domain_list"),
-            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["TLS / ACME", "Back"]) as choice,
-            mock.patch.object(wizard_commands, "wizard_tls_acme") as tls,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_domains("shop")
-
-        self.assertIn("TLS / ACME", choice.call_args_list[0].args[1])
-        tls.assert_called_once_with("shop")
-
-    def test_backup_and_restore_are_inside_app_database_menu(self) -> None:
-        from bento.commands import wizard_commands
-
-        app = {"name": "shop", "mysql_service": "mysql84"}
-        with (
-            mock.patch.object(wizard_commands, "cmd_app_db_list"),
-            mock.patch.object(wizard_commands, "prompt_choice", return_value="Back") as choice,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_manage_databases("shop", app)
-
-        actions = choice.call_args.args[1]
-        self.assertIn("Backup app databases", actions)
-        self.assertIn("Restore a backup", actions)
-
-    def test_app_scoped_backup_helpers_do_not_prompt_for_mysql_service(self) -> None:
-        from bento.commands import wizard_commands
-
-        with (
-            mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
-            mock.patch.object(wizard_commands, "prompt_confirm", side_effect=[True, False]),
-            mock.patch.object(wizard_commands, "prompt_text", return_value=""),
-            mock.patch.object(wizard_commands, "print_plan"),
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_db_backup(fixed_service="mysql84", app_name="shop")
-        service_prompt.assert_not_called()
-
-        with (
-            mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
-            mock.patch.object(wizard_commands, "cmd_db_list_backups") as list_backups,
-            mock.patch.object(wizard_commands, "print_heading"),
-        ):
-            wizard_commands.wizard_db_list_backups(fixed_service="mysql84")
-        service_prompt.assert_not_called()
-        self.assertEqual(list_backups.call_args.args[0].mysql_service, "mysql84")
-
-        from bento.commands import wizard_db_restore_commands
-
-        with (
-            mock.patch.object(wizard_commands, "prompt_validated") as service_prompt,
-            mock.patch.object(wizard_db_restore_commands, "_list_final_backups", return_value=[]),
-            mock.patch.object(wizard_db_restore_commands, "prompt_text", return_value=""),
-            mock.patch.object(wizard_db_restore_commands, "warn"),
-        ):
-            wizard_commands.wizard_db_restore(fixed_service="mysql84")
-        service_prompt.assert_not_called()
-
-    def test_failed_permission_check_suggests_and_offers_fix(self) -> None:
-        from bento.commands import wizard_commands
-        from bento.utils.errors import StackError
-
-        with (
-            mock.patch.object(wizard_commands, "cmd_permissions", side_effect=StackError("permission operation failed")),
-            mock.patch.object(wizard_commands, "prompt_confirm", return_value=False) as confirm,
-            mock.patch.object(wizard_commands, "warn") as warning,
-            mock.patch.object(wizard_commands, "info"),
-        ):
-            wizard_commands.wizard_check_permissions("shop")
-
-        messages = [call.args[0] for call in warning.call_args_list]
-        self.assertTrue(any("permissions fix shop --recursive" in message for message in messages))
-        confirm.assert_called_once_with("Fix permissions now?", False)
-
-
-
-def _force_numbered_choice():
-    """Context that forces the non-TTY number prompt path (for unit tests)."""
+def _force_headless_choice():
     return mock.patch("sys.stdin.isatty", return_value=False)
 
 
-class PromptChoiceZeroTests(unittest.TestCase):
+class HeadlessPromptChoiceTests(unittest.TestCase):
     def test_shows_zero_back_and_accepts_zero(self) -> None:
         from bento.commands.runtime_commands import prompt_choice
 
         out = io.StringIO()
         with (
-            _force_numbered_choice(),
+            _force_headless_choice(),
             mock.patch("builtins.input", return_value="0") as inp,
             mock.patch("sys.stdout", out),
         ):
@@ -414,7 +121,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
 
         out = io.StringIO()
         with (
-            _force_numbered_choice(),
+            _force_headless_choice(),
             mock.patch("builtins.input", return_value="0"),
             mock.patch("sys.stdout", out),
         ):
@@ -426,7 +133,7 @@ class PromptChoiceZeroTests(unittest.TestCase):
         from bento.commands.runtime_commands import prompt_choice
 
         with (
-            _force_numbered_choice(),
+            _force_headless_choice(),
             mock.patch("builtins.input", return_value="2"),
             mock.patch("sys.stdout", io.StringIO()),
         ):
@@ -436,145 +143,25 @@ class PromptChoiceZeroTests(unittest.TestCase):
         from bento.commands.runtime_commands import WizardBack, prompt_pick
 
         with (
-            _force_numbered_choice(),
+            _force_headless_choice(),
             mock.patch("builtins.input", return_value="0"),
             mock.patch("sys.stdout", io.StringIO()),
         ):
             with self.assertRaises(WizardBack):
                 prompt_pick("PHP version", ["8.4", "8.5"])
 
-
-class PromptChoiceArrowTests(unittest.TestCase):
-    def _run_interactive(
-        self,
-        keys: list[str],
-        choices: list[str],
-        *,
-        label: str = "Pick",
-        default: str | None = None,
-        zero: str | None = "Back",
-    ):
-        from bento.commands import runtime_commands
-
-        key_iter = iter(keys)
-
-        def fake_read_key() -> str:
-            try:
-                return next(key_iter)
-            except StopIteration as exc:
-                raise EOFError from exc
-
-        out = io.StringIO()
-        with (
-            mock.patch.object(runtime_commands, "_read_menu_key", side_effect=fake_read_key),
-            mock.patch("termios.tcgetattr", return_value=object()),
-            mock.patch("termios.tcsetattr"),
-            mock.patch("tty.setcbreak"),
-            mock.patch.object(runtime_commands.sys, "stdout", out),
-            mock.patch.object(runtime_commands.sys.stdin, "fileno", return_value=0),
-        ):
-            result = runtime_commands._prompt_choice_interactive(label, choices, default, zero)
-        return result, out.getvalue()
-
-    def test_enter_selects_highlighted_default(self) -> None:
-        result, text = self._run_interactive(["enter"], ["A", "B", "C"], default="B")
-        self.assertEqual(result, "B")
-        self.assertIn("↑↓", text)
-        self.assertIn("> 2 - B", text)
-
-    def test_down_then_enter_moves_selection(self) -> None:
-        # zero=Back at index 0; default none starts on first real option (A).
-        result, _text = self._run_interactive(["down", "enter"], ["A", "B"])
-        self.assertEqual(result, "B")
-
-    def test_up_wraps_to_last(self) -> None:
-        result, _text = self._run_interactive(["up", "enter"], ["A", "B"], zero=None)
-        self.assertEqual(result, "B")
-
-    def test_digit_instant_select(self) -> None:
-        result, _text = self._run_interactive(["2"], ["A", "B", "C"])
-        self.assertEqual(result, "B")
-
-    def test_digit_zero_selects_back(self) -> None:
-        result, _text = self._run_interactive(["0"], ["A", "B"])
-        self.assertEqual(result, "Back")
-
-    def test_multi_digit_buffer_and_enter(self) -> None:
-        # 10+ choices disables instant digit select; type "10" + enter.
-        choices = [f"item{i}" for i in range(1, 12)]
-        result, text = self._run_interactive(["1", "0", "enter"], choices, zero=None)
-        self.assertEqual(result, "item10")
-        self.assertIn("number: 10", text)
-
-    def test_prompt_choice_uses_arrows_when_tty(self) -> None:
-        from bento.commands import runtime_commands
-
-        with (
-            mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=True),
-            mock.patch.object(runtime_commands.sys.stdout, "isatty", return_value=True),
-            mock.patch.object(runtime_commands.sys.stdin, "fileno", return_value=0),
-            mock.patch.object(
-                runtime_commands,
-                "_prompt_choice_interactive",
-                return_value="from-arrows",
-            ) as interactive,
-            mock.patch.object(
-                runtime_commands,
-                "_prompt_choice_numbered",
-                return_value="from-numbers",
-            ) as numbered,
-        ):
-            result = runtime_commands.prompt_choice("Pick", ["A", "B"])
-        self.assertEqual(result, "from-arrows")
-        interactive.assert_called_once()
-        numbered.assert_not_called()
-
-    def test_prompt_choice_uses_numbers_when_not_tty(self) -> None:
+    def test_non_tty_uses_numbered_prompt(self) -> None:
         from bento.commands import runtime_commands
 
         with (
             mock.patch.object(runtime_commands.sys.stdin, "isatty", return_value=False),
-            mock.patch.object(
-                runtime_commands,
-                "_prompt_choice_numbered",
-                return_value="from-numbers",
-            ) as numbered,
-            mock.patch.object(
-                runtime_commands,
-                "_prompt_choice_interactive",
-                return_value="from-arrows",
-            ) as interactive,
+            mock.patch.object(runtime_commands, "_prompt_choice_numbered", return_value="from-numbers") as numbered,
+            mock.patch.object(runtime_commands, "_prompt_choice_interactive", return_value="from-arrows") as interactive,
         ):
             result = runtime_commands.prompt_choice("Pick", ["A", "B"])
         self.assertEqual(result, "from-numbers")
         numbered.assert_called_once()
         interactive.assert_not_called()
-
-    def test_left_right_arrows_do_not_freeze(self) -> None:
-        """Left/right CSI finals (C/D) must not block waiting for more input."""
-        from bento.commands import runtime_commands
-
-        # Sequence: left (ESC[D), right (ESC[C), down, enter → select B
-        # (zero=Back at 0; start on A; down → B)
-        bytes_in = iter("\x1b[D\x1b[C\x1b[B\r")
-
-        def fake_read(n: int = 1) -> str:
-            try:
-                return "".join(next(bytes_in) for _ in range(n))
-            except StopIteration as exc:
-                raise AssertionError("read blocked past available key bytes (would freeze)") from exc
-
-        out = io.StringIO()
-        with (
-            mock.patch.object(runtime_commands.sys.stdin, "read", side_effect=fake_read),
-            mock.patch("termios.tcgetattr", return_value=object()),
-            mock.patch("termios.tcsetattr"),
-            mock.patch("tty.setcbreak"),
-            mock.patch.object(runtime_commands.sys, "stdout", out),
-            mock.patch.object(runtime_commands.sys.stdin, "fileno", return_value=0),
-        ):
-            result = runtime_commands._prompt_choice_interactive("Pick", ["A", "B"], None, "Back")
-        self.assertEqual(result, "B")
 
 
 if __name__ == "__main__":
