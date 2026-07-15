@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+is_stack_root() {
+  [[ -f "$1/config/compose.yml" \
+    && -f "$1/manage.py" \
+    && -f "$1/dc" \
+    && -d "$1/bento" \
+    && -d "$1/config" \
+    && -d "$1/runtime" ]]
+}
+
 find_stack_root() {
   local dir
-  dir="$(pwd)"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/compose.yml" && -d "$dir/scripts" && -d "$dir/nginx" ]]; then
-      printf '%s\n' "$dir"
-      return 0
-    fi
-    dir="$(dirname "$dir")"
+  for dir in "$(pwd)" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; do
+    while [[ "$dir" != "/" ]]; do
+      if is_stack_root "$dir"; then
+        printf '%s\n' "$dir"
+        return 0
+      fi
+      dir="$(dirname "$dir")"
+    done
   done
-
-  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/compose.yml" && -d "$dir/scripts" && -d "$dir/nginx" ]]; then
-      printf '%s\n' "$dir"
-      return 0
-    fi
-    dir="$(dirname "$dir")"
-  done
-
   return 1
 }
 
@@ -30,7 +30,7 @@ ok() { printf 'OK: %s\n' "$*"; }
 
 ROOT="$(find_stack_root || true)"
 if [[ -z "${ROOT:-}" ]]; then
-  echo "Could not find bento root (compose.yml + scripts/ + nginx/)." >&2
+  echo "Could not find bento root (config/compose.yml + manage.py + dc + bento/ + config/ + runtime/)." >&2
   exit 1
 fi
 cd "$ROOT"
@@ -39,24 +39,33 @@ say "Stack root"
 printf '%s\n' "$ROOT"
 
 say "Required files"
-for path in compose.yml README.md scripts/create-user.sh scripts/create-site.sh scripts/create-proxy.sh scripts/acme.sh nginx/nginx.conf nginx/conf.d/00-nginx.conf; do
+for path in config/compose.yml manage.py dc README.md .env.example docker/php/Dockerfile config/nginx/nginx.conf; do
   if [[ -e "$path" ]]; then ok "$path"; else warn "missing $path"; fi
+done
+for path in manage.py dc; do
+  if [[ -x "$path" ]]; then ok "$path is executable"; else warn "$path is not executable"; fi
 done
 
 say "Environment"
 if [[ -f .env ]]; then
   ok ".env exists"
-  if grep -q '^MYSQL_ROOT_PASSWORD=change-me-long-random-password$' .env; then
-    warn "MYSQL_ROOT_PASSWORD is still the .env.example placeholder"
-  elif grep -q '^MYSQL_ROOT_PASSWORD=' .env; then
-    ok "MYSQL_ROOT_PASSWORD is set"
-  else
-    warn "MYSQL_ROOT_PASSWORD is missing from .env"
-  fi
-  grep -E '^(TZ|DEFAULT_PHP_VERSION|PHP84_VERSION|PHP85_VERSION|SOCKET_GID|FIX_HOME_OWNERSHIP)=' .env || true
+  for secret in MYSQL_ROOT_PASSWORD REDIS_PASSWORD; do
+    if grep -q "^${secret}=change-me-" .env; then
+      warn "$secret is still an example placeholder"
+    elif grep -q "^${secret}=." .env; then
+      ok "$secret is set"
+    else
+      warn "$secret is missing or empty in .env"
+    fi
+  done
+  grep -E '^(TZ|DEFAULT_MYSQL_SERVICE|DEFAULT_PHP_VERSION|DEFAULT_FPM_PROFILE|PHP_FPM_PROCESS_MAX|SOCKET_GID|REDIS_APP_ACL)=' .env || true
 else
-  warn ".env missing; copy .env.example to .env and edit MYSQL_ROOT_PASSWORD"
+  warn ".env missing; copy .env.example to .env and set production secrets"
 fi
+
+say "Host capacity"
+command -v df >/dev/null 2>&1 && df -h . || warn "df not available"
+command -v free >/dev/null 2>&1 && free -h || warn "free not available"
 
 say "Host port listeners"
 if command -v ss >/dev/null 2>&1; then
@@ -67,47 +76,54 @@ else
 fi
 
 say "Docker Compose config"
-if command -v docker >/dev/null 2>&1; then
-  if docker compose config >/tmp/bento.compose.check.yml 2>/tmp/bento.compose.check.err; then
-    ok "docker compose config is valid"
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  compose_out="$(mktemp)"
+  compose_err="$(mktemp)"
+  trap 'rm -f "$compose_out" "$compose_err"' EXIT
+  if ./dc config >"$compose_out" 2>"$compose_err"; then
+    ok "./dc config is valid"
   else
-    warn "docker compose config failed:"
-    cat /tmp/bento.compose.check.err >&2
+    warn "./dc config failed:"
+    while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <"$compose_err"
   fi
 
-  say "Docker Compose services"
-  docker compose ps || true
+  if docker info >/dev/null 2>&1; then
+    say "Docker Compose services"
+    ./dc ps || true
+    running_services="$(./dc ps --services --filter status=running 2>/dev/null || true)"
 
-  running_services="$(docker compose ps --services --filter status=running 2>/dev/null || true)"
-
-  if grep -qx nginx <<<"$running_services"; then
-    say "Nginx validation"
-    docker compose exec -T nginx nginx -t || warn "nginx -t failed"
-  else
-    warn "nginx is not running"
-  fi
-
-  for svc in php84 php85; do
-    if grep -qx "$svc" <<<"$running_services"; then
-      say "$svc validation"
-      docker compose exec -T "$svc" php-fpm -tt || warn "$svc php-fpm -tt failed"
-      printf 'Sockets in run/php-fpm/%s:\n' "$svc"
-      ls -la "run/php-fpm/$svc" 2>/dev/null || true
+    if grep -qx nginx <<<"$running_services"; then
+      say "Nginx validation"
+      ./dc exec -T nginx nginx -t || warn "nginx -t failed"
+    else
+      warn "nginx is not running"
     fi
-  done
+
+    while IFS= read -r svc; do
+      [[ -n "$svc" ]] || continue
+      if grep -qx "$svc" <<<"$running_services"; then
+        say "$svc validation"
+        ./dc exec -T "$svc" php-fpm -tt || warn "$svc php-fpm -tt failed"
+        printf 'Sockets in runtime/run/php-fpm/%s:\n' "$svc"
+        ls -la "runtime/run/php-fpm/$svc" 2>/dev/null || true
+      fi
+    done < <(./dc config --services 2>/dev/null | grep -E '^php[0-9]+$' || true)
+  else
+    warn "Docker daemon is unavailable; skipping running-service checks"
+  fi
 else
-  warn "docker not available; skipping Compose checks"
+  warn "Docker Compose v2 is unavailable; skipping Compose checks"
 fi
 
 say "Generated vhosts"
-if compgen -G 'nginx/conf.d/*.conf' >/dev/null; then
-  for conf in nginx/conf.d/*.conf; do
+if compgen -G 'runtime/generated/nginx/vhosts/*.conf' >/dev/null; then
+  for conf in runtime/generated/nginx/vhosts/*.conf; do
     printf '%s\n' "$conf"
     grep -E 'server_name |fastcgi_pass |proxy_pass |ssl_certificate |acme_certificate ' "$conf" | sed 's/^/  /' || true
   done
 else
-  warn "no nginx/conf.d/*.conf files found"
+  warn "no runtime/generated/nginx/vhosts/*.conf files found; run ./manage.py render"
 fi
 
 say "Summary"
-echo "Use README.md and .agents/skills/bento/references/deploy-runbook.md for exact deployment workflows."
+echo "Use README.md and .agents/skills/bento/references/deploy-runbook.md for deployment workflows."

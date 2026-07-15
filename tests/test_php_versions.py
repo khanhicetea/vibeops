@@ -21,6 +21,15 @@ class PhpVersionsTests(unittest.TestCase):
             for service in ("php84", "php84-runner", "php84-cli", "php85", "php85-runner", "php85-cli"):
                 self.assertIn(f"  {service}:\n    <<: *common-php", text)
 
+    def test_compose_passes_fpm_process_cap_as_build_arg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bento-php-versions.yml"
+            render_php_versions_compose({"php_versions": ["8.5"]}, path)
+            text = path.read_text()
+            build_arg = "        PHP_FPM_PROCESS_MAX: ${PHP_FPM_PROCESS_MAX:-32}\n"
+            self.assertIn(build_arg, text)
+            self.assertEqual(text.count(build_arg), 3)
+
     def test_remove_rejects_version_used_by_app(self) -> None:
         db = {"php_versions": ["8.4", "8.5"], "apps": {"shop": {"php_version": "8.4"}}}
         with (

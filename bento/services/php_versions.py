@@ -71,6 +71,7 @@ def render_php_versions_compose(db: dict[str, Any], path: Path = PHP_COMPOSE_PAT
             f"    image: bento-{service}:${{{version_var}:-{version}}}\n",
             "    build:\n      context: ./docker/php\n      args:\n",
             f"        PHP_VERSION: ${{{version_var}:-{version}}}\n",
+            "        PHP_FPM_PROCESS_MAX: ${PHP_FPM_PROCESS_MAX:-32}\n",
             "        TZ: ${TZ:-Asia/Ho_Chi_Minh}\n",
             "    volumes:\n",
             *[f"      - {mount}\n" for mount in mounts],
