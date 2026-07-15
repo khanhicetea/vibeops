@@ -1,3 +1,37 @@
 #!/command/with-contenv sh
 set -eu
-exec /usr/local/bin/supercronic -no-reap -json -split-logs /etc/bento/nginx-maintenance.cron
+
+schedule=${NGINX_MAINTENANCE_SCHEDULE:-17 3 * * *}
+if printf '%s' "$schedule" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    echo "Invalid NGINX_MAINTENANCE_SCHEDULE: control characters are not allowed" >&2
+    exit 1
+fi
+
+# Accept a conventional five-field cron expression. Disable glob expansion so
+# wildcard fields remain literal while splitting the expression on whitespace.
+set -f
+set -- $schedule
+set +f
+[ "$#" -eq 5 ] || {
+    echo "Invalid NGINX_MAINTENANCE_SCHEDULE: expected five cron fields" >&2
+    exit 1
+}
+for field in "$@"; do
+    case "$field" in
+        *[!0-9A-Za-z*/?,_-]*)
+            echo "Invalid NGINX_MAINTENANCE_SCHEDULE field: $field" >&2
+            exit 1
+            ;;
+    esac
+done
+
+crontab=/run/nginx-maintenance.cron
+umask 077
+{
+    printf '%s\n' 'SHELL=/bin/sh'
+    printf '%s\n' 'PATH=/command:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+    printf '\n%s %s\n' "$schedule" 'timeout --signal=TERM --kill-after=30s 2h /usr/local/bin/bento-nginx-maintenance daily'
+} > "$crontab"
+
+/usr/local/bin/supercronic -no-reap -test "$crontab"
+exec /usr/local/bin/supercronic -no-reap -json -split-logs "$crontab"

@@ -30,6 +30,7 @@ class NginxZstdTests(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/init"]', dockerfile)
         self.assertIn('CMD ["/docker-entrypoint.sh", "nginx", "-g", "daemon off;"]', dockerfile)
         self.assertIn("S6_BEHAVIOUR_IF_STAGE2_FAILS: \"2\"", compose)
+        self.assertIn("NGINX_MAINTENANCE_SCHEDULE", compose)
         self.assertIn("flock -n 9", maintenance)
         self.assertIn("timeout --signal=TERM", maintenance)
         self.assertIn("logrotate --state", maintenance)
