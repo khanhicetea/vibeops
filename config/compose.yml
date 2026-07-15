@@ -55,18 +55,6 @@ services:
     networks:
       - backend
 
-  # Optional toolbox matching your old nodejs_install role.
-  node:
-    image: node:20-trixie-slim
-    profiles: ["node"]
-    logging: *default-logging
-    working_dir: /home
-    command: ["sh", "-lc", "sleep infinity"]
-    volumes:
-      - ./runtime/home:/home
-    networks:
-      - backend
-
 networks:
   backend:
 
