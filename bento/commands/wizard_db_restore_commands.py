@@ -26,7 +26,7 @@ def wizard_db_restore(*, default_service: str | None = None,
     backup_dir = mysql_backup_dir(mysql_service)
     files = _list_final_backups(backup_dir)
     if not files:
-        warn(f"No finalized backups in bento/{rel(backup_dir)}")
+        warn(f"No finalized backups in {rel(backup_dir)}")
         path_text = prompt_text("Backup file path (or blank to cancel)", "", required=False)
         if not path_text.strip():
             return

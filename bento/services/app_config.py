@@ -40,7 +40,7 @@ def template_sha256(path: Path) -> str:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:
-        die(f"Cannot read template bento/{rel(path)}: {exc}")
+        die(f"Cannot read template {rel(path)}: {exc}")
     raise AssertionError("unreachable")
 
 
@@ -96,7 +96,7 @@ def selected_template_path(app: dict[str, Any], target: str) -> Path:
         return upstream_template_path(target)
     path = custom_template_path(str(app.get("name", "")), target)
     if not path.is_file():
-        die(f"Missing custom {target} template: bento/{rel(path)}")
+        die(f"Missing custom {target} template: {rel(path)}")
     return path
 
 
@@ -106,11 +106,11 @@ def install_custom_template(app_name: str, target: str, *, force: bool = False) 
     source = upstream_template_path(target)
     destination = custom_template_path(app_name, target)
     if destination.exists() and not destination.is_file():
-        die(f"Custom {target} source is not a regular file: bento/{rel(destination)}")
+        die(f"Custom {target} source is not a regular file: {rel(destination)}")
     if destination.exists() and not force:
         return destination, False
     if not source.is_file():
-        die(f"Missing upstream template: bento/{rel(source)}")
+        die(f"Missing upstream template: {rel(source)}")
     marker = "#" if target == "vhost" else ";"
     contract = (
         "Preserve template variables and the BEGIN/END TLS_CERTIFICATE markers."

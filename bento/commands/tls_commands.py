@@ -51,7 +51,7 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
     )
     save_db(db)
     info(("Enabled NGINX ACME for" if mode == "acme" else "Switched to self-signed certificate for") + f" {main_domain}")
-    info(f"Regenerated vhost: bento/{rel(conf_path)}")
+    info(f"Regenerated vhost: {rel(conf_path)}")
 
 @serialized_cron_state
 def cmd_tls_cert(args: argparse.Namespace) -> None:
@@ -69,7 +69,7 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
         if container_path.startswith("/etc/letsencrypt/"):
             host_path = CERTS_DIR / container_path.removeprefix("/etc/letsencrypt/")
             if not host_path.exists():
-                warn(f"expected host {label} file bento/{rel(host_path)} was not found")
+                warn(f"expected host {label} file {rel(host_path)} was not found")
 
     record["tls"] = {"mode": "files", "cert": cert_path, "key": key_path}
     upsert_timestamp(record)
@@ -83,4 +83,4 @@ def cmd_tls_cert(args: argparse.Namespace) -> None:
     info(f"Switched {main_domain} to certificate files:")
     info(f"  cert: {cert_path}")
     info(f"  key:  {key_path}")
-    info(f"Regenerated vhost: bento/{rel(conf_path)}")
+    info(f"Regenerated vhost: {rel(conf_path)}")

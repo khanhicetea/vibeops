@@ -132,9 +132,9 @@ def ensure_app_identity(app_name: str, php_version: str, db: dict[str, Any], *, 
         generated=True,
     )
     info(f"Created PHP {php_version} app identity: {app_name} uid={app_uid}")
-    info(f"Home: bento/{rel(app_home(app_name))}")
-    info(f"Pool: bento/{rel(php_version_config_dir(php_version) / 'pool.d' / f'{app_name}.conf')}")
-    info(f"Socket: bento/{rel(PHP_SOCKET_DIR / php_service / f'{app_name}.sock')}")
+    info(f"Home: {rel(app_home(app_name))}")
+    info(f"Pool: {rel(php_version_config_dir(php_version) / 'pool.d' / f'{app_name}.conf')}")
+    info(f"Socket: {rel(PHP_SOCKET_DIR / php_service / f'{app_name}.sock')}")
 
     php_reload(php_service, app_name, no_reload=no_reload)
 

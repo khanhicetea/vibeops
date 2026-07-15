@@ -50,7 +50,7 @@ def edit_custom_source(path: Path) -> None:
         die(f"Invalid editor command {editor!r}: {exc}")
     if not argv:
         die("VISUAL/EDITOR must not be empty")
-    info(f"Opening custom source with {editor}: bento/{rel(path)}")
+    info(f"Opening custom source with {editor}: {rel(path)}")
     try:
         result = subprocess.run([*argv, str(path)], check=False)
     except OSError as exc:
@@ -58,7 +58,7 @@ def edit_custom_source(path: Path) -> None:
     if result.returncode != 0:
         die(
             f"Editor exited with status {result.returncode}; customization was not activated. "
-            f"Draft preserved at bento/{rel(path)}"
+            f"Draft preserved at {rel(path)}"
         )
 
 
@@ -75,7 +75,7 @@ def cmd_app_config_customize(args: argparse.Namespace) -> None:
         force=bool(getattr(args, "force", False)),
     )
     if not created:
-        warn(f"Reusing existing custom source: bento/{rel(source)}")
+        warn(f"Reusing existing custom source: {rel(source)}")
     if not bool(getattr(args, "no_edit", False)):
         edit_custom_source(source)
 
@@ -94,7 +94,7 @@ def cmd_app_config_customize(args: argparse.Namespace) -> None:
         service_targets=_service_targets(target),
     )
     save_db(db)
-    info(f"App {app['name']} {target} now uses custom template: bento/{rel(source)}")
+    info(f"App {app['name']} {target} now uses custom template: {rel(source)}")
     if bool(getattr(args, "no_edit", False)):
         info("Edit the custom source when ready, then run ./manage.py apply")
 
@@ -117,7 +117,7 @@ def cmd_app_config_reset(args: argparse.Namespace) -> None:
     source = custom_template_path(str(app["name"]), target)
     info(f"App {app['name']} {target} now uses the upstream generated template")
     if source.exists():
-        info(f"Preserved inactive custom source: bento/{rel(source)}")
+        info(f"Preserved inactive custom source: {rel(source)}")
 
 
 def cmd_app_config_status(args: argparse.Namespace) -> None:

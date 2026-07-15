@@ -50,7 +50,7 @@ def cmd_mysql_add(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Added MySQL {version}; generated {path}")
     if option_file.is_file():
-        info(f"Generated protected root option file: bento/{rel(option_file)}")
+        info(f"Generated protected root option file: {rel(option_file)}")
     else:
         warn(
             f"Root password is unset; set {service.upper()}_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD "

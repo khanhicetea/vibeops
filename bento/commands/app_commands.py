@@ -171,8 +171,8 @@ def cmd_app_create(args: argparse.Namespace) -> None:
     # Later deploys must opt into a recursive repair explicitly.
     initialize_app_permissions(app_name, php_version)
 
-    info(f"Created HTTP+HTTPS app vhost: bento/{rel(conf_path)}")
-    info(f"Document root: bento/{rel(app_document_root(app_name, public_dir))}")
+    info(f"Created HTTP+HTTPS app vhost: {rel(conf_path)}")
+    info(f"Document root: {rel(app_document_root(app_name, public_dir))}")
     info(f"PHP entrypoint: {php_entrypoint}")
     info(f"PHP-FPM profile: {fpm_profile}")
     info(f"Access log: {'on' if app.get('access_log') else 'off'}")

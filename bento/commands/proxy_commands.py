@@ -65,5 +65,5 @@ def cmd_proxy_create(args: argparse.Namespace) -> None:
     )
     conf_path = NGINX_VHOST_DIR / f"{main_domain}.conf"
     save_db(db)
-    info(f"Created HTTP+HTTPS proxy vhost with default self-signed cert: bento/{rel(conf_path)}")
+    info(f"Created HTTP+HTTPS proxy vhost with default self-signed cert: {rel(conf_path)}")
     info(f"Rendered {len(rendered)} generated file(s)")

@@ -17,7 +17,7 @@ def render_template_text(text: str, values: dict[str, Any]) -> str:
 
 def template_text(path: Path, values: dict[str, Any]) -> str:
     if not path.exists():
-        die(f"Missing template: bento/{rel(path)}")
+        die(f"Missing template: {rel(path)}")
     return render_template_text(path.read_text(), values)
 
 

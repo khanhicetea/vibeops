@@ -147,9 +147,9 @@ def _finish_archives(app_archives: list[tuple[str, Path]]) -> None:
     for app_name, archive in app_archives:
         try:
             gz = _gzip_file(archive)
-            info(f"Compressed bento/{rel(gz)}")
+            info(f"Compressed {rel(gz)}")
         except OSError as exc:
-            warn(f"could not compress bento/{rel(archive)}: {exc}")
+            warn(f"could not compress {rel(archive)}: {exc}")
         removed = _prune_archives(app_name, keep)
         if removed:
             info(f"Pruned {removed} old access-log archive(s) for {app_name}")
@@ -171,7 +171,7 @@ def rotate_app_access_log(app_name: str, *, force: bool = False) -> bool:
     if renamed is None:
         return False
     archive, size = renamed
-    info(f"Rotated bento/{rel(live)} -> bento/{rel(archive)} ({size} bytes)")
+    info(f"Rotated {rel(live)} -> {rel(archive)} ({size} bytes)")
     # Reopen after rename so workers open a fresh live path (no config reload).
     nginx_reopen_logs()
     _finish_archives([(app_name, archive)])
@@ -206,7 +206,7 @@ def rotate_all_access_logs(*, force: bool = False) -> int:
             continue
         archive, size = renamed
         pending.append((app_name, archive, size))
-        info(f"Rotated bento/{rel(live)} -> bento/{rel(archive)} ({size} bytes)")
+        info(f"Rotated {rel(live)} -> {rel(archive)} ({size} bytes)")
 
     if not pending:
         info("No access logs needed rotation")
@@ -231,7 +231,7 @@ def run_goaccess_analyze(
     files = list_access_log_files(app_name)
     if not files:
         die(
-            f"No access log files for {app_name} under bento/{rel(NGINX_ACCESS_LOG_DIR)}. "
+            f"No access log files for {app_name} under {rel(NGINX_ACCESS_LOG_DIR)}. "
             f"Enable with: ./manage.py app access-log enable {app_name}"
         )
 

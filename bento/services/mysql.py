@@ -183,7 +183,7 @@ def create_mysql_user(username: str, password: str | None, mysql_service: str) -
     })
     mysql_root_exec_sql(sql, service=mysql_service)
     info(f"MySQL account ready on {mysql_service}: user={username}")
-    info(f"Credentials saved (mode 600): bento/{rel(cred_path)}")
+    info(f"Credentials saved (mode 600): {rel(cred_path)}")
     info("Password is only in that file; not printed here.")
     return True, rel(cred_path)
 
@@ -245,7 +245,7 @@ def require_mysql_ready_for_sql(service: str) -> str:
         die(f"Cannot create database; {service} is not running, .env is missing, or root password is unset.")
     option_file = mysql_root_option_file(service)
     if not option_file.is_file():
-        die(f"Missing protected MySQL option file bento/{rel(option_file)}; run ./manage.py render")
+        die(f"Missing protected MySQL option file {rel(option_file)}; run ./manage.py render")
     return service
 
 

@@ -140,7 +140,7 @@ def cmd_cron_create(args: argparse.Namespace) -> None:
         save_db(db)
         cron_path = cron_jobs_dir_for(php_version) / f"{safe_app_part(app_name)}-{job_name}.cron"
 
-        info(f"Created cron job: bento/{rel(cron_path)}")
+        info(f"Created cron job: {rel(cron_path)}")
         info(f"Runs as: {app_name}; workdir: {workdir}; timezone: {timezone}")
         info(f"Output: {output}; timeout: {timeout or 'none'}; lock: {lock or 'same-job (Supercronic)'}")
 

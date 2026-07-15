@@ -36,7 +36,7 @@ def cmd_app_access_log(args: argparse.Namespace) -> None:
         files = list_access_log_files(app_name)
         info(f"access_log: {'on' if enabled else 'off'}")
         info(
-            f"live path: bento/{rel(live)}"
+            f"live path: {rel(live)}"
             + (f" ({live.stat().st_size} bytes)" if live.is_file() else " (absent)")
         )
         if files:
@@ -45,7 +45,7 @@ def cmd_app_access_log(args: argparse.Namespace) -> None:
                     size = path.stat().st_size
                 except OSError:
                     size = 0
-                info(f"  bento/{rel(path)} ({size} bytes)")
+                info(f"  {rel(path)} ({size} bytes)")
         else:
             info("  (no log files yet)")
         return
@@ -69,7 +69,7 @@ def cmd_app_access_log(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"access_log {'enabled' if enabled else 'disabled'} for {app_name}")
     if enabled:
-        info(f"Logs: bento/{rel(live_access_log_path(app_name))}")
+        info(f"Logs: {rel(live_access_log_path(app_name))}")
         info(f"Analyze: ./manage.py app logs analyze {app_name}")
 
 

@@ -63,7 +63,7 @@ def ensure_redis_user(app_name: str) -> tuple[bool, str]:
         "REDIS_PREFIX": f"{app_name}:",
     }, 0o600)
     if not acl_enabled:
-        info(f"Shared Redis credentials saved (mode 600): bento/{rel(cred_path)}")
+        info(f"Shared Redis credentials saved (mode 600): {rel(cred_path)}")
         return False, rel(cred_path)
     if not service_running("redis"):
         info("Redis is not running; credentials were saved but ACL provisioning is pending. Re-run app create after Redis starts.")
@@ -71,7 +71,7 @@ def ensure_redis_user(app_name: str) -> tuple[bool, str]:
     redis_acl_exec("ACL", "SETUSER", app_name, "reset", "on", f">{password}", f"~{app_name}:*", f"&{app_name}:*", "+@all", "-@admin", "-@dangerous")
     redis_acl_exec("ACL", "SAVE")
     info(f"Redis ACL account ready: user={app_name}, keys={app_name}:*")
-    info(f"Redis credentials saved (mode 600): bento/{rel(cred_path)}")
+    info(f"Redis credentials saved (mode 600): {rel(cred_path)}")
     return True, rel(cred_path)
 
 

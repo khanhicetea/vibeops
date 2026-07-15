@@ -428,7 +428,7 @@ def recover_abandoned_transactions(
         if status in {"promoting", "promoted", "validating"}:
             if not auto_restore:
                 die(
-                    f"Abandoned render transaction at bento/{rel(txn_dir)} "
+                    f"Abandoned render transaction at {rel(txn_dir)} "
                     f"(status={status}). Re-run ./manage.py render after recovery, "
                     f"or restore from journal backup under {rel(backup_dir)}."
                 )
@@ -444,7 +444,7 @@ def recover_abandoned_transactions(
         # Unknown status: do not silently delete mid-flight data.
         die(
             f"Abandoned render transaction with unknown status {status!r} at "
-            f"bento/{rel(txn_dir)}; inspect journal.json before continuing"
+            f"{rel(txn_dir)}; inspect journal.json before continuing"
         )
 
 # Logical service groups that can be selectively validated/reloaded after a
@@ -654,7 +654,7 @@ def cmd_render(args: argparse.Namespace) -> None:
     render_php_versions_compose(db)
     render_mysql_versions_compose(db)
     save_db(db)
-    info(f"Rendered {len(rendered)} file(s) from bento/{rel(DB_PATH)}")
+    info(f"Rendered {len(rendered)} file(s) from {rel(DB_PATH)}")
     for path in rendered:
         info(f"  {rel(path)}")
 
@@ -684,7 +684,7 @@ def cmd_state(args: argparse.Namespace) -> None:
         if DB_PATH.exists() and not args.force:
             die(f"{rel(DB_PATH)} already exists; use --force to overwrite")
         save_db(empty_db())
-        info(f"Initialized bento/{rel(DB_PATH)}")
+        info(f"Initialized {rel(DB_PATH)}")
 
 def prompt_text(label: str, default: str | None = None, *, required: bool = True) -> str:
     suffix = f" [{default}]" if default not in (None, "") else ""
@@ -1090,13 +1090,13 @@ def cmd_status(args: argparse.Namespace) -> None:
         for message in capacity:
             warn(f"  {message}")
     info("\nQuick checks:")
-    info(f"  metadata: bento/{rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
-    info(f"  vhosts:   bento/{rel(NGINX_VHOST_DIR)}")
+    info(f"  metadata: {rel(DB_PATH)} {'exists' if DB_PATH.exists() else 'missing'}")
+    info(f"  vhosts:   {rel(NGINX_VHOST_DIR)}")
     info(f"  process.max (PHP-FPM global): {php_fpm_process_max()}")
     for mysql_service in mysql_services:
         if mysql_service in running:
             ok = mysql_admin_ping(mysql_service)
             info(f"  {mysql_service} ping: {'ok' if ok else 'failed'}")
-            info(f"  {mysql_service} logs: bento/{rel(mysql_log_dir(mysql_service))}")
+            info(f"  {mysql_service} logs: {rel(mysql_log_dir(mysql_service))}")
     if args.check_nginx and "nginx" in running:
         run([*compose_prefix(), "exec", "-T", "nginx", "nginx", "-t"])

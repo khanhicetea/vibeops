@@ -31,7 +31,7 @@ def _require_mysql_service(service: str) -> str:
         die(f"{service} service is not running")
     option_file = mysql_root_option_file(service)
     if not option_file.is_file():
-        die(f"Missing protected MySQL option file bento/{rel(option_file)}; run ./manage.py render")
+        die(f"Missing protected MySQL option file {rel(option_file)}; run ./manage.py render")
     return service
 
 
@@ -67,7 +67,7 @@ def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str, *, compress
         candidate = backup_dir / f"{stamp}_{db_name}_{secrets.token_hex(3)}{ext}"
         if not candidate.exists():
             return candidate
-    die(f"Could not reserve a unique backup name for {db_name} under bento/{rel(backup_dir)}")
+    die(f"Could not reserve a unique backup name for {db_name} under {rel(backup_dir)}")
 
 def _fsync_dir(directory: Path) -> None:
     try:
@@ -115,11 +115,11 @@ def mysql_root_dump(
     """
     service = _require_mysql_service(service)
     if compress and not str(output_path).endswith(".sql.zst"):
-        die(f"Compressed dump path must end with .sql.zst: bento/{rel(output_path)}")
+        die(f"Compressed dump path must end with .sql.zst: {rel(output_path)}")
     if not compress and output_path.suffix != ".sql":
-        die(f"Uncompressed dump path must end with .sql: bento/{rel(output_path)}")
+        die(f"Uncompressed dump path must end with .sql: {rel(output_path)}")
     if output_path.exists():
-        die(f"Refusing to overwrite existing backup bento/{rel(output_path)}")
+        die(f"Refusing to overwrite existing backup {rel(output_path)}")
     mkdir(output_path.parent, 0o700)
     token = secrets.token_hex(8)
     partial = output_path.parent / f"{output_path.name}.partial-{token}"
@@ -157,10 +157,10 @@ def mysql_root_dump(
 
         if not partial.exists() or partial.stat().st_size == 0:
             kind = "zstd backup" if compress else f"mysqldump on {service} output"
-            die(f"{kind} is empty for bento/{rel(output_path)}")
+            die(f"{kind} is empty for {rel(output_path)}")
 
         if output_path.exists():
-            die(f"Refusing to overwrite existing backup bento/{rel(output_path)}")
+            die(f"Refusing to overwrite existing backup {rel(output_path)}")
 
         os.replace(str(partial), str(output_path))
         promoted = True
@@ -193,7 +193,7 @@ def mysql_root_stream_sql_file(path: Path, *, service: str, database: str) -> No
         die(f"Backup path is not a regular file: {path}")
     size = path.stat().st_size
     if size == 0:
-        die(f"Backup file is empty: bento/{rel(path)}")
+        die(f"Backup file is empty: {rel(path)}")
 
     if _is_zstd_backup(path):
         compression = "zstd"
@@ -329,7 +329,7 @@ def cmd_db_shell(args: argparse.Namespace) -> None:
         creds = parse_env_file(cred_path)
         password = creds.get("MYSQL_PASSWORD") or creds.get("DB_PASSWORD")
         if not password:
-            die(f"Missing credentials for {username} on {service}: bento/{rel(cred_path)}")
+            die(f"Missing credentials for {username} on {service}: {rel(cred_path)}")
         raise SystemExit(_db_shell_app_user(service, username, password))
     cp = subprocess.run(
         compose_command(
@@ -384,10 +384,10 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
                 compress=compress,
             )
             written.append(out)
-            info(f"Wrote bento/{rel(out)}")
+            info(f"Wrote {rel(out)}")
     except StackError:
         if written:
-            names = ", ".join(f"bento/{rel(p)}" for p in written)
+            names = ", ".join(f"{rel(p)}" for p in written)
             warn(
                 f"Backup batch stopped after failure; "
                 f"{len(written)} dump(s) safely written (no retention applied): {names}"
@@ -457,7 +457,7 @@ def _apply_retention(
         )
         for path in paths[keep:]:
             path.unlink(missing_ok=True)
-            info(f"Removed old backup bento/{rel(path)}")
+            info(f"Removed old backup {rel(path)}")
 
 def cmd_db_list_backups(args: argparse.Namespace) -> None:
     from bento.ui.table import print_ascii_table as print_table
@@ -466,14 +466,14 @@ def cmd_db_list_backups(args: argparse.Namespace) -> None:
     backup_dir = mysql_backup_dir(service)
     files = _list_final_backups(backup_dir)
     if not files:
-        info(f"No backups in bento/{rel(backup_dir)}")
+        info(f"No backups in {rel(backup_dir)}")
         return
     rows = []
     for path in files:
         st = path.stat()
         mtime = _dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
         size_kb = max(1, st.st_size // 1024) if st.st_size else 0
-        rows.append([mtime, f"{size_kb}K", f"bento/{rel(path)}"])
+        rows.append([mtime, f"{size_kb}K", f"{rel(path)}"])
     print_table(rows, headers=["MODIFIED", "SIZE", "PATH"])
 
 def _resolve_backup_path(raw: str, service: str) -> Path:
@@ -495,7 +495,7 @@ def cmd_db_restore(args: argparse.Namespace) -> None:
     old_database = validate(args.database, DATABASE_RE, "database name")
     new_suffix = getattr(args, "new_suffix", None)
     if path.stat().st_size == 0:
-        die(f"Backup file is empty: bento/{rel(path)}")
+        die(f"Backup file is empty: {rel(path)}")
     if new_suffix:
         suffix = validate(new_suffix, DB_NAME_RE, "database suffix")
         target_database = validate(f"{old_database}_{suffix}", DATABASE_RE, "database name")
@@ -529,10 +529,10 @@ def cmd_db_restore(args: argparse.Namespace) -> None:
     else:
         kind = ""
     warn(
-        f"Restoring {kind}bento/{rel(path)} into {service}/{target_database} "
+        f"Restoring {kind}{rel(path)} into {service}/{target_database} "
         "(the destination database was freshly created; restore is not atomic)"
     )
     mysql_root_stream_sql_file(path, service=service, database=target_database)
     if new_suffix:
         record_restored_database(old_database, target_database, service)
-    info(f"Restored bento/{rel(path)} into {service}/{target_database}")
+    info(f"Restored {rel(path)} into {service}/{target_database}")

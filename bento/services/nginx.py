@@ -113,7 +113,7 @@ def set_https_redirect(conf_path: Path, enabled: bool, *, quiet: bool = False) -
     if count and text2 != text:
         write_text(conf_path, text2)
         if not quiet:
-            info(("Enabled" if enabled else "Disabled") + f" HTTP to HTTPS redirect in bento/{rel(conf_path)}")
+            info(("Enabled" if enabled else "Disabled") + f" HTTP to HTTPS redirect in {rel(conf_path)}")
 
 
 def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> Path:

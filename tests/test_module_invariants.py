@@ -87,6 +87,21 @@ class WildcardImportInvariantTests(unittest.TestCase):
         self.assertEqual(offenders, [], msg="wildcard imports forbidden:\n" + "\n".join(offenders))
 
 
+class UserFacingPathInvariantTests(unittest.TestCase):
+    def test_repo_relative_paths_do_not_get_bento_prefix(self) -> None:
+        offenders: list[str] = []
+        for path in _py_files(PACKAGE):
+            for i, line in enumerate(path.read_text().splitlines(), 1):
+                if "bento/{rel(" in line:
+                    offenders.append(f"{path.relative_to(ROOT)}:{i}:{line.strip()}")
+        self.assertEqual(
+            offenders,
+            [],
+            msg="repo-relative paths must be directly copyable from the stack root:\n"
+            + "\n".join(offenders),
+        )
+
+
 class LayerImportInvariantTests(unittest.TestCase):
     def test_foundational_modules_do_not_import_command_layer(self) -> None:
         forbidden = COMMAND_LAYER
