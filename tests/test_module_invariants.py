@@ -184,7 +184,7 @@ class ModuleSizeWarningTests(unittest.TestCase):
     """Track oversized modules; warn in message but allow known large files."""
 
     KNOWN_LARGE = {
-        "runtime_commands.py": 1150,  # render/apply transaction orchestration
+        "runtime_commands.py": 1000,  # render/apply transaction orchestration
         "wizard_commands.py": 700,
         "db_commands.py": 550,
         "app_commands.py": 400,
