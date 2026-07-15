@@ -13,7 +13,7 @@ after=$($DC exec -T nginx sh -c 'cat /var/run/nginx.pid')
 [ "$before" = "$after" ] || { echo "nginx master PID changed during reload" >&2; exit 1; }
 
 $DC exec -T nginx nginx -s reopen
-./manage.py maintance
+./manage.py maintenance
 curl --fail --silent --show-error http://127.0.0.1:8080/healthz >/dev/null
 
 echo "nginx config test, reload, reopen, maintenance, and loopback report endpoint passed"

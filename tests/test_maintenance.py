@@ -11,13 +11,13 @@ from bento.utils.errors import StackError
 
 
 class MaintenanceCliTests(unittest.TestCase):
-    def test_command_defaults_to_run_and_accepts_documented_typo(self) -> None:
+    def test_command_defaults_to_run(self) -> None:
         parser = build_parser()
-        direct = parser.parse_args(["maintance"])
-        self.assertEqual(direct.maintance_action, None)
-        self.assertIs(direct.func, maintenance_commands.cmd_maintance)
-        setup = parser.parse_args(["maintance", "setup-cron", "--schedule", "0 4 * * *"])
-        self.assertEqual(setup.maintance_action, "setup-cron")
+        direct = parser.parse_args(["maintenance"])
+        self.assertEqual(direct.maintenance_action, None)
+        self.assertIs(direct.func, maintenance_commands.cmd_maintenance)
+        setup = parser.parse_args(["maintenance", "setup-cron", "--schedule", "0 4 * * *"])
+        self.assertEqual(setup.maintenance_action, "setup-cron")
         self.assertEqual(setup.schedule, "0 4 * * *")
 
     def test_run_executes_logrotate_inside_nginx(self) -> None:
@@ -45,7 +45,7 @@ class MaintenanceCliTests(unittest.TestCase):
             maintenance_commands.run_maintenance()
 
     def test_setup_cron_replaces_managed_block_and_preserves_other_jobs(self) -> None:
-        existing = "0 1 * * * /usr/local/bin/backup\n# BEGIN bento maintance\nold\n# END bento maintance\n"
+        existing = "0 1 * * * /usr/local/bin/backup\n# BEGIN bento maintenance\nold\n# END bento maintenance\n"
         read_result = argparse.Namespace(returncode=0, stdout=existing, stderr="")
         install_result = argparse.Namespace(returncode=0, stdout="", stderr="")
         with (
@@ -57,9 +57,9 @@ class MaintenanceCliTests(unittest.TestCase):
 
         installed = run.call_args_list[1].kwargs["input_text"]
         self.assertIn("0 1 * * * /usr/local/bin/backup", installed)
-        self.assertEqual(installed.count("# BEGIN bento maintance"), 1)
+        self.assertEqual(installed.count("# BEGIN bento maintenance"), 1)
         self.assertIn("17 3 * * *", installed)
-        self.assertIn("manage.py maintance", installed)
+        self.assertIn("manage.py maintenance", installed)
 
     def test_setup_cron_rejects_non_five_field_schedule(self) -> None:
         with self.assertRaisesRegex(StackError, "exactly 5 fields"):

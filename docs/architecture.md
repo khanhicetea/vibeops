@@ -20,7 +20,7 @@ phpXX-runner ────────────────┼── MySQL mys
 phpXX-cli (ephemeral) runs deploy commands and shells
 ```
 
-Nginx has no `ports:` mapping. It binds the host network directly and runs as PID 1 through the official image entrypoint. Its tracked Bento image builds pinned Zstandard filter and static modules; Zstandard is preferred, gzip is the compatibility fallback, and Brotli is not included. Nginx contains no s6 or Supercronic process; host cron may invoke `./manage.py maintance`, which executes logrotate in the Nginx container. PHP-FPM, runners, MySQL, and Redis use the private `backend` Compose network; only shared FPM socket bind mounts connect Nginx to PHP.
+Nginx has no `ports:` mapping. It binds the host network directly and runs as PID 1 through the official image entrypoint. Its tracked Bento image builds pinned Zstandard filter and static modules; Zstandard is preferred, gzip is the compatibility fallback, and Brotli is not included. Nginx contains no s6 or Supercronic process; host cron may invoke `./manage.py maintenance`, which executes logrotate in the Nginx container. PHP-FPM, runners, MySQL, and Redis use the private `backend` Compose network; only shared FPM socket bind mounts connect Nginx to PHP.
 
 For app `shop` on PHP 8.5:
 

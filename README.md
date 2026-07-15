@@ -345,8 +345,8 @@ Nginx runs directly as PID 1; there is no in-container scheduler. At container s
 Run all current stack maintenance jobs manually, or register the command in the current user's host crontab:
 
 ```bash
-./manage.py maintance
-./manage.py maintance setup-cron --schedule '17 3 * * *'
+./manage.py maintenance
+./manage.py maintenance setup-cron --schedule '17 3 * * *'
 ```
 
 `./manage.py logs rotate` remains an alias for the Nginx maintenance job. Rebuild and recreate Nginx after upgrading this configuration:
