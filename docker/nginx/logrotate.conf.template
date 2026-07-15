@@ -10,6 +10,7 @@
     dateformat -%Y%m%dT%H%M%S
     compress
     delaycompress
+    create 0644 nginx nginx
     sharedscripts
     su root root
     postrotate

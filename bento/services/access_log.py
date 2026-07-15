@@ -26,7 +26,9 @@ _GOACCESS_FORMAT_ARGS = [
 
 
 def ensure_access_log_dir() -> Path:
-    mkdir(NGINX_ACCESS_LOG_DIR, 0o750)
+    # Nginx workers must traverse this bind-mounted directory when logrotate
+    # asks them to reopen a root-created live file.
+    mkdir(NGINX_ACCESS_LOG_DIR, 0o751)
     return NGINX_ACCESS_LOG_DIR
 
 

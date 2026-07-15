@@ -42,10 +42,12 @@ class NginxZstdTests(unittest.TestCase):
         self.assertIn("logrotate", dockerfile)
         self.assertIn("/var/log/nginx/*.log /var/log/nginx/*/*.log", template)
         self.assertIn("rotate @MAX_FILES@", template)
+        self.assertIn("create 0644 nginx nginx", template)
         self.assertIn("sharedscripts", template)
         self.assertIn("nginx -s reopen", template)
         self.assertIn("NGINX_ACCESS_LOG_ROTATE", entrypoint)
         self.assertIn("NGINX_ACCESS_LOG_MAX_SIZE", entrypoint)
+        self.assertIn("chmod 0751 /var/log/nginx/apps", entrypoint)
 
     def test_status_endpoint_has_no_goaccess_report_server(self) -> None:
         status = Path("config/nginx/global/02-status.conf").read_text()

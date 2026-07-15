@@ -4,6 +4,11 @@ set -eu
 max_size=${NGINX_ACCESS_LOG_MAX_SIZE:-100M}
 max_files=${NGINX_ACCESS_LOG_ROTATE:-14}
 
+# Workers reopen log paths after rotation. Keep logs private from directory
+# listing while allowing the nginx user to traverse the bind-mounted path.
+mkdir -p /var/log/nginx/apps
+chmod 0751 /var/log/nginx/apps
+
 if ! printf '%s\n' "$max_size" | grep -Eqi '^[1-9][0-9]*([KMG](B)?)?$'; then
     echo "Invalid NGINX_ACCESS_LOG_MAX_SIZE: $max_size" >&2
     exit 1
