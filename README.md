@@ -338,7 +338,17 @@ Per-app access logs are off by default:
 ./manage.py app access-log disable shop
 ```
 
-Rotation is size-based using `NGINX_ACCESS_LOG_MAX_SIZE` and `NGINX_ACCESS_LOG_ROTATE`. It renames logs and asks Nginx to reopen descriptors; it does not reload configuration.
+The access-log format records Nginx's end-to-end `$request_time` and raw `$upstream_response_time`. GoAccess uses request time for its serving-time and slow-request views.
+
+The Nginx image uses s6-overlay with Nginx as its main command and Supercronic as a supervised support service. At 03:17 daily, a locked maintenance script generates static reports and runs logrotate with `NGINX_ACCESS_LOG_MAX_SIZE` and `NGINX_ACCESS_LOG_ROTATE`. The generated logrotate policy uses `sharedscripts`, `delaycompress`, and a bounded `postrotate` hook that calls `nginx -s reopen`. Reports are available only on host loopback at `http://127.0.0.1:8080/goaccess/`. `GOACCESS_TIMEOUT_SECONDS` limits each report job; a report failure preserves the previous report and does not affect Nginx. Manual `manage.py logs rotate` commands invoke the same locked in-container logrotate implementation and persistent state file.
+
+After an upgrade that introduces or changes Nginx maintenance dependencies, rebuild and recreate Nginx. An opt-in lifecycle check validates config testing, reload, reopen, maintenance, and the loopback endpoint:
+
+```bash
+./dc build nginx
+./dc up -d --no-deps nginx
+make test-nginx-integration
+```
 
 ## Configuration and safety
 

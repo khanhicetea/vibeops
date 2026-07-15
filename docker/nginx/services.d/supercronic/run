@@ -1,0 +1,3 @@
+#!/command/with-contenv sh
+set -eu
+exec /usr/local/bin/supercronic -no-reap -json -split-logs /etc/bento/nginx-maintenance.cron

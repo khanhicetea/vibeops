@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import tempfile
 import unittest
 from pathlib import Path
@@ -59,65 +58,68 @@ class AccessLogRenderTests(unittest.TestCase):
 
 
 class AccessLogRotateTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.log_dir = Path(self.tmp.name) / "apps"
-        self.log_dir.mkdir(parents=True)
-        self.patches = [
-            patch.object(access_log, "NGINX_ACCESS_LOG_DIR", self.log_dir),
-            patch.object(access_log, "nginx_access_log_max_size_bytes", return_value=100),
-            patch.object(access_log, "nginx_access_log_rotate_count", return_value=2),
-            patch.object(access_log, "nginx_reopen_logs"),
-        ]
-        for p in self.patches:
-            p.start()
+    def test_app_rotation_uses_locked_container_implementation(self) -> None:
+        completed = argparse.Namespace(stdout="maintenance output\nROTATED=1\n")
+        with (
+            patch.object(access_log, "docker_available", return_value=True),
+            patch.object(access_log, "service_running", return_value=True),
+            patch.object(access_log, "compose_prefix", return_value=["docker", "compose"]),
+            patch.object(access_log, "run", return_value=completed) as run,
+        ):
+            self.assertTrue(access_log.rotate_app_access_log("shop", force=True))
+        run.assert_called_once_with(
+            [
+                "docker", "compose", "exec", "-T", "nginx",
+                "bento-nginx-maintenance", "rotate", "shop", "true",
+            ],
+            capture=True,
+        )
 
-    def tearDown(self) -> None:
-        for p in reversed(self.patches):
-            p.stop()
-        self.tmp.cleanup()
+    def test_all_rotation_returns_container_count(self) -> None:
+        completed = argparse.Namespace(stdout="ROTATED=2\n")
+        with (
+            patch.object(access_log, "docker_available", return_value=True),
+            patch.object(access_log, "service_running", return_value=True),
+            patch.object(access_log, "run", return_value=completed),
+        ):
+            self.assertEqual(access_log.rotate_all_access_logs(), 2)
 
-    def test_rotate_skips_small_files(self) -> None:
-        live = self.log_dir / "shop.access.log"
-        live.write_text("x" * 10)
-        self.assertFalse(access_log.rotate_app_access_log("shop"))
-        self.assertTrue(live.is_file())
+    def test_rotation_requires_running_nginx(self) -> None:
+        with (
+            patch.object(access_log, "docker_available", return_value=True),
+            patch.object(access_log, "service_running", return_value=False),
+            self.assertRaisesRegex(StackError, "nginx must be running"),
+        ):
+            access_log.rotate_all_access_logs()
 
-    def test_rotate_renames_compresses_and_reopens(self) -> None:
-        live = self.log_dir / "shop.access.log"
-        live.write_text("x" * 200)
-        with patch.object(access_log, "nginx_reopen_logs") as reopen:
-            self.assertTrue(access_log.rotate_app_access_log("shop"))
-            reopen.assert_called_once()
-        self.assertFalse(live.exists())
-        archives = list(self.log_dir.glob("shop.access.log-*"))
-        self.assertEqual(len(archives), 1)
-        self.assertTrue(archives[0].name.endswith(".gz"))
-        with gzip.open(archives[0], "rt") as fh:
-            self.assertEqual(fh.read(), "x" * 200)
 
-    def test_rotate_prunes_old_archives(self) -> None:
-        for i in range(3):
-            path = self.log_dir / f"shop.access.log-2026010{i}T000000.gz"
-            path.write_bytes(b"old")
-            # Ensure mtime order
-            import os
-            import time
+class GoAccessAnalyzeTests(unittest.TestCase):
+    def test_html_analysis_uses_request_time_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            (log_dir / "shop.access.log").write_text(
+                '127.0.0.1 - - [01/Jan/2026:12:34:56 +0000] '
+                '"GET / HTTP/1.1" 200 12 "-" "curl" 0.125 0.120\n'
+            )
+            output = root / "report.html"
+            with (
+                patch.object(access_log, "NGINX_ACCESS_LOG_DIR", log_dir),
+                patch.object(access_log, "docker_available", return_value=True),
+                patch.object(access_log, "goaccess_image", return_value="goaccess:test"),
+                patch.object(access_log, "run") as run,
+            ):
+                access_log.run_goaccess_analyze("shop", html_path=output)
 
-            os.utime(path, (time.time() - 100 + i, time.time() - 100 + i))
-        live = self.log_dir / "shop.access.log"
-        live.write_text("y" * 200)
-        access_log.rotate_app_access_log("shop")
-        archives = list(self.log_dir.glob("shop.access.log-*"))
-        self.assertEqual(len(archives), 2)
-
-    def test_rotate_all_reopens_once(self) -> None:
-        for name in ("shop", "blog"):
-            (self.log_dir / f"{name}.access.log").write_text("z" * 200)
-        with patch.object(access_log, "nginx_reopen_logs") as reopen:
-            count = access_log.rotate_all_access_logs()
-        self.assertEqual(count, 2)
-        reopen.assert_called_once()
+        cmd = run.call_args.args[0]
+        self.assertIn(
+            '--log-format=%h %^[%d:%t %^] "%r" %s %b "%R" "%u" %T %^',
+            cmd,
+        )
+        self.assertIn("--date-format=%d/%b/%Y", cmd)
+        self.assertIn("--time-format=%H:%M:%S", cmd)
+        self.assertNotIn("--log-format=COMBINED", cmd)
 
 
 class AccessLogEnvTests(unittest.TestCase):

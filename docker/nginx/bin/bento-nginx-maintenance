@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+LOG_DIR=/var/log/nginx/apps
+REPORT_DIR=/var/log/nginx/goaccess
+LOCK_FILE=/var/log/nginx/.bento-maintenance.lock
+LOGROTATE_STATE=/var/log/nginx/.bento-logrotate.status
+LOG_FORMAT='%h %^[%d:%t %^] "%r" %s %b "%R" "%u" %T %^'
+GOACCESS_TIMEOUT_SECONDS=${GOACCESS_TIMEOUT_SECONDS:-1800}
+NGINX_ACCESS_LOG_MAX_SIZE=${NGINX_ACCESS_LOG_MAX_SIZE:-100M}
+NGINX_ACCESS_LOG_ROTATE=${NGINX_ACCESS_LOG_ROTATE:-14}
+
+say() { printf '%s [nginx-maintenance] %s\n' "$(date --iso-8601=seconds)" "$*"; }
+fail() { say "ERROR: $*" >&2; exit 1; }
+
+case "$GOACCESS_TIMEOUT_SECONDS" in *[!0-9]*|'') fail "GOACCESS_TIMEOUT_SECONDS must be a positive integer" ;; esac
+[ "$GOACCESS_TIMEOUT_SECONDS" -gt 0 ] || fail "GOACCESS_TIMEOUT_SECONDS must be positive"
+case "$NGINX_ACCESS_LOG_ROTATE" in *[!0-9]*|'') fail "NGINX_ACCESS_LOG_ROTATE must be a non-negative integer" ;; esac
+
+valid_app() { [[ $1 =~ ^[a-z][a-z0-9_-]{1,31}$ ]]; }
+
+app_from_live() {
+    local name=${1##*/}
+    printf '%s\n' "${name%.access.log}"
+}
+
+report_app() {
+    local app=$1 tmp output
+    local file
+    local -a files=()
+    shopt -s nullglob
+    for file in "$LOG_DIR/$app.access.log" "$LOG_DIR/$app.access.log-"*; do
+        [ -f "$file" ] && files+=("$file")
+    done
+    shopt -u nullglob
+    [ "${#files[@]}" -gt 0 ] || return 0
+
+    mkdir -p "$REPORT_DIR"
+    tmp=$(mktemp "$REPORT_DIR/.${app}.html.XXXXXX") || return 1
+    output="$REPORT_DIR/$app.html"
+    if timeout --signal=TERM --kill-after=15s "${GOACCESS_TIMEOUT_SECONDS}s" \
+        goaccess "${files[@]}" \
+        "--log-format=$LOG_FORMAT" \
+        '--date-format=%d/%b/%Y' \
+        '--time-format=%H:%M:%S' \
+        --no-global-config \
+        --html-report-title="Bento access report: $app" \
+        -o "$tmp"; then
+        chmod 0644 "$tmp"
+        mv -f "$tmp" "$output"
+        say "generated $output"
+        return 0
+    fi
+    rm -f "$tmp"
+    say "WARNING: GoAccess failed or timed out for $app; keeping the previous report" >&2
+    return 1
+}
+
+generate_index() {
+    local tmp report app
+    mkdir -p "$REPORT_DIR"
+    tmp=$(mktemp "$REPORT_DIR/.index.html.XXXXXX") || return 1
+    {
+        printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><title>Bento GoAccess reports</title></head><body>'
+        printf '%s\n' '<h1>Bento GoAccess reports</h1><ul>'
+        shopt -s nullglob
+        for report in "$REPORT_DIR"/*.html; do
+            [ "${report##*/}" = index.html ] && continue
+            app=${report##*/}; app=${app%.html}
+            valid_app "$app" || continue
+            printf '<li><a href="%s.html">%s</a></li>\n' "$app" "$app"
+        done
+        shopt -u nullglob
+        printf '%s\n' '</ul></body></html>'
+    } > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$REPORT_DIR/index.html"
+}
+
+rotate_logs() {
+    local scope=$1 force=$2 pattern config output count amount
+    local -a command
+
+    if [[ ${NGINX_ACCESS_LOG_MAX_SIZE^^} =~ ^([0-9]+)(K|KB|M|MB|G|GB)?$ ]]; then
+        amount=${BASH_REMATCH[1]}
+    else
+        fail "invalid NGINX_ACCESS_LOG_MAX_SIZE: $NGINX_ACCESS_LOG_MAX_SIZE"
+    fi
+    (( 10#$amount > 0 )) || fail "NGINX_ACCESS_LOG_MAX_SIZE must be positive"
+
+    if [ "$scope" = all ]; then
+        pattern="$LOG_DIR/*.access.log"
+    else
+        valid_app "$scope" || fail "invalid app name: $scope"
+        pattern="$LOG_DIR/$scope.access.log"
+    fi
+
+    config=$(mktemp /tmp/bento-logrotate.XXXXXX)
+    output=$(mktemp /tmp/bento-logrotate-output.XXXXXX)
+    cat > "$config" <<EOF
+$pattern {
+    size $NGINX_ACCESS_LOG_MAX_SIZE
+    rotate $NGINX_ACCESS_LOG_ROTATE
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%dT%H%M%S
+    compress
+    delaycompress
+    sharedscripts
+    su root root
+    postrotate
+        timeout --signal=TERM --kill-after=5s 30s nginx -s reopen
+    endscript
+}
+EOF
+
+    command=(logrotate --state "$LOGROTATE_STATE" --verbose)
+    [ "$force" = true ] && command+=(--force)
+    command+=("$config")
+    if ! LC_ALL=C timeout --signal=TERM --kill-after=10s 600s "${command[@]}" >"$output" 2>&1; then
+        cat "$output" >&2
+        rm -f "$config" "$output"
+        fail "logrotate failed or timed out"
+    fi
+    count=$(grep -c '^rotating log ' "$output" || true)
+    rm -f "$config" "$output"
+    say "logrotate completed with $count rotation(s)"
+    printf 'ROTATED=%s\n' "$count"
+}
+
+run_daily() {
+    local live app report_failed=false rotation_failed=false
+    shopt -s nullglob
+    for live in "$LOG_DIR"/*.access.log; do
+        app=$(app_from_live "$live")
+        valid_app "$app" || continue
+        report_app "$app" || report_failed=true
+    done
+    shopt -u nullglob
+    generate_index || report_failed=true
+    rotate_logs all false || rotation_failed=true
+    if [ "$report_failed" = true ]; then
+        say "WARNING: daily maintenance completed with one or more report failures" >&2
+    fi
+    if [ "$rotation_failed" = true ]; then
+        say "ERROR: daily maintenance failed during log rotation" >&2
+        return 1
+    fi
+    return 0
+}
+
+mkdir -p "$LOG_DIR" "$REPORT_DIR"
+chmod 0755 "$REPORT_DIR"
+exec 9>"$LOCK_FILE"
+flock -n 9 || fail "another maintenance operation is already running"
+
+command=${1:-daily}
+case "$command" in
+    init) generate_index ;;
+    daily) run_daily ;;
+    report) report_app "${2:-}"; generate_index ;;
+    rotate)
+        scope=${2:-all}
+        force=${3:-false}
+        [ "$force" = true ] || [ "$force" = false ] || fail "force must be true or false"
+        rotate_logs "$scope" "$force"
+        ;;
+    *) fail "usage: bento-nginx-maintenance {init|daily|report APP|rotate [APP|all] [true|false]}" ;;
+esac
