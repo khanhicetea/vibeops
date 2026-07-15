@@ -45,10 +45,10 @@ class ReserveBackupPathTests(unittest.TestCase):
         path = db_commands._reserve_backup_path(self.backup_dir, stamp, "shop_app")
         self.assertEqual(path, self.backup_dir / f"{stamp}_shop_app.sql")
 
-    def test_gzip_extension_reserved(self) -> None:
+    def test_zstd_extension_reserved(self) -> None:
         stamp = "20260711-120000-000002"
         path = db_commands._reserve_backup_path(self.backup_dir, stamp, "shop_app", compress=True)
-        self.assertEqual(path, self.backup_dir / f"{stamp}_shop_app.sql.gz")
+        self.assertEqual(path, self.backup_dir / f"{stamp}_shop_app.sql.zst")
 
 
 class AtomicDumpTests(unittest.TestCase):
@@ -73,13 +73,7 @@ class AtomicDumpTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _mock_dump_write(self, payload: bytes, returncode: int = 0):
-        def _run_stdout_to_file(cmd, *, stdout_file, check=True, gzip_compress=False):
-            if gzip_compress:
-                with gzip.GzipFile(fileobj=stdout_file, mode="wb", mtime=0) as gz:
-                    gz.write(payload)
-                cp = subprocess.CompletedProcess(cmd, returncode, b"", b"dump-err\n" if returncode else b"")
-                setattr(cp, "raw_bytes", len(payload))
-                return cp
+        def _run_stdout_to_file(cmd, *, stdout_file, check=True):
             stdout_file.write(payload)
             stdout_file.flush()
             return subprocess.CompletedProcess(cmd, returncode, b"", b"dump-err\n" if returncode else b"")
@@ -154,12 +148,18 @@ class AtomicDumpTests(unittest.TestCase):
         self.assertNotIn("MYSQL_PWD", flat)
         self.assertNotIn(" -p", f" {flat} ")
 
-    def test_gzip_dump_promotes_valid_archive(self) -> None:
-        payload = b"-- MySQL dump\nCREATE TABLE t (id INT);\n"
-        final = self.backup_dir / "20260711-120000-000000_shop_app.sql.gz"
+    def test_zstd_dump_runs_pipeline_inside_mysql_container_and_promotes(self) -> None:
+        payload = b"zstd-frame:fake-compressed-dump"
+        final = self.backup_dir / "20260711-120000-000000_shop_app.sql.zst"
+        seen: list[list[str]] = []
+
+        def capture_cmd(*args, **kwargs):
+            cmd = ["docker", "compose", *args]
+            seen.append(cmd)
+            return cmd
 
         with patch.object(db_commands, "run_stdout_to_file", side_effect=self._mock_dump_write(payload)):
-            with patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]):
+            with patch.object(db_commands, "compose_command", side_effect=capture_cmd):
                 db_commands.mysql_root_dump(
                     ["--databases", "shop_app"],
                     service=self.service,
@@ -167,15 +167,20 @@ class AtomicDumpTests(unittest.TestCase):
                     compress=True,
                 )
 
-        self.assertTrue(final.is_file())
-        with gzip.open(final, "rb") as gz:
-            self.assertEqual(gz.read(), payload)
+        self.assertEqual(final.read_bytes(), payload)
+        self.assertEqual(seen[0][-5:-1], ["bash", "-o", "pipefail", "-c"])
+        self.assertIn("mysqldump", seen[0][-1])
+        self.assertIn("| zstd -3 -T1 --check --stdout", seen[0][-1])
         self.assertEqual(final.stat().st_mode & 0o777, 0o600)
         self.assertEqual(list(self.backup_dir.glob("*.partial-*")), [])
 
-    def test_gzip_empty_raw_is_failure(self) -> None:
-        final = self.backup_dir / "empty.sql.gz"
-        with patch.object(db_commands, "run_stdout_to_file", side_effect=self._mock_dump_write(b"", returncode=0)):
+    def test_zstd_pipeline_failure_removes_partial(self) -> None:
+        final = self.backup_dir / "failed.sql.zst"
+        with patch.object(
+            db_commands,
+            "run_stdout_to_file",
+            side_effect=self._mock_dump_write(b"partial", returncode=1),
+        ):
             with patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]):
                 with self.assertRaises(StackError) as ctx:
                     db_commands.mysql_root_dump(
@@ -184,8 +189,9 @@ class AtomicDumpTests(unittest.TestCase):
                         output_path=final,
                         compress=True,
                     )
-        self.assertIn("empty", str(ctx.exception).lower())
+        self.assertIn("mysqldump/zstd pipeline", str(ctx.exception).lower())
         self.assertFalse(final.exists())
+        self.assertEqual(list(self.backup_dir.glob("*.partial-*")), [])
 
 
 class ListingAndRetentionTests(unittest.TestCase):
@@ -202,6 +208,8 @@ class ListingAndRetentionTests(unittest.TestCase):
         final_gz = self.backup_dir / "20260711-1_shop.sql.gz"
         with gzip.open(final_gz, "wb") as gz:
             gz.write(b"-- gz final\n")
+        final_zst = self.backup_dir / "20260711-1_shop.sql.zst"
+        final_zst.write_bytes(b"zstd final")
         partial = self.backup_dir / "20260711-1_shop.sql.partial-abc"
         partial.write_text("-- partial\n", encoding="utf-8")
         partial_gz = self.backup_dir / "20260711-1_shop.sql.gz.partial-xyz"
@@ -215,6 +223,7 @@ class ListingAndRetentionTests(unittest.TestCase):
         names = {p.name for p in listed}
         self.assertIn("20260711-1_shop.sql", names)
         self.assertIn("20260711-1_shop.sql.gz", names)
+        self.assertIn("20260711-1_shop.sql.zst", names)
         self.assertIn("target.sql", names)
         self.assertNotIn("link.sql", names)
         self.assertNotIn(partial.name, names)
@@ -231,7 +240,7 @@ class ListingAndRetentionTests(unittest.TestCase):
 
     def test_retention_keeps_n_per_database_and_ignores_other_files(self) -> None:
         shop_new = self.backup_dir / "20260713-120000-000000_shop_app.sql"
-        shop_old = self.backup_dir / "20260712-120000-000000_shop_app.sql.gz"
+        shop_old = self.backup_dir / "20260712-120000-000000_shop_app.sql.zst"
         reporting_new = self.backup_dir / "20260713-120000-000000_shop_reporting.sql"
         reporting_old = self.backup_dir / "20260712-120000-000000_shop_reporting.sql"
         other_app = self.backup_dir / "20260711-120000-000000_blog_app.sql"
@@ -306,7 +315,7 @@ class BackupBatchTests(unittest.TestCase):
             database=None,
             app=None,
             keep=2,
-            gzip=True,
+            zstd=True,
         )
         with (
             patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
@@ -322,7 +331,7 @@ class BackupBatchTests(unittest.TestCase):
             db_commands.cmd_db_backup(args)
 
         self.assertEqual(len(written_payloads), 2)
-        self.assertTrue(all(name.endswith(".sql.gz") for name in written_payloads))
+        self.assertTrue(all(name.endswith(".sql.zst") for name in written_payloads))
         self.assertEqual(compress_flags, [True, True])
         self.assertEqual(
             dump_args,
@@ -352,7 +361,7 @@ class BackupBatchTests(unittest.TestCase):
             database=None,
             app=None,
             keep=1,
-            gzip=False,
+            zstd=False,
         )
         with (
             patch.object(db_commands, "_require_mysql_service", return_value="mysql84"),
@@ -414,13 +423,15 @@ class StreamingRestoreTests(unittest.TestCase):
         self.assertEqual(len(streamed), 1)
         self.assertEqual(streamed[0], self.payload)
 
-    def test_streams_gzip_backup_decompressed(self) -> None:
+    def test_streams_gzip_backup_to_container_decompression_pipeline(self) -> None:
         gz_path = self.root / "big.sql.gz"
         with gzip.open(gz_path, "wb") as gz:
             gz.write(self.payload)
         streamed: list[bytes] = []
+        commands: list[list[str]] = []
 
         def fake_run_stdin_stream(cmd, *, stdin_file, check=False, capture_stdout=True):
+            commands.append(cmd)
             streamed.append(stdin_file.read())
             return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
@@ -434,8 +445,35 @@ class StreamingRestoreTests(unittest.TestCase):
                 gz_path, service="mysql84", database="shop_app"
             )
 
-        self.assertEqual(len(streamed), 1)
-        self.assertEqual(streamed[0], self.payload)
+        self.assertEqual(streamed, [gz_path.read_bytes()])
+        self.assertEqual(commands[0][-5:-1], ["bash", "-o", "pipefail", "-c"])
+        self.assertIn("gzip --decompress --stdout | mysql", commands[0][-1])
+
+    def test_streams_zstd_backup_to_container_decompression_pipeline(self) -> None:
+        zst_path = self.root / "big.sql.zst"
+        compressed = b"fake-frame:" + self.payload
+        zst_path.write_bytes(compressed)
+        streamed: list[bytes] = []
+        commands: list[list[str]] = []
+
+        def fake_run_stdin_stream(cmd, *, stdin_file, check=False, capture_stdout=True):
+            commands.append(cmd)
+            streamed.append(stdin_file.read())
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with (
+            patch.object(db_commands, "service_running", return_value=True),
+            patch.object(db_commands, "mysql_root_option_file", return_value=self.option),
+            patch.object(db_commands, "compose_command", side_effect=lambda *a, **k: ["docker", "compose", *a]),
+            patch.object(db_commands, "run_stdin_stream", side_effect=fake_run_stdin_stream),
+        ):
+            db_commands.mysql_root_stream_sql_file(
+                zst_path, service="mysql84", database="shop_app"
+            )
+
+        self.assertEqual(streamed, [compressed])
+        self.assertEqual(commands[0][-5:-1], ["bash", "-o", "pipefail", "-c"])
+        self.assertIn("zstd --decompress --quiet --stdout | mysql", commands[0][-1])
 
     def test_restore_nonzero_raises(self) -> None:
         def fake_run_stdin_stream(cmd, *, stdin_file, check=False, capture_stdout=True):

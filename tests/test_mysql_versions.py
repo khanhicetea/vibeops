@@ -21,8 +21,9 @@ class MysqlVersionsTests(unittest.TestCase):
                 self.assertIn(f"  {service}:\n", text)
                 self.assertIn(f"      - {service}-data:/var/lib/mysql", text)
                 self.assertIn(f"  {service}-data:\n", text)
-            self.assertIn("    image: mysql:${MYSQL57_VERSION:-5.7}\n", text)
-            self.assertNotIn("context: ./docker/mysql/5.7", text)
+            self.assertIn("      context: ./docker/mysql\n", text)
+            self.assertIn("        MYSQL_BASE_IMAGE: mysql:${MYSQL57_VERSION:-5.7}\n", text)
+            self.assertIn("    image: bento/mysql:${MYSQL57_VERSION:-5.7}\n", text)
 
     def test_mysql_57_builds_biarms_based_custom_image_on_arm64(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -38,8 +39,9 @@ class MysqlVersionsTests(unittest.TestCase):
             "    image: bento/mysql:5.7-arm64\n",
             text,
         )
-        self.assertIn("    image: mysql:${MYSQL84_VERSION:-8.4}\n", text)
-        self.assertNotIn("image: mysql:${MYSQL57_VERSION:-5.7}", text)
+        self.assertIn("        MYSQL_BASE_IMAGE: mysql:${MYSQL84_VERSION:-8.4}\n", text)
+        self.assertIn("    image: bento/mysql:${MYSQL84_VERSION:-8.4}\n", text)
+        self.assertNotIn("MYSQL_BASE_IMAGE: mysql:${MYSQL57_VERSION:-5.7}", text)
         self.assertNotIn("biarms-entrypoint.sh:/usr/local/bin", text)
 
     def test_biarms_entrypoint_prepares_bind_mounted_log_directory(self) -> None:
@@ -52,14 +54,22 @@ class MysqlVersionsTests(unittest.TestCase):
         self.assertTrue(host_is_arm64("AARCH64"))
         self.assertFalse(host_is_arm64("x86_64"))
 
-    def test_custom_arm64_image_wraps_biarms_entrypoint(self) -> None:
-        dockerfile = Path("docker/mysql/5.7/Dockerfile").read_text()
-        self.assertTrue(dockerfile.startswith("FROM biarms/mysql:5.7\n"))
+    def test_mysql_images_install_container_backup_tools(self) -> None:
+        dockerfile = Path("docker/mysql/Dockerfile").read_text()
+        self.assertIn("ARG MYSQL_BASE_IMAGE=mysql:8.4", dockerfile)
+        self.assertIn("bash gzip zstd", dockerfile)
+        self.assertIn("microdnf", dockerfile)
+        self.assertIn("apt-get", dockerfile)
+        self.assertIn("apk add --no-cache bash gzip zstd", dockerfile)
+
+        arm_dockerfile = Path("docker/mysql/5.7/Dockerfile").read_text()
+        self.assertTrue(arm_dockerfile.startswith("FROM biarms/mysql:5.7\n"))
+        self.assertIn("bash gzip zstd", arm_dockerfile)
         self.assertIn(
             "COPY biarms-entrypoint.sh /usr/local/bin/bento-biarms-entrypoint.sh",
-            dockerfile,
+            arm_dockerfile,
         )
-        self.assertIn('ENTRYPOINT ["/usr/local/bin/bento-biarms-entrypoint.sh"]', dockerfile)
+        self.assertIn('ENTRYPOINT ["/usr/local/bin/bento-biarms-entrypoint.sh"]', arm_dockerfile)
 
     def test_database_stats_formats_allocated_bytes(self) -> None:
         with (

@@ -85,7 +85,7 @@ A PHP version creates three roles:
 
 All roles use the same image, PHP binary, extensions, user metadata, and `/home` mount. The runner must stay at one replica.
 
-A MySQL version creates a service such as `mysql84` and a named volume such as `mysql84-data`. MySQL version removal is intentionally not automated. On ARM64, the MySQL 5.7 service builds the custom `docker/mysql/5.7/` image from `biarms/mysql:5.7` because the official 5.7 image does not provide an ARM64 variant. The custom image adds a compatibility entrypoint that fixes ownership of the bind-mounted log directory before delegating to the base image's entrypoint. All other host/version combinations use official images.
+A MySQL version creates a service such as `mysql84` and a named volume such as `mysql84-data`. MySQL version removal is intentionally not automated. Each service builds a thin Bento wrapper over its selected upstream image, adding Bash, gzip, and Zstandard for in-container backup pipelines. On ARM64, MySQL 5.7 uses `docker/mysql/5.7/Dockerfile` with `biarms/mysql:5.7` because the official 5.7 image does not provide an ARM64 variant; its compatibility entrypoint also fixes ownership of the bind-mounted log directory.
 
 ## Render and apply transaction
 
@@ -162,13 +162,13 @@ Generated MySQL root option files live under `runtime/secrets/mysql/` and are mo
 Logical backup behavior:
 
 - stream to a private partial file
-- optionally gzip while streaming
+- optionally run `mysqldump | zstd -3 -T1` inside the MySQL container, streaming only compressed output to the host
 - require successful, non-empty output
 - atomically promote to a unique final name
 - apply `--keep N` per database only after a complete successful batch
 - ignore partial files and symlinks when listing/retaining
 
-Restore streams SQL into either a new suffixed database or a dropped-and-recreated original. It is not object-level atomic. MySQL named volumes protect against container recreation, not accidental SQL changes; off-host logical backups are still required.
+Restore streams plain SQL directly, or sends compressed bytes to an in-container `zstd -d | mysql` / `gzip -d | mysql` pipeline. It restores into either a new suffixed database or a dropped-and-recreated original and is not object-level atomic. MySQL named volumes protect against container recreation, not accidental SQL changes; off-host logical backups are still required.
 
 ## TLS and networking
 

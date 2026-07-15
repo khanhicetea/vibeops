@@ -106,14 +106,14 @@ Adapt application commands to the framework. Take a logical backup before risky 
 ## Back up and restore
 
 ```bash
-./manage.py db backup --app shop --gzip --keep 14
+./manage.py db backup --app shop --zstd --keep 14
 ./manage.py db list-backups --mysql-service mysql84
 ```
 
 Restore safely into a new database first:
 
 ```bash
-./manage.py db restore runtime/backups/mysql84/<dump>.sql.gz \
+./manage.py db restore runtime/backups/mysql84/<dump>.sql.zst \
   --database shop_app \
   --new-suffix recovery
 ```
@@ -121,7 +121,7 @@ Restore safely into a new database first:
 Replacing the original requires exact-name confirmation:
 
 ```bash
-./manage.py db restore runtime/backups/mysql84/<dump>.sql.gz \
+./manage.py db restore runtime/backups/mysql84/<dump>.sql.zst \
   --database shop_app \
   --confirm-database shop_app
 ```

@@ -3,15 +3,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import gzip
 import os
 import re
 import secrets
 import shlex
-import shutil
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 from bento.services.compose import compose_command
@@ -57,7 +54,7 @@ def _list_user_databases(service: str, *, app_name: str | None = None) -> list[s
 
 
 def _backup_extension(*, compress: bool) -> str:
-    return ".sql.gz" if compress else ".sql"
+    return ".sql.zst" if compress else ".sql"
 
 
 def _reserve_backup_path(backup_dir: Path, stamp: str, db_name: str, *, compress: bool = False) -> Path:
@@ -98,6 +95,12 @@ def _is_gzip_backup(path: Path) -> bool:
     name = path.name.lower()
     return name.endswith(".sql.gz") or name.endswith(".gz")
 
+
+def _is_zstd_backup(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(".sql.zst") or name.endswith(".zst")
+
+
 def mysql_root_dump(
     mysqldump_args: list[str],
     *,
@@ -107,11 +110,12 @@ def mysql_root_dump(
 ) -> None:
     """Run mysqldump into a private partial file, then atomically promote to *output_path*.
 
-    When *compress* is true, dump stdout is streamed through gzip into a ``.sql.gz`` final path.
+    When *compress* is true, the MySQL container pipes dump stdout through its
+    zstd CLI using level 3 and one worker, producing a ``.sql.zst`` final path.
     """
     service = _require_mysql_service(service)
-    if compress and not str(output_path).endswith(".sql.gz"):
-        die(f"Compressed dump path must end with .sql.gz: bento/{rel(output_path)}")
+    if compress and not str(output_path).endswith(".sql.zst"):
+        die(f"Compressed dump path must end with .sql.zst: bento/{rel(output_path)}")
     if not compress and output_path.suffix != ".sql":
         die(f"Uncompressed dump path must end with .sql: bento/{rel(output_path)}")
     if output_path.exists():
@@ -120,21 +124,23 @@ def mysql_root_dump(
     token = secrets.token_hex(8)
     partial = output_path.parent / f"{output_path.name}.partial-{token}"
     quoted = " ".join(shlex.quote(a) for a in mysqldump_args)
-    cmd = compose_command(
-        "exec",
-        "-T",
-        service,
-        "sh",
-        "-lc",
-        f"mysqldump --defaults-extra-file=/run/secrets/bento-root.cnf "
-        f"--single-transaction --routines --triggers --events "
-        f"--default-character-set=utf8mb4 {quoted}",
+    dump_cmd = (
+        "mysqldump --defaults-extra-file=/run/secrets/bento-root.cnf "
+        "--single-transaction --routines --triggers --events "
+        f"--default-character-set=utf8mb4 {quoted}"
     )
+    if compress:
+        cmd = compose_command(
+            "exec", "-T", service, "bash", "-o", "pipefail", "-c",
+            f"{dump_cmd} | zstd -3 -T1 --check --stdout",
+        )
+    else:
+        cmd = compose_command("exec", "-T", service, "sh", "-lc", dump_cmd)
 
     promoted = False
     try:
         with _open_private_partial(partial) as fh:
-            cp = run_stdout_to_file(cmd, stdout_file=fh, check=False, gzip_compress=compress)
+            cp = run_stdout_to_file(cmd, stdout_file=fh, check=False)
             fh.flush()
             try:
                 os.fsync(fh.fileno())
@@ -143,20 +149,15 @@ def mysql_root_dump(
 
         if cp.returncode != 0:
             err = (cp.stderr or b"").decode("utf-8", errors="replace").strip()
+            operation = "mysqldump/zstd pipeline" if compress else "mysqldump"
             die(
-                f"mysqldump on {service} failed (exit {cp.returncode})"
+                f"{operation} on {service} failed (exit {cp.returncode})"
                 + (f": {err}" if err else "")
             )
 
-        if compress:
-            raw_bytes = int(getattr(cp, "raw_bytes", 0) or 0)
-            if raw_bytes <= 0:
-                die(f"mysqldump on {service} produced empty output for bento/{rel(output_path)}")
-            if not partial.exists() or partial.stat().st_size == 0:
-                die(f"gzip backup is empty for bento/{rel(output_path)}")
-        else:
-            if not partial.exists() or partial.stat().st_size == 0:
-                die(f"mysqldump on {service} produced empty output for bento/{rel(output_path)}")
+        if not partial.exists() or partial.stat().st_size == 0:
+            kind = "zstd backup" if compress else f"mysqldump on {service} output"
+            die(f"{kind} is empty for bento/{rel(output_path)}")
 
         if output_path.exists():
             die(f"Refusing to overwrite existing backup bento/{rel(output_path)}")
@@ -168,16 +169,20 @@ def mysql_root_dump(
         if not promoted and partial.exists():
             partial.unlink(missing_ok=True)
 
-def _mysql_import_cmd(service: str, database: str) -> list[str]:
+def _mysql_import_cmd(service: str, database: str, *, compression: str | None = None) -> list[str]:
     database = validate(database, DATABASE_RE, "database name")
-    return compose_command(
-        "exec",
-        "-T",
-        service,
-        "sh",
-        "-lc",
+    mysql_cmd = (
         "mysql --defaults-extra-file=/run/secrets/bento-root.cnf --batch --raw "
-        f"{shlex.quote(database)}",
+        f"{shlex.quote(database)}"
+    )
+    if compression == "zstd":
+        script = f"zstd --decompress --quiet --stdout | {mysql_cmd}"
+    elif compression == "gzip":
+        script = f"gzip --decompress --stdout | {mysql_cmd}"
+    else:
+        return compose_command("exec", "-T", service, "sh", "-lc", mysql_cmd)
+    return compose_command(
+        "exec", "-T", service, "bash", "-o", "pipefail", "-c", script
     )
 
 
@@ -190,37 +195,15 @@ def mysql_root_stream_sql_file(path: Path, *, service: str, database: str) -> No
     if size == 0:
         die(f"Backup file is empty: bento/{rel(path)}")
 
-    cmd = _mysql_import_cmd(service, database)
-    if _is_gzip_backup(path):
-        # GzipFile has no usable fileno for Popen; feed decompressed bytes through a pipe.
-        read_fd, write_fd = os.pipe()
-        feeder_errors: list[BaseException] = []
-
-        def _feed() -> None:
-            try:
-                with os.fdopen(write_fd, "wb") as out, gzip.open(path, "rb") as gz:
-                    shutil.copyfileobj(gz, out, length=256 * 1024)
-            except BrokenPipeError:
-                pass
-            except BaseException as exc:  # noqa: BLE001 — surface in parent after join
-                feeder_errors.append(exc)
-                try:
-                    os.close(write_fd)
-                except OSError:
-                    pass
-
-        thread = threading.Thread(target=_feed, name="bento-gz-restore", daemon=True)
-        thread.start()
-        try:
-            with os.fdopen(read_fd, "rb") as stdin_file:
-                cp = run_stdin_stream(cmd, stdin_file=stdin_file, check=False, capture_stdout=True)
-        finally:
-            thread.join(timeout=3600)
-        if feeder_errors:
-            die(f"failed reading gzip backup bento/{rel(path)}: {feeder_errors[0]}")
+    if _is_zstd_backup(path):
+        compression = "zstd"
+    elif _is_gzip_backup(path):
+        compression = "gzip"
     else:
-        with path.open("rb") as fh:
-            cp = run_stdin_stream(cmd, stdin_file=fh, check=False, capture_stdout=True)
+        compression = None
+    cmd = _mysql_import_cmd(service, database, compression=compression)
+    with path.open("rb") as fh:
+        cp = run_stdin_stream(cmd, stdin_file=fh, check=False, capture_stdout=True)
 
     if cp.returncode != 0:
         err = (cp.stderr or cp.stdout or b"").decode("utf-8", errors="replace").strip()
@@ -375,7 +358,7 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
     mkdir(backup_dir, 0o700)
     stamp = _stamp()
     keep = _validate_keep(args.keep)
-    compress = bool(getattr(args, "gzip", False))
+    compress = bool(getattr(args, "zstd", False))
     targets: list[str] = []
 
     if args.database:
@@ -418,11 +401,11 @@ def cmd_db_backup(args: argparse.Namespace) -> None:
         die("No backups written")
 
 def _is_final_sql_backup(path: Path) -> bool:
-    """True for regular finalized ``*.sql`` / ``*.sql.gz`` files (not partials, not symlinks)."""
+    """True for regular finalized SQL backups (not partials or symlinks)."""
     name = path.name
     if ".partial-" in name:
         return False
-    if not (name.endswith(".sql") or name.endswith(".sql.gz")):
+    if not (name.endswith(".sql") or name.endswith(".sql.gz") or name.endswith(".sql.zst")):
         return False
     if path.is_symlink():
         return False
@@ -454,7 +437,7 @@ def _apply_retention(
     groups: dict[str, list[Path]] = {name: [] for name in database_names}
     patterns = {
         name: re.compile(
-            rf"^\d{{8}}-\d{{6}}-\d{{6}}_{re.escape(name)}\.sql(?:\.gz)?$"
+            rf"^\d{{8}}-\d{{6}}-\d{{6}}_{re.escape(name)}\.sql(?:\.gz|\.zst)?$"
         )
         for name in groups
     }
@@ -539,7 +522,12 @@ def cmd_db_restore(args: argparse.Namespace) -> None:
             f"DROP DATABASE `{old_database}`;\nCREATE DATABASE `{old_database}`;\n",
             service=service,
         )
-    kind = "gzip-compressed " if _is_gzip_backup(path) else ""
+    if _is_zstd_backup(path):
+        kind = "zstd-compressed "
+    elif _is_gzip_backup(path):
+        kind = "gzip-compressed "
+    else:
+        kind = ""
     warn(
         f"Restoring {kind}bento/{rel(path)} into {service}/{target_database} "
         "(the destination database was freshly created; restore is not atomic)"

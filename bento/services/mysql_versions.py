@@ -56,14 +56,22 @@ def render_mysql_versions_compose(
             f"      - ./config/mysql/versions/{version}/conf.d/90-version.cnf:/etc/mysql/conf.d/90-version.cnf:ro\n"
             if version_config.is_file() else ""
         )
-        image_source = (
-            "    build:\n"
-            "      context: ./docker/mysql/5.7\n"
-            "      dockerfile: Dockerfile\n"
-            "    image: bento/mysql:5.7-arm64\n"
-            if version == "5.7" and arm64
-            else f"    image: mysql:${{MYSQL{compact}_VERSION:-{version}}}\n"
-        )
+        if version == "5.7" and arm64:
+            image_source = (
+                "    build:\n"
+                "      context: ./docker/mysql/5.7\n"
+                "      dockerfile: Dockerfile\n"
+                "    image: bento/mysql:5.7-arm64\n"
+            )
+        else:
+            image_source = (
+                "    build:\n"
+                "      context: ./docker/mysql\n"
+                "      dockerfile: Dockerfile\n"
+                "      args:\n"
+                f"        MYSQL_BASE_IMAGE: mysql:${{MYSQL{compact}_VERSION:-{version}}}\n"
+                f"    image: bento/mysql:${{MYSQL{compact}_VERSION:-{version}}}\n"
+            )
         lines.extend([
             f"  {service}:\n",
             image_source,

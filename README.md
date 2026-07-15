@@ -219,23 +219,23 @@ FPM sizing is selected per app with `--fpm-profile ondemand|balanced|throughput`
 
 There is intentionally no MySQL remove command. Retire a version only after manual backup/migration and deliberate removal of its service and named volume.
 
-On ARM64 hosts, MySQL 5.7 uses the custom `docker/mysql/5.7/Dockerfile`, based on `biarms/mysql:5.7`, because the official 5.7 image has no ARM64 variant. The custom image adds a compatibility entrypoint that prepares the bind-mounted log directory before delegating to the base image's entrypoint. Other versions and x86-64 hosts continue to use official MySQL images. MySQL 5.7 is end-of-life.
+Every managed MySQL service builds a thin Bento image from its selected upstream MySQL tag. The wrapper installs `bash`, `gzip`, and `zstd` so backup and restore pipelines run beside the matching MySQL client tools. On ARM64, MySQL 5.7 instead uses `docker/mysql/5.7/Dockerfile`, based on `biarms/mysql:5.7`, and also wraps its entrypoint to prepare the bind-mounted log directory. After upgrading an existing host, run `./manage.py render && ./dc up -d --build <mysql-service>` once to build and activate the wrapper. MySQL 5.7 is end-of-life.
 
 ### Backups and restore
 
 ```bash
 ./manage.py db list --mysql-service mysql84
-./manage.py db backup --gzip --keep 14
-./manage.py db backup --app shop --gzip
+./manage.py db backup --zstd --keep 14
+./manage.py db backup --app shop --zstd
 ./manage.py db list-backups
 ```
 
-Backups are streamed to private partial files and atomically promoted to `.sql` or `.sql.gz` files in `runtime/backups/<mysql-service>/`. `--keep N` applies per database only after the full requested batch succeeds.
+Backups are streamed to private partial files and atomically promoted to `.sql` or `.sql.zst` files in `runtime/backups/<mysql-service>/`. With `--zstd`, the MySQL container runs `mysqldump | zstd -3 -T1`; only compressed output crosses the Docker exec boundary. Restore sends compressed input into the container and runs `zstd -d | mysql`, or `gzip -d | mysql` for legacy `.sql.gz` dumps. These pipelines use Bash `pipefail`, and no host compression tools are required. `--keep N` applies per database only after the full requested batch succeeds.
 
 Restore to a new database:
 
 ```bash
-./manage.py db restore runtime/backups/mysql84/<dump>.sql.gz \
+./manage.py db restore runtime/backups/mysql84/<dump>.sql.zst \
   --database shop_app \
   --new-suffix restored
 ```
@@ -243,7 +243,7 @@ Restore to a new database:
 Replace the original database only with exact-name confirmation:
 
 ```bash
-./manage.py db restore runtime/backups/mysql84/<dump>.sql.gz \
+./manage.py db restore runtime/backups/mysql84/<dump>.sql.zst \
   --database shop_app \
   --confirm-database shop_app
 ```

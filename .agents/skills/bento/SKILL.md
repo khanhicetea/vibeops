@@ -102,9 +102,9 @@ MySQL removal is intentionally unsupported. Back up and migrate before deliberat
 ./manage.py db shell --mysql-service mysql84
 ./manage.py db stats --mysql-service mysql84
 ./manage.py db process-list --mysql-service mysql84
-./manage.py db backup --app shop --gzip --keep 14
+./manage.py db backup --app shop --zstd --keep 14
 ./manage.py db list-backups --mysql-service mysql84
-./manage.py db restore <dump.sql.gz> --database shop_app --new-suffix restored
+./manage.py db restore <dump.sql.zst> --database shop_app --new-suffix restored
 ```
 
 Original replacement requires `--confirm-database shop_app`. Dumps are atomically finalized, but restore is not object-level atomic. Keep off-host copies. Never use `down -v`; it destroys database volumes.

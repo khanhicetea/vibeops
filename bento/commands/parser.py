@@ -194,9 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
     db_backup.add_argument("--app", "--user", dest="app", help="All databases for this app (prefix app_*)")
     db_backup.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_backup.add_argument(
-        "--gzip",
+        "--zstd",
         action="store_true",
-        help="Stream mysqldump through gzip and write .sql.gz (atomic promote; smaller on disk)",
+        help="Pipe mysqldump through in-container zstd -3 -T1 and write .sql.zst (atomic promote)",
     )
     db_backup.add_argument(
         "--keep",
@@ -205,8 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     db_backup.set_defaults(func=db_commands.cmd_db_backup)
 
-    db_restore = db_sub.add_parser("restore", help="Restore a database-only .sql or .sql.gz dump")
-    db_restore.add_argument("backup_file", help="Path or filename under runtime/backups/<service>/ (.sql or .sql.gz)")
+    db_restore = db_sub.add_parser("restore", help="Restore a database-only .sql, .sql.zst, or legacy .sql.gz dump")
+    db_restore.add_argument("backup_file", help="Path or filename under runtime/backups/<service>/ (.sql, .sql.zst, or .sql.gz)")
     db_restore.add_argument("--database", required=True, help="Original database name represented by the dump")
     db_restore.add_argument(
         "--new-suffix",
@@ -219,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     db_restore.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_restore.set_defaults(func=db_commands.cmd_db_restore)
 
-    db_list_backups = db_sub.add_parser("list-backups", help="List finalized .sql/.sql.gz dumps under runtime/backups/<mysql_service>/")
+    db_list_backups = db_sub.add_parser("list-backups", help="List finalized .sql/.sql.zst/legacy .sql.gz dumps under runtime/backups/<mysql_service>/")
     db_list_backups.add_argument("--mysql-service", default=env.default_mysql_service(), help="MySQL service, e.g. mysql57/mysql84/mysql97")
     db_list_backups.set_defaults(func=db_commands.cmd_db_list_backups)
 

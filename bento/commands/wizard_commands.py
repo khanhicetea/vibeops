@@ -272,7 +272,7 @@ def wizard_mysql_service(default_service: str | None, fixed_service: str | None)
 
 def wizard_db_backup(*, default_service: str | None = None, fixed_service: str | None = None,
                      app_name: str | None = None) -> None:
-    """Interactive logical dump (plain .sql or gzip .sql.gz)."""
+    """Interactive logical dump (plain .sql or zstd .sql.zst)."""
     mysql_service = wizard_mysql_service(default_service, fixed_service)
     if app_name:
         scope = "App databases"
@@ -295,7 +295,7 @@ def wizard_db_backup(*, default_service: str | None = None, fixed_service: str |
                 "database name",
             )
 
-    use_gzip = prompt_confirm("Compress with gzip (.sql.gz)?", True)
+    use_zstd = prompt_confirm("Compress with zstd -3 -T1 (.sql.zst)?", True)
     keep_text = prompt_text("Keep N newest per database after success (blank = keep all)", "", required=False)
     keep: int | None = None
     if keep_text.strip():
@@ -304,7 +304,7 @@ def wizard_db_backup(*, default_service: str | None = None, fixed_service: str |
         except ValueError:
             die(f"Invalid --keep value: {keep_text}")
 
-    plan = [f"backup on {mysql_service}", f"gzip: {'yes' if use_gzip else 'no'}"]
+    plan = [f"backup on {mysql_service}", f"zstd: {'yes' if use_zstd else 'no'}"]
     if selected_app:
         plan.append(f"app databases: {selected_app}_*")
     elif database:
@@ -320,8 +320,8 @@ def wizard_db_backup(*, default_service: str | None = None, fixed_service: str |
         cmd_parts.extend(["--app", selected_app])
     elif database:
         cmd_parts.append(database)
-    if use_gzip:
-        cmd_parts.append("--gzip")
+    if use_zstd:
+        cmd_parts.append("--zstd")
     if keep is not None:
         cmd_parts.extend(["--keep", str(keep)])
     info("\nEquivalent command:")
@@ -334,7 +334,7 @@ def wizard_db_backup(*, default_service: str | None = None, fixed_service: str |
             mysql_service=mysql_service,
             database=database,
             app=selected_app,
-            gzip=use_gzip,
+            zstd=use_zstd,
             keep=keep,
         )
     )
