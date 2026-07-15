@@ -21,6 +21,7 @@ from bento.commands.app_config_commands import (
     cmd_app_config_reset,
     cmd_app_config_status,
 )
+from bento.commands.access_log_commands import cmd_app_access_log, cmd_app_logs_analyze
 from bento.commands.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
 from bento.commands.maintenance_commands import cmd_maintance
 from bento.commands.worker_commands import (
@@ -558,9 +559,36 @@ def wizard_customize_app(app_name: str) -> None:
             continue
 
 
+def wizard_manage_access_logs(app_name: str) -> None:
+    while True:
+        app = load_db().get("apps", {}).get(app_name, {})
+        enabled = bool(app.get("access_log")) if isinstance(app, dict) else False
+        print_heading(f"Access logs for {app_name}", writer=info)
+        cmd_app_access_log(argparse.Namespace(access_log_action="status", app_name=app_name))
+        try:
+            action = prompt_choice(
+                "Access log action",
+                ["Disable" if enabled else "Enable", "Analyze GoAccess"],
+            )
+            if action == "Back":
+                return
+            if action == "Analyze GoAccess":
+                info("\nEquivalent command:")
+                info(f"  ./manage.py app logs analyze {shlex.quote(app_name)}")
+                cmd_app_logs_analyze(argparse.Namespace(app_name=app_name, html=None))
+                continue
+            no_reload = not prompt_confirm("Reload nginx if running?", True)
+            command = action.lower()
+            print_plan([f"{command} access logging for {app_name}", "reload nginx: " + ("no" if no_reload else "yes")])
+            if prompt_confirm("Continue?", True):
+                cmd_app_access_log(argparse.Namespace(access_log_action=command, app_name=app_name, no_reload=no_reload))
+        except WizardBack:
+            continue
+
+
 def wizard_manage_app() -> None:
     app_name, app = wizard_select_app()
-    actions = ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Audit File Permissions", "Customize"]
+    actions = ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Access Logs", "Audit File Permissions", "Customize"]
     while True:
         app = load_db().get("apps", {}).get(app_name, app)
         print_heading(f"Manage app: {app_name} (main: {app.get('main_domain', '-')})", writer=info)
@@ -578,6 +606,8 @@ def wizard_manage_app() -> None:
                 wizard_manage_workers(app_name, app)
             elif action == "Domains":
                 wizard_manage_domains(app_name)
+            elif action == "Access Logs":
+                wizard_manage_access_logs(app_name)
             elif action == "Audit File Permissions":
                 wizard_check_permissions(app_name)
             else:

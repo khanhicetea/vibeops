@@ -160,9 +160,43 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args_list[0].args[1],
-            ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Audit File Permissions", "Customize"],
+            ["Shell", "Databases", "Cronjobs", "Workers", "Domains", "Access Logs", "Audit File Permissions", "Customize"],
         )
         domains.assert_called_once_with("shop")
+
+    def test_access_logs_menu_is_inside_manage_app(self) -> None:
+        from bento.commands import wizard_commands
+
+        app = {"name": "shop", "main_domain": "shop.example.com", "access_log": True}
+        with (
+            mock.patch.object(wizard_commands, "wizard_select_app", return_value=("shop", app)),
+            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
+            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Access Logs", "Back"]),
+            mock.patch.object(wizard_commands, "wizard_manage_access_logs") as access_logs,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_app()
+
+        access_logs.assert_called_once_with("shop")
+
+    def test_access_logs_menu_can_launch_goaccess_tui(self) -> None:
+        from bento.commands import wizard_commands
+
+        app = {"name": "shop", "access_log": True}
+        with (
+            mock.patch.object(wizard_commands, "load_db", return_value={"apps": {"shop": app}}),
+            mock.patch.object(wizard_commands, "cmd_app_access_log") as status,
+            mock.patch.object(wizard_commands, "prompt_choice", side_effect=["Analyze GoAccess", "Back"]) as choice,
+            mock.patch.object(wizard_commands, "cmd_app_logs_analyze") as analyze,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_manage_access_logs("shop")
+
+        self.assertEqual(choice.call_args_list[0].args[1], ["Disable", "Analyze GoAccess"])
+        self.assertEqual(status.call_args.args[0].access_log_action, "status")
+        args = analyze.call_args.args[0]
+        self.assertEqual(args.app_name, "shop")
+        self.assertIsNone(args.html)
 
     def test_workers_menu_is_inside_manage_app(self) -> None:
         from bento.commands import wizard_commands
