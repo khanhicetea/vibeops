@@ -20,7 +20,7 @@ from bento.services.app_config import (
     template_update_available,
     upstream_template_path,
 )
-from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from bento.services.state import load_db, save_db, serialized_render, upsert_timestamp
 from bento.ui.table import print_ascii_table as print_table
 from bento.utils.errors import die, info, warn
 from bento.utils.paths import rel
@@ -62,7 +62,7 @@ def edit_custom_source(path: Path) -> None:
         )
 
 
-@serialized_cron_state
+@serialized_render
 def cmd_app_config_customize(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import apply_generated_config
 
@@ -99,7 +99,7 @@ def cmd_app_config_customize(args: argparse.Namespace) -> None:
         info("Edit the custom source when ready, then run ./manage.py apply")
 
 
-@serialized_cron_state
+@serialized_render
 def cmd_app_config_reset(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import apply_generated_config
 

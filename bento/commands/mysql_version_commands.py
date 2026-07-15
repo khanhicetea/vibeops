@@ -6,7 +6,7 @@ from typing import Any
 
 from bento.services.mysql import mysql_root_option_file, render_mysql_root_option_files
 from bento.services.mysql_versions import managed_mysql_versions, mysql_service_for, render_mysql_versions_compose
-from bento.services.state import load_db, save_db, serialized_cron_state
+from bento.services.state import load_db, save_db, serialized_render
 from bento.ui.table import print_ascii_table as print_table
 from bento.utils.env import default_mysql_service
 from bento.utils.errors import info, warn
@@ -33,7 +33,7 @@ def cmd_mysql_versions(args: argparse.Namespace) -> None:
     )
 
 
-@serialized_cron_state
+@serialized_render
 def cmd_mysql_add(args: argparse.Namespace) -> None:
     db = load_db()
     version = validate(args.version, MYSQL_VERSION_RE, "MySQL version")

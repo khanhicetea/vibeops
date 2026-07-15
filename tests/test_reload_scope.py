@@ -252,7 +252,7 @@ class ReloadScopeTests(unittest.TestCase):
         lock.return_value.__enter__ = MagicMock(return_value=None)
         lock.return_value.__exit__ = MagicMock(return_value=False)
         with (
-            patch.object(cron_commands, "cron_state_lock", lock),
+            patch.object(cron_commands, "render_lock", lock),
             patch.object(cron_commands, "load_db", return_value=db),
             patch.object(cron_commands, "save_db"),
             patch.object(cron_commands, "resolve_app_php_version", return_value="8.5"),

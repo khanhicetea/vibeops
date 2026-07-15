@@ -15,7 +15,7 @@ from bento.os.fsutil import mkdir
 from bento.utils.paths import DOCROOT_NAME, PHP_TEMPLATE_DIR, RenderContext, rel
 from bento.services.php import php_runner_service_for
 from bento.services.rendering import write_template
-from bento.services.state import cron_state_lock, load_db, save_db, upsert_timestamp
+from bento.services.state import render_lock, load_db, save_db, upsert_timestamp
 from bento.utils.validation import (
     APP_NAME_RE, CRON_LOCK_RE, JOB_RE, PHP_VERSION_RE,
     validate, validate_cron_workdir, validate_timezone
@@ -97,7 +97,7 @@ def render_cron_job(cron: dict[str, Any], ctx: RenderContext | None = None) -> P
     return cron_path
 
 def cmd_cron_create(args: argparse.Namespace) -> None:
-    with cron_state_lock():
+    with render_lock():
         db = load_db()
         app_name = validate(args.app_name, APP_NAME_RE, "app_name")
         job_name = validate(args.job_name, JOB_RE, "job-name")
@@ -177,7 +177,7 @@ def cmd_cron_list(args: argparse.Namespace) -> None:
     print_table(rows, headers=["#", "JOB", "PHP", "SCHEDULE", "TZ", "OUTPUT", "COMMAND"])
 
 def cmd_cron_remove(args: argparse.Namespace) -> None:
-    with cron_state_lock():
+    with render_lock():
         db = load_db()
         number = getattr(args, "number", None)
         if number is not None:
@@ -214,7 +214,7 @@ def cmd_cron_remove(args: argparse.Namespace) -> None:
 
 def cmd_cron_reload(args: argparse.Namespace) -> None:
     php_version = validate(args.php, PHP_VERSION_RE, "PHP version")
-    with cron_state_lock():
+    with render_lock():
         db = load_db()
         app_name = getattr(args, "app_name", None)
         if app_name is not None:

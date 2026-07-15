@@ -9,7 +9,7 @@ from bento.utils.errors import die, info
 from bento.services.nginx import apply_vhost_tls, assert_domain_free, domains_for, normalize_aliases
 from bento.utils.paths import NGINX_TEMPLATE_DIR, NGINX_VHOST_DIR, RenderContext, rel
 from bento.services.rendering import render_template
-from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from bento.services.state import load_db, save_db, serialized_render, upsert_timestamp
 from bento.utils.validation import DOMAIN_RE, validate
 
 def render_proxy_vhost(site: dict[str, Any], ctx: RenderContext | None = None) -> Path:
@@ -28,7 +28,7 @@ def render_proxy_vhost(site: dict[str, Any], ctx: RenderContext | None = None) -
     site["vhost"] = rel(NGINX_VHOST_DIR / f"{main_domain}.conf")
     return conf_path
 
-@serialized_cron_state
+@serialized_render
 def cmd_proxy_create(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 

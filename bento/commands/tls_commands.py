@@ -8,7 +8,7 @@ from typing import Any
 from bento.utils.errors import die, info, warn
 from bento.services.nginx import app_vhost_path
 from bento.utils.paths import CERTS_DIR, NGINX_VHOST_DIR, rel
-from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from bento.services.state import load_db, save_db, serialized_render, upsert_timestamp
 from bento.utils.validation import DOMAIN_RE, validate
 
 def vhost_for_domain(domain: str, db: dict[str, Any]) -> tuple[Path, dict[str, Any] | None]:
@@ -27,7 +27,7 @@ def vhost_for_domain(domain: str, db: dict[str, Any]) -> tuple[Path, dict[str, A
         return NGINX_VHOST_DIR / f"{domain}.conf", site
     return NGINX_VHOST_DIR / f"{domain}.conf", None
 
-@serialized_cron_state
+@serialized_render
 def cmd_tls_acme(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
@@ -53,7 +53,7 @@ def cmd_tls_acme(args: argparse.Namespace) -> None:
     info(("Enabled NGINX ACME for" if mode == "acme" else "Switched to self-signed certificate for") + f" {main_domain}")
     info(f"Regenerated vhost: {rel(conf_path)}")
 
-@serialized_cron_state
+@serialized_render
 def cmd_tls_cert(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 

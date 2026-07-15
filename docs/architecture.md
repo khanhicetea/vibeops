@@ -94,7 +94,7 @@ A MySQL version creates a service such as `mysql84` and a named volume such as `
 ./manage.py apply
 ```
 
-Render acquires the state lock, creates a complete staging tree under `runtime/.render-txn-*`, then promotes candidate files with same-filesystem atomic replacement. Stale managed files are removed only after the candidate set is complete.
+Render acquires the render lock, creates a complete staging tree under `runtime/.render-txn-*`, then promotes candidate files with same-filesystem atomic replacement. Stale managed files are removed only after the candidate set is complete.
 
 Apply adds validation and reload:
 

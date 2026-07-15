@@ -84,7 +84,7 @@ class WorkerCommandTests(unittest.TestCase):
             worker_command=["--", "php", "artisan", "queue:work"],
         )
         with (
-            patch.object(worker_commands, "cron_state_lock", lock),
+            patch.object(worker_commands, "render_lock", lock),
             patch.object(worker_commands, "load_db", return_value=db),
             patch.object(worker_commands, "save_db") as save,
             patch.object(worker_commands, "upsert_timestamp"),

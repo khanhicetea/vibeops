@@ -170,7 +170,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
     def test_cron_omitted_stores_recorded_php(self) -> None:
         db = _shop_db("8.5")
         with (
-            patch.object(cron_commands, "cron_state_lock") as lock,
+            patch.object(cron_commands, "render_lock") as lock,
             patch.object(cron_commands, "load_db", return_value=db),
             patch.object(cron_commands, "ensure_app", return_value=db["apps"]["shop"]),
             patch.object(cron_commands, "save_db"),
@@ -218,7 +218,7 @@ class CommandHandlerPhpResolutionTests(unittest.TestCase):
             self.assertEqual(db["apps"]["shop"], original)
 
         with (
-            patch.object(cron_commands, "cron_state_lock") as lock,
+            patch.object(cron_commands, "render_lock") as lock,
             patch.object(cron_commands, "load_db", return_value=db),
             patch.object(cron_commands, "ensure_app") as ensure,
             patch.object(cron_commands, "save_db") as save_db,

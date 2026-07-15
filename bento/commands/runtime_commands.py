@@ -36,7 +36,7 @@ from bento.services.php_versions import render_php_versions_compose
 from bento.os.process import docker_available, run, running_services, service_running
 from bento.commands.proxy_commands import render_proxy_vhost
 from bento.services.rendering import content_looks_generated
-from bento.services.state import empty_db, load_db, save_db, serialized_cron_state
+from bento.services.state import empty_db, load_db, save_db, serialized_render
 from bento.ui.decorations import print_heading, print_list
 from bento.ui.table import print_ascii_table as print_table
 from bento.ui.tty import (
@@ -548,7 +548,7 @@ def apply_generated_config(
     """Stage a full generation, promote atomically, optionally validate/reload.
 
     Lifecycle:
-    ``state lock (caller) -> stage -> promote -> validate -> reload -> finalize``
+    ``render lock (caller) -> stage -> promote -> validate -> reload -> finalize``
     with rollback on stage/promote/validate failure. Reload failures after
     successful validation do not roll generated files back.
 
@@ -650,7 +650,7 @@ def cmd_compose(args: argparse.Namespace) -> None:
     cmd = [*compose_prefix(), *compose_args]
     os.execvp("docker", cmd)
 
-@serialized_cron_state
+@serialized_render
 def cmd_render(args: argparse.Namespace) -> None:
     db = load_db()
     rendered = apply_generated_config(db, reload_services=False, validate_services=False)
@@ -663,7 +663,7 @@ def cmd_render(args: argparse.Namespace) -> None:
     for path in rendered:
         info(f"  {rel(path)}")
 
-@serialized_cron_state
+@serialized_render
 def cmd_apply(args: argparse.Namespace) -> None:
     db = load_db()
     from bento.services.php_versions import render_php_versions_compose

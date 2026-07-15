@@ -114,9 +114,9 @@ def upsert_timestamp(item: dict[str, Any]) -> None:
 
 
 @contextmanager
-def cron_state_lock() -> Iterator[None]:
-    """Serialize cron/worker state, render, and runner reconciliation mutations."""
-    lock_path = STATE_DIR / ".cron.lock"
+def render_lock() -> Iterator[None]:
+    """Serialize desired-state mutations and the complete render/apply transaction."""
+    lock_path = STATE_DIR / ".render.lock"
     mkdir(lock_path.parent)
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -126,11 +126,11 @@ def cron_state_lock() -> Iterator[None]:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
-def serialized_cron_state(func: Any) -> Any:
-    """Decorator for render/apply operations that replace runner artifacts."""
+def serialized_render(func: Any) -> Any:
+    """Decorator for desired-state mutations that render or apply generated files."""
     @wraps(func)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        with cron_state_lock():
+        with render_lock():
             return func(*args, **kwargs)
     return wrapped
 

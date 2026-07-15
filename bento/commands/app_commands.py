@@ -17,7 +17,7 @@ from bento.utils.paths import PHP_TEMPLATE_DIR, rel
 from bento.commands.permission_commands import initialize_app_permissions
 from bento.services.php import app_document_root, ensure_app_identity, php_service_for, php_version_config_dir
 from bento.services.rendering import write_template
-from bento.services.state import load_db, save_db, serialized_cron_state, upsert_timestamp
+from bento.services.state import load_db, save_db, serialized_render, upsert_timestamp
 from bento.ui.table import print_ascii_table as print_table
 from bento.utils.validation import (
     APP_NAME_RE, DB_NAME_RE, DOMAIN_RE,
@@ -209,7 +209,7 @@ def cmd_app_domain_list(args: argparse.Namespace) -> None:
     ]
     print_table(rows, headers=["#", "DOMAIN", "ROLE"])
 
-@serialized_cron_state
+@serialized_render
 def cmd_app_domain_add(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
@@ -250,7 +250,7 @@ def app_domain_from_args(args: argparse.Namespace, app: dict[str, Any]) -> str:
         die("Provide a domain or --number from 'app domain list'")
     return validate(args.domain, DOMAIN_RE, "domain")
 
-@serialized_cron_state
+@serialized_render
 def cmd_app_domain_remove(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 
@@ -277,7 +277,7 @@ def cmd_app_domain_remove(args: argparse.Namespace) -> None:
     save_db(db)
     info(f"Removed domain {domain} from app {app_name}")
 
-@serialized_cron_state
+@serialized_render
 def cmd_app_domain_set_main(args: argparse.Namespace) -> None:
     from bento.commands.runtime_commands import SERVICE_TARGETS_NGINX, apply_generated_config
 

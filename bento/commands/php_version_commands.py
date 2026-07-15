@@ -5,7 +5,7 @@ import argparse
 from typing import Any
 
 from bento.services.php_versions import managed_php_versions, render_php_versions_compose
-from bento.services.state import load_db, save_db, serialized_cron_state
+from bento.services.state import load_db, save_db, serialized_render
 from bento.ui.table import print_ascii_table as print_table
 from bento.utils.env import default_php_version
 from bento.utils.errors import die, info
@@ -31,7 +31,7 @@ def cmd_php_versions(args: argparse.Namespace) -> None:
     print_table([[v, "yes" if v == default else ""] for v in managed_php_versions(db)], headers=["PHP", "DEFAULT"])
 
 
-@serialized_cron_state
+@serialized_render
 def cmd_php_add(args: argparse.Namespace) -> None:
     db = load_db()
     version = validate(args.version, PHP_VERSION_RE, "PHP version")
@@ -47,7 +47,7 @@ def cmd_php_add(args: argparse.Namespace) -> None:
     info(f"Build/start it with: ./dc up -d --build php{version.replace('.', '')} php{version.replace('.', '')}-runner")
 
 
-@serialized_cron_state
+@serialized_render
 def cmd_php_remove(args: argparse.Namespace) -> None:
     db = load_db()
     version = validate(args.version, PHP_VERSION_RE, "PHP version")

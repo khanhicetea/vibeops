@@ -10,7 +10,7 @@ from bento.os.process import run, service_running
 from bento.services.compose import compose_command
 from bento.services.php import php_runner_service_for
 from bento.services.runner import normalize_worker, worker_targets
-from bento.services.state import cron_state_lock, load_db, save_db, upsert_timestamp
+from bento.services.state import render_lock, load_db, save_db, upsert_timestamp
 from bento.ui.table import print_ascii_table as print_table
 from bento.utils.errors import die, info
 from bento.utils.paths import DOCROOT_NAME
@@ -54,7 +54,7 @@ def _find_worker(db: dict[str, Any], app_name: str, name: str) -> dict[str, Any]
 
 
 def cmd_worker_create(args: argparse.Namespace) -> None:
-    with cron_state_lock():
+    with render_lock():
         db = load_db()
         app_name = validate(args.app_name, APP_NAME_RE, "app_name")
         name = validate(args.worker_name, JOB_RE, "worker name")
@@ -117,7 +117,7 @@ def cmd_worker_list(args: argparse.Namespace) -> None:
 
 
 def cmd_worker_remove(args: argparse.Namespace) -> None:
-    with cron_state_lock():
+    with render_lock():
         db = load_db()
         app_name = validate(args.app_name, APP_NAME_RE, "app_name")
         name = validate(args.worker_name, JOB_RE, "worker name")
