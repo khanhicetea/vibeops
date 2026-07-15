@@ -57,42 +57,6 @@ class AccessLogRenderTests(unittest.TestCase):
         self.assertTrue(self.log_dir.is_dir())
 
 
-class AccessLogRotateTests(unittest.TestCase):
-    def test_app_rotation_uses_locked_container_implementation(self) -> None:
-        completed = argparse.Namespace(stdout="maintenance output\nROTATED=1\n")
-        with (
-            patch.object(access_log, "docker_available", return_value=True),
-            patch.object(access_log, "service_running", return_value=True),
-            patch.object(access_log, "compose_prefix", return_value=["docker", "compose"]),
-            patch.object(access_log, "run", return_value=completed) as run,
-        ):
-            self.assertTrue(access_log.rotate_app_access_log("shop", force=True))
-        run.assert_called_once_with(
-            [
-                "docker", "compose", "exec", "-T", "nginx",
-                "bento-nginx-maintenance", "rotate", "shop", "true",
-            ],
-            capture=True,
-        )
-
-    def test_all_rotation_returns_container_count(self) -> None:
-        completed = argparse.Namespace(stdout="ROTATED=2\n")
-        with (
-            patch.object(access_log, "docker_available", return_value=True),
-            patch.object(access_log, "service_running", return_value=True),
-            patch.object(access_log, "run", return_value=completed),
-        ):
-            self.assertEqual(access_log.rotate_all_access_logs(), 2)
-
-    def test_rotation_requires_running_nginx(self) -> None:
-        with (
-            patch.object(access_log, "docker_available", return_value=True),
-            patch.object(access_log, "service_running", return_value=False),
-            self.assertRaisesRegex(StackError, "nginx must be running"),
-        ):
-            access_log.rotate_all_access_logs()
-
-
 class GoAccessAnalyzeTests(unittest.TestCase):
     def test_html_analysis_uses_request_time_format(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -144,9 +108,8 @@ class AccessLogCliTests(unittest.TestCase):
         analyze = parser.parse_args(["app", "logs", "analyze", "shop", "--html", "/tmp/x.html"])
         self.assertEqual(analyze.app_name, "shop")
         self.assertEqual(analyze.html, "/tmp/x.html")
-        rotate = parser.parse_args(["logs", "rotate", "--force", "--app", "shop"])
+        rotate = parser.parse_args(["logs", "rotate", "--force"])
         self.assertTrue(rotate.force)
-        self.assertEqual(rotate.app_name, "shop")
         create = parser.parse_args(["app", "create", "shop", "shop.test", "--access-log"])
         self.assertTrue(create.access_log)
         create_off = parser.parse_args(["app", "create", "shop", "shop.test", "--no-access-log"])
@@ -186,13 +149,10 @@ class AccessLogCliTests(unittest.TestCase):
         self.assertTrue(calls[0]["reload_services"])
         self.assertTrue(db["apps"]["shop"]["access_log"])
 
-    def test_logs_rotate_command_app_scope(self) -> None:
-        with patch.object(access_log_commands, "rotate_app_access_log", return_value=True) as rotate:
-            with patch.object(access_log_commands, "info"):
-                access_log_commands.cmd_logs_rotate(
-                    argparse.Namespace(force=True, app_name="shop")
-                )
-        rotate.assert_called_once_with("shop", force=True)
+    def test_logs_rotate_command_runs_maintenance(self) -> None:
+        with patch("bento.commands.maintenance_commands.run_maintenance") as maintenance:
+            access_log_commands.cmd_logs_rotate(argparse.Namespace(force=True))
+        maintenance.assert_called_once_with(force=True)
 
 
 if __name__ == "__main__":

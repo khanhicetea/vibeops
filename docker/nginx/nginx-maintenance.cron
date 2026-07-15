@@ -1,5 +1,0 @@
-SHELL=/bin/sh
-PATH=/command:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Generate reports first, then rotate oversized access logs and reopen Nginx.
-17 3 * * * timeout --signal=TERM --kill-after=30s 2h /usr/local/bin/bento-nginx-maintenance daily

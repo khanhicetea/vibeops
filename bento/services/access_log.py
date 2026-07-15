@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from bento.services.compose import compose_prefix
-
 import os
 import sys
 from pathlib import Path
@@ -12,7 +10,7 @@ from bento.utils.env import goaccess_image
 from bento.utils.errors import die, info, warn
 from bento.os.fsutil import mkdir
 from bento.utils.paths import NGINX_ACCESS_LOG_DIR, ROOT, rel
-from bento.os.process import docker_available, run, service_running
+from bento.os.process import docker_available, run
 from bento.utils.validation import APP_NAME_RE, validate
 
 # Live log: <app>.access.log
@@ -62,43 +60,6 @@ def list_access_log_files(app_name: str) -> list[Path]:
         files.append(live)
     files.extend(archives)
     return files
-
-
-def _run_container_rotation(scope: str, *, force: bool) -> int:
-    """Use the Nginx container's locked maintenance implementation."""
-    if not docker_available():
-        die("docker is required to rotate nginx access logs")
-    if not service_running("nginx"):
-        die("nginx must be running to rotate and safely reopen access logs")
-    result = run(
-        [
-            *compose_prefix(),
-            "exec",
-            "-T",
-            "nginx",
-            "bento-nginx-maintenance",
-            "rotate",
-            scope,
-            "true" if force else "false",
-        ],
-        capture=True,
-    )
-    for line in (result.stdout or "").splitlines():
-        if line.startswith("ROTATED="):
-            try:
-                return int(line.removeprefix("ROTATED="))
-            except ValueError:
-                break
-    die("nginx maintenance returned no rotation result")
-
-
-def rotate_app_access_log(app_name: str, *, force: bool = False) -> bool:
-    app_name = validate(app_name, APP_NAME_RE, "app_name")
-    return _run_container_rotation(app_name, force=force) > 0
-
-
-def rotate_all_access_logs(*, force: bool = False) -> int:
-    return _run_container_rotation("all", force=force)
 
 
 def run_goaccess_analyze(

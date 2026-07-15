@@ -10,6 +10,7 @@ from bento.commands import (
     cron_commands,
     db_commands,
     mysql_admin_commands,
+    maintenance_commands,
     permission_commands,
     php_version_commands,
     mysql_version_commands,
@@ -267,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_commands.add_parser(sub)
     php_version_commands.add_parser(sub)
     mysql_version_commands.add_parser(sub)
+    maintenance_commands.add_parser(sub)
 
     app_exec = sub.add_parser("exec", help="Run a command in an ephemeral PHP CLI container as an app")
     app_exec.add_argument("app_name")
@@ -345,17 +347,12 @@ def build_parser() -> argparse.ArgumentParser:
     logs_sub = logs_cmd.add_subparsers(dest="logs_command", required=True)
     logs_rotate = logs_sub.add_parser(
         "rotate",
-        help="Rotate oversized app nginx access logs (rename + nginx -s reopen; never reloads config)",
+        help="Run the Nginx logrotate maintenance job",
     )
     logs_rotate.add_argument(
         "--force",
         action="store_true",
-        help="Rotate live access logs even when under NGINX_ACCESS_LOG_MAX_SIZE",
-    )
-    logs_rotate.add_argument(
-        "--app",
-        dest="app_name",
-        help="Only rotate this app's access log",
+        help="Force log rotation regardless of NGINX_ACCESS_LOG_MAX_SIZE",
     )
     logs_rotate.set_defaults(func=access_log_commands.cmd_logs_rotate)
 

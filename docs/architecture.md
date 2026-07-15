@@ -20,7 +20,7 @@ phpXX-runner ────────────────┼── MySQL mys
 phpXX-cli (ephemeral) runs deploy commands and shells
 ```
 
-Nginx has no `ports:` mapping. It binds the host network directly. Its tracked Bento image builds pinned Zstandard filter and static modules; Zstandard is preferred, gzip is the compatibility fallback, and Brotli is not included. The image uses s6-overlay as PID 1, but Nginx remains the main command and its exit terminates the container; Supercronic is a supervised support process for locked GoAccess generation and logrotate maintenance. PHP-FPM, runners, MySQL, and Redis use the private `backend` Compose network; only shared FPM socket bind mounts connect Nginx to PHP.
+Nginx has no `ports:` mapping. It binds the host network directly and runs as PID 1 through the official image entrypoint. Its tracked Bento image builds pinned Zstandard filter and static modules; Zstandard is preferred, gzip is the compatibility fallback, and Brotli is not included. Nginx contains no s6 or Supercronic process; host cron may invoke `./manage.py maintance`, which executes logrotate in the Nginx container. PHP-FPM, runners, MySQL, and Redis use the private `backend` Compose network; only shared FPM socket bind mounts connect Nginx to PHP.
 
 For app `shop` on PHP 8.5:
 
@@ -178,7 +178,7 @@ The Nginx image and its pinned Zstandard module revision are treated as one buil
 
 ACME state is durable and secret. HTTP-01 requires public DNS and port 80. HTTP/3 additionally requires UDP 443 through the host firewall/security group.
 
-Because Nginx uses host networking, proxy upstream `127.0.0.1:<port>` means the host namespace. It does not resolve Compose service names on the backend bridge. The local status server binds `127.0.0.1:8080`; daily GoAccess reports are served beneath `/goaccess/` from the persistent Nginx log mount and are not exposed on public listeners.
+Because Nginx uses host networking, proxy upstream `127.0.0.1:<port>` means the host namespace. It does not resolve Compose service names on the backend bridge. The local status server binds `127.0.0.1:8080`.
 
 ## Compose assembly
 

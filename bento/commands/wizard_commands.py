@@ -22,6 +22,7 @@ from bento.commands.app_config_commands import (
     cmd_app_config_status,
 )
 from bento.commands.cron_commands import cmd_cron_create, cmd_cron_list, cmd_cron_remove
+from bento.commands.maintenance_commands import cmd_maintance
 from bento.commands.worker_commands import (
     cmd_worker_control,
     cmd_worker_create,
@@ -605,10 +606,36 @@ def wizard_manage_php_versions() -> None:
                 cmd_php_remove(argparse.Namespace(version=version))
 
 
+def wizard_maintance() -> None:
+    while True:
+        print_heading("Maintance", writer=info)
+        action = prompt_choice("Maintance action", ["Run now", "Setup cron"])
+        if action == "Back":
+            return
+        if action == "Run now":
+            info("\nEquivalent command:")
+            info("  ./manage.py maintance")
+            if prompt_confirm("Run maintenance now?", True):
+                cmd_maintance(argparse.Namespace(maintance_action="run", force=False))
+            continue
+
+        schedule = prompt_text("Host cron schedule", "17 3 * * *")
+        info("\nEquivalent command:")
+        info(f"  ./manage.py maintance setup-cron --schedule {shlex.quote(schedule)}")
+        if prompt_confirm("Install or update the current user's cron entry?", True):
+            cmd_maintance(
+                argparse.Namespace(
+                    maintance_action="setup-cron",
+                    schedule=schedule,
+                    force=False,
+                )
+            )
+
+
 def cmd_wizard(args: argparse.Namespace) -> None:
     if not sys.stdin.isatty():
         die("wizard requires an interactive terminal")
-    actions = ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Show services status"]
+    actions = ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Maintance", "Show services status"]
     while True:
         print_heading("bento", writer=info)
         action = prompt_choice("What do you want to do?", actions, zero="Quit")
@@ -623,6 +650,8 @@ def cmd_wizard(args: argparse.Namespace) -> None:
                 wizard_manage_php_versions()
             elif action == "Manage MySQL versions":
                 wizard_manage_mysql_versions()
+            elif action == "Maintance":
+                wizard_maintance()
             else:
                 cmd_status(argparse.Namespace(check_nginx=False))
         except WizardBack:

@@ -22,31 +22,35 @@ class NginxZstdTests(unittest.TestCase):
         self.assertIn("nginx -t -c /tmp/nginx-zstd-test.conf", dockerfile)
         self.assertNotIn("brotli", dockerfile.lower())
 
-    def test_s6_keeps_nginx_as_the_container_main_command(self) -> None:
+    def test_nginx_is_pid_one_without_s6_or_supercronic(self) -> None:
         dockerfile = Path("docker/nginx/Dockerfile").read_text()
         compose = Path("config/compose.yml").read_text()
-        maintenance = Path("docker/nginx/bin/bento-nginx-maintenance").read_text()
 
-        self.assertIn('ENTRYPOINT ["/init"]', dockerfile)
-        self.assertIn('CMD ["/docker-entrypoint.sh", "nginx", "-g", "daemon off;"]', dockerfile)
-        self.assertIn("S6_BEHAVIOUR_IF_STAGE2_FAILS: \"2\"", compose)
-        self.assertIn("NGINX_MAINTENANCE_SCHEDULE", compose)
-        self.assertIn("flock -n 9", maintenance)
-        self.assertIn("timeout --signal=TERM", maintenance)
-        self.assertIn("logrotate --state", maintenance)
-        self.assertIn("delaycompress", maintenance)
-        self.assertIn("nginx -s reopen", maintenance)
-        self.assertIn(".bento-logrotate.status", maintenance)
-        self.assertNotIn('mv -- "$live"', maintenance)
-        self.assertIn("        logrotate \\\n", dockerfile)
+        self.assertIn('CMD ["nginx", "-g", "daemon off;"]', dockerfile)
+        self.assertNotIn('ENTRYPOINT ["/init"]', dockerfile)
+        self.assertNotIn("s6", dockerfile.lower())
+        self.assertNotIn("supercronic", dockerfile.lower())
+        self.assertNotIn("goaccess", dockerfile.lower())
+        self.assertNotIn("S6_", compose)
+        self.assertNotIn("NGINX_MAINTENANCE_SCHEDULE", compose)
 
-    def test_goaccess_reports_are_loopback_only(self) -> None:
+    def test_logrotate_config_is_rendered_and_reopens_nginx(self) -> None:
+        dockerfile = Path("docker/nginx/Dockerfile").read_text()
+        template = Path("docker/nginx/logrotate.conf.template").read_text()
+        entrypoint = Path("docker/nginx/docker-entrypoint.d/20-bento-logrotate.sh").read_text()
+
+        self.assertIn("logrotate", dockerfile)
+        self.assertIn("/var/log/nginx/*.log /var/log/nginx/*/*.log", template)
+        self.assertIn("rotate @MAX_FILES@", template)
+        self.assertIn("sharedscripts", template)
+        self.assertIn("nginx -s reopen", template)
+        self.assertIn("NGINX_ACCESS_LOG_ROTATE", entrypoint)
+        self.assertIn("NGINX_ACCESS_LOG_MAX_SIZE", entrypoint)
+
+    def test_status_endpoint_has_no_goaccess_report_server(self) -> None:
         status = Path("config/nginx/global/02-status.conf").read_text()
         self.assertIn("listen 127.0.0.1:8080;", status)
-        self.assertIn("location /goaccess/", status)
-        self.assertIn("alias /var/log/nginx/goaccess/;", status)
-        self.assertIn("allow 127.0.0.1;", status)
-        self.assertIn("deny all;", status)
+        self.assertNotIn("goaccess", status.lower())
 
     def test_nginx_loads_and_enables_zstd_with_gzip_fallback(self) -> None:
         nginx_conf = Path("config/nginx/nginx.conf").read_text()

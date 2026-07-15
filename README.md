@@ -340,21 +340,20 @@ Per-app access logs are off by default:
 
 The access-log format records Nginx's end-to-end `$request_time` and raw `$upstream_response_time`. GoAccess uses request time for its serving-time and slow-request views.
 
-The Nginx image uses s6-overlay with Nginx as its main command and Supercronic as a supervised support service. On `NGINX_MAINTENANCE_SCHEDULE` (03:17 daily by default, interpreted in `TZ`), a locked maintenance script generates static reports and runs logrotate with `NGINX_ACCESS_LOG_MAX_SIZE` and `NGINX_ACCESS_LOG_ROTATE`. The generated logrotate policy uses `sharedscripts`, `delaycompress`, and a bounded `postrotate` hook that calls `nginx -s reopen`. Reports are available only on host loopback at `http://127.0.0.1:8080/goaccess/`. `GOACCESS_TIMEOUT_SECONDS` limits each report job; a report failure preserves the previous report and does not affect Nginx. Manual `manage.py logs rotate` commands invoke the same locked in-container logrotate implementation and persistent state file.
+Nginx runs directly as PID 1; there is no in-container scheduler. At container startup, the image renders `/etc/logrotate.d/bento-nginx` from `NGINX_ACCESS_LOG_MAX_SIZE` and `NGINX_ACCESS_LOG_ROTATE`. The policy covers top-level and app Nginx `*.log` files, uses `sharedscripts` and `delaycompress`, and sends `nginx -s reopen` once after a rotation.
 
-After an upgrade that introduces or changes Nginx maintenance dependencies, rebuild and recreate Nginx. An opt-in lifecycle check validates config testing, reload, reopen, maintenance, and the loopback endpoint:
+Run all current stack maintenance jobs manually, or register the command in the current user's host crontab:
+
+```bash
+./manage.py maintance
+./manage.py maintance setup-cron --schedule '17 3 * * *'
+```
+
+`./manage.py logs rotate` remains an alias for the Nginx maintenance job. Rebuild and recreate Nginx after upgrading this configuration:
 
 ```bash
 ./dc build nginx
 ./dc up -d --no-deps nginx
-make test-nginx-integration
-```
-
-For a short maintenance test, set `NGINX_MAINTENANCE_SCHEDULE="* * * * *"` in `.env`, recreate Nginx, and follow its logs. Restore the daily value afterward:
-
-```bash
-./dc up -d --no-deps --force-recreate nginx
-./dc logs -f nginx
 ```
 
 ## Configuration and safety

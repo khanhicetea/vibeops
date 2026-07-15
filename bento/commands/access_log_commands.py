@@ -9,8 +9,6 @@ from bento.services.access_log import (
     ensure_access_log_dir,
     list_access_log_files,
     live_access_log_path,
-    rotate_all_access_logs,
-    rotate_app_access_log,
     run_goaccess_analyze,
 )
 from bento.utils.errors import die, info, warn
@@ -86,14 +84,7 @@ def cmd_app_logs_analyze(args: argparse.Namespace) -> None:
 
 
 def cmd_logs_rotate(args: argparse.Namespace) -> None:
-    """Rotate app nginx access logs via rename + nginx -s reopen (no config reload)."""
-    force = bool(getattr(args, "force", False))
-    app_name = getattr(args, "app_name", None)
-    if app_name:
-        app_name = validate(app_name, APP_NAME_RE, "app_name")
-        if rotate_app_access_log(app_name, force=force):
-            info(f"Rotated access log for {app_name}")
-        else:
-            info(f"No rotation needed for {app_name}")
-        return
-    rotate_all_access_logs(force=force)
+    """Backward-compatible alias for the stack maintenance logrotate job."""
+    from bento.commands.maintenance_commands import run_maintenance
+
+    run_maintenance(force=bool(getattr(args, "force", False)))

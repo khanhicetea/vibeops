@@ -1,3 +1,0 @@
-#!/command/with-contenv sh
-set -eu
-exec /usr/local/bin/bento-nginx-maintenance init

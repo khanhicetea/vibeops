@@ -1,0 +1,18 @@
+# Rendered at container startup from NGINX_ACCESS_LOG_MAX_SIZE and
+# NGINX_ACCESS_LOG_ROTATE. This covers Nginx's top-level logs and logs in one
+# service subdirectory, including /var/log/nginx/apps/*.log.
+/var/log/nginx/*.log /var/log/nginx/*/*.log {
+    size @MAX_SIZE@
+    rotate @MAX_FILES@
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%dT%H%M%S
+    compress
+    delaycompress
+    sharedscripts
+    su root root
+    postrotate
+        nginx -s reopen
+    endscript
+}

@@ -23,12 +23,6 @@ services:
       TZ: ${TZ:-UTC}
       NGINX_ACCESS_LOG_MAX_SIZE: ${NGINX_ACCESS_LOG_MAX_SIZE:-100M}
       NGINX_ACCESS_LOG_ROTATE: ${NGINX_ACCESS_LOG_ROTATE:-14}
-      GOACCESS_TIMEOUT_SECONDS: ${GOACCESS_TIMEOUT_SECONDS:-1800}
-      NGINX_MAINTENANCE_SCHEDULE: "${NGINX_MAINTENANCE_SCHEDULE:-17 3 * * *}"
-      S6_KEEP_ENV: "1"
-      S6_BEHAVIOUR_IF_STAGE2_FAILS: "2"
-      S6_SERVICES_GRACETIME: "10000"
-      S6_KILL_GRACETIME: "10000"
     volumes:
       - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./config/nginx/global:/etc/nginx/global:ro

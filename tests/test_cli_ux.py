@@ -110,9 +110,20 @@ class WizardMenuRefactorTests(unittest.TestCase):
 
         self.assertEqual(
             choice.call_args.args[1],
-            ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Show services status"],
+            ["Create app", "Manage app", "Manage PHP versions", "Manage MySQL versions", "Maintance", "Show services status"],
         )
         self.assertEqual(choice.call_args.kwargs["zero"], "Quit")
+
+    def test_maintance_menu_offers_run_and_cron_setup(self) -> None:
+        from bento.commands import wizard_commands
+
+        with (
+            mock.patch.object(wizard_commands, "prompt_choice", return_value="Back") as choice,
+            mock.patch.object(wizard_commands, "info"),
+        ):
+            wizard_commands.wizard_maintance()
+
+        self.assertEqual(choice.call_args.args[1], ["Run now", "Setup cron"])
 
     def test_mysql_manager_selects_version_for_database_stats(self) -> None:
         from bento.commands import mysql_admin_commands
