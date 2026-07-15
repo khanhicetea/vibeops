@@ -17,6 +17,7 @@ MYSQL_ROOT_PASSWORD=<long-random-password>
 DEFAULT_MYSQL_SERVICE=mysql84
 DEFAULT_PHP_VERSION=8.5
 DEFAULT_FPM_PROFILE=balanced
+NGINX_VERSION=1.30
 SOCKET_GID=101
 REDIS_APP_ACL=false
 REDIS_PASSWORD=<long-random-password>
@@ -193,7 +194,7 @@ services:
 ./dc up -d cadvisor
 ```
 
-For an optional Nginx image with Brotli and Zstandard modules, see [nginx-br-zstd-optin.md](nginx-br-zstd-optin.md).
+Zstandard compression is built into Bento's default Nginx image; Brotli is not included. See [nginx-zstd.md](nginx-zstd.md) before replacing the image or compression configuration.
 
 ## Constraints
 
@@ -225,8 +226,10 @@ Do not publish MySQL or Redis ports without a security review. Do not commit `.e
 git pull
 ./manage.py render
 ./dc config
+./dc build nginx
+./dc up -d --no-deps nginx
 ./manage.py apply
 make check
 ```
 
-Review custom-template status and merged Compose output after upstream template or topology changes.
+Build and recreate Nginx before `apply`: a release may update tracked configuration to load modules that are only present in the new image. Review custom-template status and merged Compose output after upstream template or topology changes.

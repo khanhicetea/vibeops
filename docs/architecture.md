@@ -20,7 +20,7 @@ phpXX-runner ────────────────┼── MySQL mys
 phpXX-cli (ephemeral) runs deploy commands and shells
 ```
 
-Nginx has no `ports:` mapping. It binds the host network directly. PHP-FPM, runners, MySQL, and Redis use the private `backend` Compose network; only shared FPM socket bind mounts connect Nginx to PHP.
+Nginx has no `ports:` mapping. It binds the host network directly. Its tracked Bento image builds pinned Zstandard filter and static modules; Zstandard is preferred, gzip is the compatibility fallback, and Brotli is not included. PHP-FPM, runners, MySQL, and Redis use the private `backend` Compose network; only shared FPM socket bind mounts connect Nginx to PHP.
 
 For app `shop` on PHP 8.5:
 
@@ -173,6 +173,8 @@ Restore streams plain SQL directly, or sends compressed bytes to an in-container
 ## TLS and networking
 
 Every generated vhost has HTTP and HTTPS blocks. HTTPS initially uses the tracked self-signed boot certificate. State can select NGINX ACME or external files under `runtime/certs/`.
+
+The Nginx image and its pinned Zstandard module revision are treated as one build artifact. Dynamic compression uses the module's production defaults, `zstd_static on` serves negotiated `.zst` siblings, and `gzip_vary on` keeps shared-cache variants safe. See [nginx-zstd.md](nginx-zstd.md).
 
 ACME state is durable and secret. HTTP-01 requires public DNS and port 80. HTTP/3 additionally requires UDP 443 through the host firewall/security group.
 

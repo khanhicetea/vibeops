@@ -86,10 +86,14 @@ Because Nginx is host-networked, `127.0.0.1` refers to the host namespace. Ensur
 git pull
 ./manage.py render
 ./dc config
+./dc build nginx
+./dc up -d --no-deps nginx
 ./manage.py apply
 ./manage.py status --check-nginx
 make check
 ```
+
+Build and recreate Nginx before `apply`. A release may add load directives or other tracked configuration that requires modules available only in the new Bento Nginx image; reloading the old container first would fail validation.
 
 Application deployment example:
 

@@ -24,7 +24,7 @@ Docker Desktop is useful for development, but host networking and Unix-socket mo
 
 ## Stack
 
-- **Nginx** uses `network_mode: host` and binds host ports directly. HTTP/3 is enabled on generated HTTPS vhosts.
+- **Nginx** uses `network_mode: host` and binds host ports directly. Its Bento image enables Zstandard response compression by default, retains gzip as a compatibility fallback, and enables HTTP/3 on generated HTTPS vhosts.
 - **PHP** is managed by version. Every version has an FPM service, a Supervisord runner, and an ephemeral CLI service. A fresh stack contains PHP 8.5.
 - **PHP-FPM** creates one Unix socket per app. For PHP 8.5, the host path is `runtime/run/php-fpm/php85/<app>.sock` and Nginx sees `/run/php-fpm/php85/<app>.sock`.
 - **MySQL** is managed by version. Every version gets a separate service and durable named volume. A fresh stack contains MySQL 8.4.
@@ -182,6 +182,20 @@ Nginx uses the host network, so `127.0.0.1` inside Nginx is the host network nam
 ```
 
 The upstream may also be a private IP reachable from the host. Compose service DNS is not available to host-network Nginx unless separately exposed/routed.
+
+## Response compression
+
+The default Bento Nginx image builds pinned dynamic modules from [myguard-labs/nginx-zstd-module](https://github.com/myguard-labs/nginx-zstd-module). Supporting clients receive Zstandard; gzip remains enabled for compatibility, and Brotli is not included. Precompressed `.zst` siblings are served when present.
+
+Rebuild Nginx whenever its base image or the pinned module revision changes:
+
+```bash
+./dc build nginx
+./dc up -d --no-deps nginx
+./dc exec -T nginx nginx -t
+```
+
+See [docs/nginx-zstd.md](docs/nginx-zstd.md) for configuration, verification, and the existing-host upgrade order.
 
 ## PHP versions
 

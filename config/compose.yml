@@ -10,7 +10,11 @@ x-default-logging: &default-logging
 
 services:
   nginx:
-    image: nginx:1.30-trixie
+    build:
+      context: ./docker/nginx
+      args:
+        NGINX_BASE_IMAGE: nginx:${NGINX_VERSION:-1.30}-trixie
+    image: bento/nginx:${NGINX_VERSION:-1.30}-zstd
     restart: unless-stopped
     # Host network: nginx binds directly to host :80 and :443 TCP/UDP with no Docker port mapping/NAT.
     # Intended for Linux cloud servers. Docker Desktop host networking behaves differently.
