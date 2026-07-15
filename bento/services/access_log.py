@@ -69,43 +69,37 @@ def run_goaccess_analyze(
     *,
     html_path: Path | None = None,
 ) -> None:
-    """Adhoc GoAccess over live + rotated files via a one-shot Docker image."""
+    """Adhoc GoAccess over the current plain-text log via a one-shot Docker image."""
     app_name = validate(app_name, APP_NAME_RE, "app_name")
     if not docker_available():
         die("docker is required to run GoAccess")
     ensure_access_log_dir()
-    files = list_access_log_files(app_name)
-    if not files:
+    live = live_access_log_path(app_name)
+    if not live.is_file():
         die(
-            f"No access log files for {app_name} under {rel(NGINX_ACCESS_LOG_DIR)}. "
+            f"No current access log for {app_name} at {rel(live)}. "
             f"Enable with: ./manage.py app access-log enable {app_name}"
         )
 
     image = goaccess_image()
     mount = f"{NGINX_ACCESS_LOG_DIR.resolve()}:/logs:ro"
-    container_files = [f"/logs/{path.name}" for path in files]
-
-    base = [
-        "docker",
-        "run",
-        "--rm",
-        "-v",
-        mount,
-    ]
+    container_log = f"/logs/{live.name}"
+    base = ["docker", "run", "--rm", "-v", mount]
 
     if html_path is not None:
         out = html_path.expanduser().resolve()
         mkdir(out.parent)
-        base.extend(["-v", f"{out.parent}:/out"])
         cmd = [
             *base,
+            "-v",
+            f"{out.parent}:/out",
             image,
-            *container_files,
+            container_log,
             *_GOACCESS_FORMAT_ARGS,
             "-o",
             f"/out/{out.name}",
         ]
-        info(f"Analyzing {len(files)} log file(s) for {app_name} with {image}")
+        info(f"Analyzing current access log for {app_name} with {image}")
         run(cmd)
         info(f"Wrote GoAccess report: {out}")
         return
@@ -115,13 +109,7 @@ def run_goaccess_analyze(
             "GoAccess TUI requires an interactive terminal; "
             "pass --html <path> for a static report"
         )
-    cmd = [
-        *base,
-        "-it",
-        image,
-        *container_files,
-        *_GOACCESS_FORMAT_ARGS,
-    ]
-    info(f"Analyzing {len(files)} log file(s) for {app_name} with {image} (TUI)")
+    cmd = [*base, "-it", image, container_log, *_GOACCESS_FORMAT_ARGS]
+    info(f"Analyzing current access log for {app_name} with {image} (TUI)")
     os.chdir(ROOT)
     os.execvp("docker", cmd)

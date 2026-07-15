@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,15 +59,18 @@ class AccessLogRenderTests(unittest.TestCase):
 
 
 class GoAccessAnalyzeTests(unittest.TestCase):
-    def test_html_analysis_uses_request_time_format(self) -> None:
+    def test_html_analysis_uses_only_current_plain_text_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log_dir = root / "logs"
             log_dir.mkdir()
-            (log_dir / "shop.access.log").write_text(
+            log_line = (
                 '127.0.0.1 - - [01/Jan/2026:12:34:56 +0000] '
                 '"GET / HTTP/1.1" 200 12 "-" "curl" 0.125 0.120\n'
             )
+            (log_dir / "shop.access.log").write_text(log_line)
+            with gzip.open(log_dir / "shop.access.log-20260101T123456.gz", "wt") as archive:
+                archive.write(log_line)
             output = root / "report.html"
             with (
                 patch.object(access_log, "NGINX_ACCESS_LOG_DIR", log_dir),
@@ -84,6 +88,8 @@ class GoAccessAnalyzeTests(unittest.TestCase):
         self.assertIn("--date-format=%d/%b/%Y", cmd)
         self.assertIn("--time-format=%H:%M:%S", cmd)
         self.assertNotIn("--log-format=COMBINED", cmd)
+        self.assertIn("/logs/shop.access.log", cmd)
+        self.assertNotIn("/logs/shop.access.log-20260101T123456.gz", cmd)
 
 
 class AccessLogEnvTests(unittest.TestCase):
