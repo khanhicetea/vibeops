@@ -109,6 +109,41 @@ def _apply(db: dict[str, Any], *, no_reload: bool, targets: frozenset[str]) -> N
     )
 
 
+def _repair_deploy_permissions(app_name: str, php_version: str) -> None:
+    """Ensure ``/home/<app>/.bento`` is app-owned inside the PHP container.
+
+    Host-side chown may fail on some bind-mount setups; container root chown is reliable.
+    """
+    from bento.os.process import docker_available, run, service_running
+    from bento.services.compose import compose_command
+    from bento.services.php import php_cli_service_for, php_service_for
+    from bento.utils.errors import warn
+
+    if not docker_available():
+        warn(f"Docker unavailable; if deploy files are not app-owned run: ./manage.py permissions fix {app_name}")
+        return
+    service = php_service_for(php_version)
+    script = (
+        f'chown -R {app_name}:{app_name} /home/{app_name}/.bento 2>/dev/null || true; '
+        f'chmod 700 /home/{app_name}/.bento 2>/dev/null || true; '
+        f'find /home/{app_name}/.bento -type f -exec chmod go-rwx {{}} + 2>/dev/null || true'
+    )
+    if service_running(service):
+        cmd = compose_command("exec", "-T", service, "sh", "-lc", script)
+    else:
+        cmd = compose_command(
+            "run", "--rm", "--entrypoint", "sh",
+            php_cli_service_for(php_version),
+            "-lc", script,
+        )
+    result = run(cmd, check=False, capture=True)
+    if result.returncode != 0:
+        warn(
+            f"Could not chown /home/{app_name}/.bento in container; "
+            f"run: ./manage.py permissions fix {app_name}"
+        )
+
+
 def cmd_deploy_enable(args: argparse.Namespace) -> None:
     with render_lock():
         db = load_db()
@@ -138,12 +173,14 @@ def cmd_deploy_enable(args: argparse.Namespace) -> None:
         )
         app["deploy"] = deploy
         upsert_timestamp(app)
-        ensure_deploy_runtime(app_name)
-        write_deploy_config(app_name, deploy)
-        write_example_deploy_script(app_name)
+        app_uid = int(app.get("uid") or 0) or None
+        ensure_deploy_runtime(app_name, uid=app_uid)
+        write_deploy_config(app_name, deploy, uid=app_uid)
+        write_example_deploy_script(app_name, uid=app_uid)
         sync_deploy_cron(db, app_name)
         save_db(db)
         _apply(db, no_reload=bool(args.no_reload), targets=frozenset({"nginx", "runner"}))
+        _repair_deploy_permissions(app_name, php_version)
 
     info(f"Enabled webhook deployment for {app_name} on PHP {php_version}")
     info(f"Webhook: {webhook_url(app)}")
@@ -212,10 +249,14 @@ def cmd_deploy_rotate_secret(args: argparse.Namespace) -> None:
         )
         app["deploy"] = deploy
         upsert_timestamp(app)
-        write_deploy_config(app_name, deploy)
+        app_uid = int(app.get("uid") or 0) or None
+        write_deploy_config(app_name, deploy, uid=app_uid)
         sync_deploy_cron(db, app_name)
         save_db(db)
+        php_version = str(app.get("php_version") or "")
         _apply(db, no_reload=bool(args.no_reload), targets=frozenset({"nginx"}))
+        if php_version:
+            _repair_deploy_permissions(app_name, php_version)
     info(f"Rotated deployment HMAC secret for {app_name}")
     info(f"HMAC secret (save it now): {secret}")
     info(f"Webhook: {webhook_url(app)}")

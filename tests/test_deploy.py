@@ -114,6 +114,7 @@ class DeployCronSyncTests(unittest.TestCase):
         self.assertEqual(cron["output"], "file")
         self.assertEqual(cron["timeout"], 300)
         self.assertIn("bento-deploy-drain", cron["command"])
+        self.assertIn("bento_APP=shop", cron["command"])
 
         db["apps"]["shop"]["deploy"]["enabled"] = False
         sync_deploy_cron(db, "shop")

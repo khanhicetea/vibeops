@@ -141,7 +141,8 @@ def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> P
         deploy_secret = str(deploy.get("webhook_secret") or "")
         deploy_policy = str(deploy.get("queue_policy") or "latest")
         # Keep app-local drain config in sync whenever vhosts are rendered.
-        write_deploy_config(app_name, deploy)
+        app_uid = int(app.get("uid") or 0) or None
+        write_deploy_config(app_name, deploy, uid=app_uid)
     render_template(selected_template_path(app, "vhost"), conf_path, {
         "USERNAME": app_name,
         "APP_NAME": app_name,

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Any
 
 from bento.os.fsutil import mkdir, write_text, write_text_atomic
 from bento.services.php import app_home, php_service_for
-from bento.utils.errors import die
-from bento.utils.paths import DOCROOT_NAME, HOME_DIR
+from bento.utils.errors import die, warn
+from bento.utils.paths import DOCROOT_NAME, HOME_DIR, rel
 from bento.utils.validation import APP_NAME_RE, validate, validate_cron_workdir
 
 BENTO_DIR_NAME = ".bento"
@@ -112,7 +113,7 @@ def deploy_config_path(app_name: str) -> Path:
     return bento_dir(app_name) / "deploy.json"
 
 
-def ensure_deploy_runtime(app_name: str) -> Path:
+def ensure_deploy_runtime(app_name: str, *, uid: int | None = None) -> Path:
     """Create private .bento runtime dirs and an empty queue if missing."""
     app_name = validate(app_name, APP_NAME_RE, "app_name")
     root = bento_dir(app_name)
@@ -121,12 +122,39 @@ def ensure_deploy_runtime(app_name: str) -> Path:
     qpath = queue_path(app_name)
     if not qpath.exists():
         write_text_atomic(qpath, json.dumps(empty_queue(), indent=2) + "\n", mode=0o640)
+    if uid is not None:
+        own_deploy_runtime(app_name, uid)
     return root
 
 
-def write_deploy_config(app_name: str, deploy: dict[str, Any]) -> Path:
+def own_deploy_runtime(app_name: str, uid: int) -> None:
+    """Chown ``.bento`` (and contents) to the app UID/GID.
+
+    Host-side manage.py creates these files as the operator user; the app user
+    must own them for FPM webhook enqueue and the drain cron.
+    """
+    app_name = validate(app_name, APP_NAME_RE, "app_name")
+    if uid < 0:
+        return
+    root = bento_dir(app_name)
+    if not root.exists():
+        return
+    paths = [root, *sorted(root.rglob("*"))]
+    for path in paths:
+        try:
+            os.chown(path, uid, uid)
+        except OSError as exc:
+            warn(f"could not chown {rel(path)} to {uid}:{uid}: {exc}")
+            return
+    try:
+        root.chmod(0o700)
+    except OSError:
+        pass
+
+
+def write_deploy_config(app_name: str, deploy: dict[str, Any], *, uid: int | None = None) -> Path:
     """Write app-local drain config (no webhook secret)."""
-    ensure_deploy_runtime(app_name)
+    ensure_deploy_runtime(app_name, uid=uid)
     payload = {
         "timeout": int(deploy.get("timeout") or DEFAULT_TIMEOUT),
         "workdir": str(deploy.get("workdir") or f"/home/{app_name}/{DOCROOT_NAME}"),
@@ -135,14 +163,18 @@ def write_deploy_config(app_name: str, deploy: dict[str, Any]) -> Path:
     }
     path = deploy_config_path(app_name)
     write_text_atomic(path, json.dumps(payload, indent=2) + "\n", mode=0o640)
+    if uid is not None:
+        own_deploy_runtime(app_name, uid)
     return path
 
 
-def write_example_deploy_script(app_name: str, *, force: bool = False) -> Path:
+def write_example_deploy_script(app_name: str, *, force: bool = False, uid: int | None = None) -> Path:
     path = deploy_script_path(app_name)
     if path.exists() and not force:
+        if uid is not None:
+            own_deploy_runtime(app_name, uid)
         return path
-    ensure_deploy_runtime(app_name)
+    ensure_deploy_runtime(app_name, uid=uid)
     content = f"""#!/bin/sh
 # App deploy hook for {app_name}. Exit 0 success, {DEPLOY_SKIP_EXIT_CODE} skipped, other = failed.
 set -eu
@@ -154,6 +186,8 @@ echo "deploy.sh for {app_name}: replace with your deploy steps" >&2
 exit {DEPLOY_SKIP_EXIT_CODE}
 """
     write_text(path, content, 0o750)
+    if uid is not None:
+        own_deploy_runtime(app_name, uid)
     return path
 
 
@@ -176,7 +210,8 @@ def deploy_cron_record(app_name: str, deploy: dict[str, Any], php_version: str) 
         "php_version": php_version,
         "php_service": f"{php_service_for(php_version)}-runner",
         "schedule": "* * * * *",
-        "command": "php /usr/local/bin/bento-deploy-drain",
+        # Explicit bento_APP so the drain works even if a nested shell drops env.
+        "command": f"bento_APP={app_name} php /usr/local/bin/bento-deploy-drain",
         "workdir": str(deploy.get("workdir") or f"/home/{app_name}/{DOCROOT_NAME}"),
         "output": "file",
         "timeout": int(deploy.get("timeout") or DEFAULT_TIMEOUT),

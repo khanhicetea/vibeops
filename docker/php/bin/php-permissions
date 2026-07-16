@@ -98,6 +98,13 @@ private_dirs() {
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || { say "skipping symlink: $path"; continue; }
     if [ "$action" = check ]; then check_path "$path" "$uid" "$gid" 700 "$app" "$app"; else apply_path "$path" "$app:$app" 700; fi
+    # Deploy state under .bento must be fully app-owned (queue, deploy.json, scripts).
+    if [ "$d" = .bento ] && [ "$action" = fix ] && [ "$dry_run" = false ]; then
+      find -P "$path" \( -type d -o -type f \) -exec chown --no-dereference "$app:$app" {} + 2>/dev/null || true
+      find -P "$path" -type d -exec chmod 0700 {} + 2>/dev/null || true
+      find -P "$path" -type f -exec chmod go-rwx {} + 2>/dev/null || true
+      changed=$((changed + 1))
+    fi
   done
 }
 

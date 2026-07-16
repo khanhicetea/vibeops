@@ -46,13 +46,33 @@ fi
 
 cd "$APP_WORKDIR"
 umask 0027
+# Preserve scheduler env (bento_APP, HOME, …). Do not use a login shell (-l):
+# login profiles can drop variables the job command relies on.
 export bento_CRON_JOB="$APP_JOB" bento_CRON_OUTPUT="$OUTPUT" bento_RUNNER_SERVICE="$RUNNER_SERVICE"
-set -- sh -lc "$1"
+job_cmd="$1"
+
 if [ "$LOCK" != "-" ]; then
-  set -- flock -n "/run/bento-cron-locks/${APP_USER}/${LOCK}.lock" -- "$@"
+  lock_dir="/run/bento-cron-locks/${APP_USER}"
+  lock_file="${lock_dir}/${LOCK}.lock"
+  if [ ! -d "$lock_dir" ]; then
+    echo "Cron lock directory missing: $lock_dir (run php-identity-sync for $APP_USER)" >&2
+    exit 1
+  fi
+  # FD-based flock: portable and avoids "failed to execute --" with command-form flock.
+  exec 9>"$lock_file" || {
+    echo "Cannot open cron lock: $lock_file" >&2
+    exit 1
+  }
+  if ! flock -n 9; then
+    echo "Cron lock busy: ${APP_USER}/${LOCK}" >&2
+    exit 0
+  fi
 fi
+
 if [ "$TIMEOUT" -gt 0 ]; then
-  set -- timeout --foreground --kill-after=30 "$TIMEOUT" "$@"
+  set -- timeout --foreground --kill-after=30 "$TIMEOUT" sh -c "$job_cmd"
+else
+  set -- sh -c "$job_cmd"
 fi
 if [ "$OUTPUT" = file ]; then
   exec "$@" >>"$APP_LOG" 2>&1
