@@ -45,6 +45,23 @@ class CronValidationTests(unittest.TestCase):
         self.assertEqual(values["QUOTED_LOCK"], "artisan")
 
 
+class CronJobHelperTests(unittest.TestCase):
+    def test_php_cron_job_uses_fd_lock_not_command_form_dashdash(self) -> None:
+        """util-linux flock with getopt '+' treats 'flock file -- cmd' as exec of '--'."""
+        text = Path("docker/php/bin/php-cron-job").read_text()
+        self.assertIn("flock -n 9", text)
+        # Command-form "flock ... -- cmd" is the broken pattern.
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            self.assertNotRegex(
+                stripped,
+                r"flock\b[^\n]*\s--\s",
+                msg=f"command-form flock with -- is broken on util-linux: {stripped}",
+            )
+
+
 class CronRenderTests(unittest.TestCase):
     def test_empty_crontab_has_root_maintenance_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.object(cron_runtime, "CRON_RUNTIME_DIR", Path(tmp)):

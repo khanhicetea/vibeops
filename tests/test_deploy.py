@@ -218,6 +218,11 @@ class DeployComposeMountTests(unittest.TestCase):
             self.assertNotIn("php-deploy-init", text)
             self.assertNotIn("deploy-webhook.php", text)
 
+    def test_dockerfile_installs_deploy_drain(self) -> None:
+        text = Path("docker/php/Dockerfile").read_text()
+        self.assertIn("COPY bin/bento-deploy-drain /usr/local/bin/bento-deploy-drain", text)
+        self.assertIn("/usr/local/bin/bento-deploy-drain", text)
+
 
 if __name__ == "__main__":
     unittest.main()

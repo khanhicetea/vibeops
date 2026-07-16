@@ -58,7 +58,13 @@ if [ "$LOCK" != "-" ]; then
     echo "Cron lock directory missing: $lock_dir (run php-identity-sync for $APP_USER)" >&2
     exit 1
   fi
-  # FD-based flock: portable and avoids "failed to execute --" with command-form flock.
+  # util-linux flock uses getopt(3) with '+', so option parsing stops at the lock
+  # path. A command-form invocation like:
+  #   flock -n "$lock_file" -- cmd...
+  # therefore treats "--" as the executable and fails with:
+  #   flock: failed to execute --: No such file or directory
+  # Lock via FD instead: acquire on fd 9, keep the fd open across exec so the
+  # lock covers the whole job (timeout + command).
   exec 9>"$lock_file" || {
     echo "Cannot open cron lock: $lock_file" >&2
     exit 1

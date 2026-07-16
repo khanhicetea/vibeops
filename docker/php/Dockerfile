@@ -126,12 +126,14 @@ COPY bin/php-permissions /usr/local/bin/php-permissions
 COPY bin/php-app-run /usr/local/bin/php-app-run
 COPY bin/php-cron-job /usr/local/bin/php-cron-job
 COPY bin/php-supercronic /usr/local/bin/php-supercronic
+COPY bin/bento-deploy-drain /usr/local/bin/bento-deploy-drain
 RUN chmod +x \
       /usr/local/bin/php-identity-sync \
       /usr/local/bin/php-permissions \
       /usr/local/bin/php-app-run \
       /usr/local/bin/php-cron-job \
-      /usr/local/bin/php-supercronic
+      /usr/local/bin/php-supercronic \
+      /usr/local/bin/bento-deploy-drain
 
 WORKDIR /home
 CMD ["php-fpm"]
