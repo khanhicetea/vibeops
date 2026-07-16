@@ -1,0 +1,19 @@
+# Reference base topology (generated from state at render time)
+name: bento
+networks:
+  private:
+    driver: bridge
+    name: bento_private
+services:
+  nginx:
+    image: bento/nginx:latest
+    network_mode: host
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [private]
+    volumes:
+      - bento-redis-data:/data
+volumes:
+  bento-redis-data: null

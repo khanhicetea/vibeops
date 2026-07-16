@@ -1,0 +1,300 @@
+/**
+ * Compose assembly: base + managed version fragments + local overlays.
+ * Deterministic order for every supported Compose invocation.
+ */
+
+import { join } from "@std/path";
+import { stringify as stringifyYaml } from "@std/yaml";
+import type { DesiredState } from "../domain/state.ts";
+import type { Platform } from "../platform/mod.ts";
+import { type GeneratedFile, withManagedMarker } from "./render.ts";
+import { safetyError } from "../domain/errors.ts";
+
+export type ComposeInvocation = {
+  /** Ordered -f arguments relative to stack root or absolute. */
+  files: string[];
+  projectDir: string;
+};
+
+/**
+ * Refuse volume-destructive down operations on the supported path.
+ */
+export function assertSafeComposeArgs(args: string[]): void {
+  const lower = args.map((a) => a.toLowerCase());
+  const isDown = lower.includes("down");
+  if (!isDown) return;
+  if (
+    lower.includes("-v") ||
+    lower.includes("--volumes") ||
+    lower.includes("--rmi")
+  ) {
+    throw safetyError(
+      "refusing docker compose down with volume/image destruction",
+      "Remove -v/--volumes/--rmi. Durable MySQL/Redis volumes must not be deleted through Bento.",
+    );
+  }
+}
+
+export function assembleComposeDocuments(
+  platform: Platform,
+  state: DesiredState,
+): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  files.push({
+    relPath: "compose/docker-compose.base.yml",
+    content: withManagedMarker(renderBaseCompose()),
+    mode: 0o644,
+    managed: true,
+  });
+
+  for (const v of state.phpVersions) {
+    // Always derive the image tag from version so upgrades retag cleanly.
+    const image = `bento/php:${v.version}`;
+    files.push({
+      relPath: `compose/docker-compose.php-${v.service}.yml`,
+      content: withManagedMarker(renderPhpFragment(v.service, image, String(v.version))),
+      mode: 0o644,
+      managed: true,
+    });
+  }
+
+  for (const m of state.mysqlVersions) {
+    files.push({
+      relPath: `compose/docker-compose.${m.service}.yml`,
+      content: withManagedMarker(
+        renderMysqlFragment(m.service, m.image, m.volume),
+      ),
+      mode: 0o644,
+      managed: true,
+    });
+  }
+
+  // Aggregated project file listing for inspectability
+  const list = buildComposeFileList(platform, state);
+  files.push({
+    relPath: "compose/compose.files",
+    content: withManagedMarker(list.files.join("\n") + "\n"),
+    mode: 0o644,
+    managed: true,
+  });
+
+  // Convenience merged view (informational; runtime uses -f chain)
+  files.push({
+    relPath: "compose/docker-compose.generated.yml",
+    content: withManagedMarker(
+      `# Assembled file list (use docker compose with -f chain)\n` +
+        list.files.map((f) => `# - ${f}`).join("\n") +
+        "\n",
+    ),
+    mode: 0o644,
+    managed: true,
+  });
+
+  return files;
+}
+
+export function buildComposeFileList(
+  platform: Platform,
+  state: DesiredState,
+): ComposeInvocation {
+  const gen = "generated/compose";
+  const files: string[] = [
+    `${gen}/docker-compose.base.yml`,
+  ];
+  for (const v of [...state.phpVersions].sort((a, b) => a.service.localeCompare(b.service))) {
+    files.push(`${gen}/docker-compose.php-${v.service}.yml`);
+  }
+  for (const m of [...state.mysqlVersions].sort((a, b) => a.service.localeCompare(b.service))) {
+    files.push(`${gen}/docker-compose.${m.service}.yml`);
+  }
+  // Local overlays in deterministic lexicographic order (operator-owned)
+  // Actual disk scan happens at invoke time; list known pattern here.
+  files.push("overlays/*.yml"); // expanded at invoke
+
+  return {
+    files,
+    projectDir: platform.paths.paths.root,
+  };
+}
+
+export async function resolveComposeFiles(
+  platform: Platform,
+  state: DesiredState,
+): Promise<string[]> {
+  const base = buildComposeFileList(platform, state);
+  const resolved: string[] = [];
+  for (const f of base.files) {
+    if (f.endsWith("*.yml")) {
+      const dir = join(platform.paths.paths.root, "overlays");
+      if (await platform.fs.exists(dir)) {
+        const names = (await platform.fs.readDir(dir))
+          .filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"))
+          .sort();
+        for (const n of names) resolved.push(join("overlays", n));
+      }
+    } else {
+      resolved.push(f);
+    }
+  }
+  return resolved;
+}
+
+export async function composeArgs(
+  platform: Platform,
+  state: DesiredState,
+  command: string[],
+): Promise<string[]> {
+  assertSafeComposeArgs(command);
+  const files = await resolveComposeFiles(platform, state);
+  const args = ["docker", "compose", "--project-directory", platform.paths.paths.root];
+  for (const f of files) {
+    args.push("-f", join(platform.paths.paths.root, f));
+  }
+  args.push(...command);
+  return args;
+}
+
+function renderBaseCompose(): string {
+  const doc = {
+    name: "bento",
+    networks: {
+      private: { driver: "bridge", name: "bento_private" },
+    },
+    services: {
+      nginx: {
+        image: "bento/nginx:latest",
+        build: {
+          context: "./docker/nginx",
+          dockerfile: "Dockerfile",
+        },
+        network_mode: "host",
+        restart: "unless-stopped",
+        volumes: [
+          "./generated/nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
+          "./generated/nginx/sites:/etc/nginx/sites:ro",
+          // Generated snippets fully replace image defaults (boot-ssl, app-common).
+          "./generated/nginx/snippets:/etc/nginx/snippets:ro",
+          "./certs:/etc/nginx/certs",
+          "./homes:/home:ro",
+          "./runtime/php-fpm:/run/php-fpm:ro",
+          "./logs/nginx:/var/log/nginx",
+        ],
+      },
+      redis: {
+        image: "redis:7-alpine",
+        restart: "unless-stopped",
+        networks: ["private"],
+        command: [
+          "redis-server",
+          "--appendonly",
+          "yes",
+          "--protected-mode",
+          "yes",
+        ],
+        volumes: ["bento-redis-data:/data"],
+        // no public ports
+      },
+    },
+    volumes: {
+      "bento-redis-data": null,
+    },
+  };
+  return stringifyYaml(doc);
+}
+
+function renderPhpFragment(service: string, image: string, version: string): string {
+  const build = {
+    context: "./docker/php",
+    dockerfile: "Dockerfile",
+    args: {
+      PHP_VERSION: version,
+    },
+  };
+  const doc = {
+    services: {
+      [service]: {
+        image,
+        build,
+        restart: "unless-stopped",
+        networks: ["private"],
+        user: "root",
+        volumes: [
+          "./homes:/home",
+          `./generated/php/${service}/pools:/usr/local/etc/php-fpm.d/bento:ro`,
+          `./runtime/php-fpm/${service}:/run/php-fpm`,
+          "./helpers:/opt/bento/helpers:ro",
+        ],
+        environment: {
+          BENTO_PHP_VERSION: version,
+          BENTO_ROLE: "fpm",
+        },
+        // no public ports
+      },
+      [`${service}-runner`]: {
+        image,
+        // same image as FPM; do not rebuild twice — compose build reuses image tag
+        restart: "unless-stopped",
+        networks: ["private"],
+        user: "root",
+        entrypoint: ["bento-runner-entrypoint"],
+        command: ["supervisord", "-c", "/etc/bento/supervisord.conf"],
+        volumes: [
+          "./homes:/home",
+          `./generated/runner/${service}/supervisord.conf:/etc/bento/supervisord.conf:ro`,
+          `./generated/runner/${service}/cron:/etc/bento/cron:ro`,
+          "./helpers:/opt/bento/helpers:ro",
+          `./runtime/locks/${service}:/run/bento`,
+        ],
+        environment: {
+          BENTO_PHP_VERSION: version,
+          BENTO_ROLE: "runner",
+        },
+      },
+      // Ephemeral CLI profile (compose run --rm ${service}-cli ...)
+      [`${service}-cli`]: {
+        image,
+        profiles: ["cli"],
+        networks: ["private"],
+        user: "root",
+        entrypoint: ["bento-php-entrypoint"],
+        working_dir: "/home",
+        volumes: [
+          "./homes:/home",
+          "./helpers:/opt/bento/helpers:ro",
+        ],
+        environment: {
+          BENTO_PHP_VERSION: version,
+          BENTO_ROLE: "cli",
+        },
+      },
+    },
+  };
+  return stringifyYaml(doc);
+}
+
+function renderMysqlFragment(service: string, image: string, volume: string): string {
+  const doc = {
+    services: {
+      [service]: {
+        image,
+        restart: "unless-stopped",
+        networks: ["private"],
+        // Password comes from stack .env (MYSQL_ROOT_PASSWORD); never on host argv.
+        environment: {
+          MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}",
+        },
+        env_file: [".env"],
+        volumes: [
+          `${volume}:/var/lib/mysql`,
+          `./generated/mysql/${service}:/etc/bento/mysql:ro`,
+        ],
+        // no public ports
+      },
+    },
+    volumes: {
+      [volume]: null,
+    },
+  };
+  return stringifyYaml(doc);
+}

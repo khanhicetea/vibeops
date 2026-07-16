@@ -1,0 +1,6 @@
+# bento-managed: true
+# Assembled file list (use docker compose with -f chain)
+# - generated/compose/docker-compose.base.yml
+# - generated/compose/docker-compose.php-php85.yml
+# - generated/compose/docker-compose.mysql84.yml
+# - overlays/*.yml

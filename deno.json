@@ -1,0 +1,54 @@
+{
+  "name": "@bento/cli",
+  "version": "0.1.0",
+  "exports": "./src/main.ts",
+  "tasks": {
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint",
+    "check": "deno check src/main.ts",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys tests/unit tests/contract",
+    "test:integration": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys tests/integration",
+    "run": "deno run --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys src/main.ts",
+    "compile": "deno compile --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys --include=templates --output=dist/bento src/main.ts",
+    "compile:amd64": "deno compile --target=x86_64-unknown-linux-gnu --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys --include=templates --output=dist/bento-linux-amd64 src/main.ts",
+    "compile:arm64": "deno compile --target=aarch64-unknown-linux-gnu --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys --include=templates --output=dist/bento-linux-arm64 src/main.ts"
+  },
+  "imports": {
+    "@std/assert": "./tests/vendor/assert.ts",
+    "@std/path": "./src/vendor/path.ts",
+    "@std/yaml": "./src/vendor/yaml.ts",
+    "@std/encoding/hex": "./src/vendor/encoding_hex.ts",
+    "@std/encoding": "./src/vendor/encoding_hex.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "useUnknownInCatchVariables": true,
+    "lib": ["deno.window", "deno.unstable"]
+  },
+  "lint": {
+    "include": ["src/", "tests/"],
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["no-slow-types", "require-await"]
+    }
+  },
+  "fmt": {
+    "include": ["src/", "tests/", "scripts/"],
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
+  "test": {
+    "include": ["tests/"]
+  },
+  "exclude": ["dist/", ".bento-stack/", "specs/"]
+}

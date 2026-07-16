@@ -1,0 +1,11 @@
+{
+  "version": "5",
+  "redirects": {},
+  "remote": {},
+  "workspace": {
+    "dependencies": [],
+    "packageJson": {
+      "dependencies": []
+    }
+  }
+}

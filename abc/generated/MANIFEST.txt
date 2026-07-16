@@ -1,0 +1,6 @@
+# bento-managed: true
+assetVersion=0.1.0
+assetDigest=e59c6a623676356783e1a0d4c644e8087a1246679144f99f57b6242b600b4aae
+apps=vb1
+php=8.5
+mysql=8.4

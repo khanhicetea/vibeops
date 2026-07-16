@@ -1,0 +1,6 @@
+.bento-stack/
+dist/
+*.partial
+.DS_Store
+.deno/
+coverage/

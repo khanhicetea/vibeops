@@ -1,0 +1,221 @@
+import { assertEquals, assertRejects } from "@std/assert";
+import { join } from "@std/path";
+import { createEmptyState } from "../../src/domain/state.ts";
+import { materializeAppHome, provisionApp } from "../../src/services/app.ts";
+import { RenderService } from "../../src/services/render.ts";
+import { StateStore } from "../../src/services/state_store.ts";
+import { createFixedClock } from "../../src/platform/clock.ts";
+import { createSeededRandom } from "../../src/platform/random.ts";
+import { createFileSystem } from "../../src/platform/fs.ts";
+import { createMemoryLock } from "../../src/platform/lock.ts";
+import { createRecordingProcessRunner } from "../../src/platform/process.ts";
+import { createAssetResolver } from "../../src/platform/assets.ts";
+import { createPathPolicy } from "../../src/platform/paths.ts";
+import type { Platform } from "../../src/platform/mod.ts";
+import { assertSafeComposeArgs } from "../../src/services/compose.ts";
+import { addPhpVersion, removePhpVersion } from "../../src/services/php.ts";
+import { removeMysqlVersion } from "../../src/services/mysql.ts";
+
+function testPlatform(root: string): Platform {
+  const fs = createFileSystem();
+  return {
+    clock: createFixedClock("2026-07-16T12:00:00.000Z"),
+    random: createSeededRandom("fedcba9876543210"),
+    fs,
+    lock: createMemoryLock(),
+    process: createRecordingProcessRunner(),
+    assets: createAssetResolver(fs),
+    paths: createPathPolicy(root),
+  };
+}
+
+Deno.test("init + render produces startable topology files", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    const render = new RenderService(platform);
+    await store.init();
+    const state = await store.load();
+    const result = await render.apply(state, {
+      renderOnly: true,
+      skipValidate: true,
+    });
+    assertEquals(result.files.length > 0, true);
+    const base = join(root, "generated/compose/docker-compose.base.yml");
+    assertEquals(await platform.fs.exists(base), true);
+    assertEquals(await platform.fs.exists(join(root, "generated/nginx/nginx.conf")), true);
+    // PHP and MySQL fragments
+    assertEquals(
+      await platform.fs.exists(join(root, "generated/compose/docker-compose.php-php85.yml")),
+      true,
+    );
+    assertEquals(
+      await platform.fs.exists(join(root, "generated/compose/docker-compose.mysql84.yml")),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("render-only does not call reloader", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    const render = new RenderService(platform);
+    await store.init();
+    let reloads = 0;
+    await render.apply(await store.load(), {
+      renderOnly: true,
+      skipValidate: true,
+      reloader: {
+        reload: async () => {
+          reloads++;
+        },
+      },
+    });
+    assertEquals(reloads, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("validation failure restores previous generation", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    const render = new RenderService(platform);
+    await store.init();
+    let state = await store.load();
+    await render.apply(state, { renderOnly: true, skipValidate: true });
+    const marker = join(root, "generated/MANIFEST.txt");
+    const before = await platform.fs.readText(marker);
+
+    // mutate state so generation differs
+    state = provisionApp(platform, state, {
+      slug: "alpha",
+      domain: "alpha.test",
+    }).state;
+    await store.save(state);
+
+    await assertRejects(
+      () =>
+        render.apply(state, {
+          skipValidate: false,
+          validators: [{
+            name: "fail",
+            validate: async () => {
+              throw new Error("boom");
+            },
+          }],
+          reloader: { reload: async () => {} },
+        }),
+      Error,
+      "validation failed",
+    );
+
+    const after = await platform.fs.readText(marker);
+    assertEquals(after, before);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("reload failure keeps new generation", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    const render = new RenderService(platform);
+    await store.init();
+    let state = await store.load();
+    state = provisionApp(platform, state, {
+      slug: "alpha",
+      domain: "alpha.test",
+    }).state;
+    await store.save(state);
+
+    await assertRejects(
+      () =>
+        render.apply(state, {
+          skipValidate: true,
+          reloader: {
+            reload: async () => {
+              throw new Error("signal failed");
+            },
+          },
+        }),
+      Error,
+      "reload signal failed",
+    );
+
+    // New files should exist (app vhost)
+    assertEquals(
+      await platform.fs.exists(join(root, "generated/nginx/sites/alpha.conf")),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("compose wrapper refuses down -v", () => {
+  let threw = false;
+  try {
+    assertSafeComposeArgs(["down", "-v"]);
+  } catch {
+    threw = true;
+  }
+  assertEquals(threw, true);
+});
+
+Deno.test("php remove constraints", () => {
+  let state = createEmptyState();
+  state = addPhpVersion(state, "8.3");
+  // cannot remove default
+  let threw = false;
+  try {
+    removePhpVersion(state, "8.5");
+  } catch {
+    threw = true;
+  }
+  assertEquals(threw, true);
+  // can remove unused non-default
+  state = removePhpVersion(state, "8.3");
+  assertEquals(state.phpVersions.some((v) => v.version === "8.3"), false);
+});
+
+Deno.test("mysql remove unsupported", () => {
+  const state = createEmptyState();
+  let threw = false;
+  try {
+    removeMysqlVersion(state, "8.4");
+  } catch {
+    threw = true;
+  }
+  assertEquals(threw, true);
+});
+
+Deno.test("app provision materializes home without secrets in public tree", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const state = createEmptyState();
+    const { app } = provisionApp(platform, state, {
+      slug: "alpha",
+      domain: "alpha.test",
+      createDatabase: true,
+    });
+    await materializeAppHome(platform, app);
+    const home = platform.paths.appHome("alpha");
+    assertEquals(await platform.fs.exists(join(home, "credentials", "app.env")), true);
+    assertEquals(await platform.fs.exists(join(home, ".bento", "deploy.sh")), true);
+    const queue = await platform.fs.readText(join(home, ".bento", "queue.json"));
+    assertEquals(queue.includes("hmac"), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

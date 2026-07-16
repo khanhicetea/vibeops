@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "phpVersion": "8.5",
+    "mysqlVersion": "8.4",
+    "fpmProfile": "small",
+    "redisMode": "shared"
+  },
+  "phpVersions": [
+    {
+      "version": "8.5",
+      "service": "php85",
+      "image": "bento/php:8.5-fpm",
+      "processCap": 200
+    }
+  ],
+  "mysqlVersions": [
+    {
+      "version": "8.4",
+      "service": "mysql84",
+      "image": "mysql:8.4",
+      "volume": "bento-mysql84-data"
+    }
+  ],
+  "apps": {
+    "vb1": {
+      "slug": "vb1",
+      "uid": 2000,
+      "gid": 2000,
+      "home": "/home/vb1",
+      "mainDomain": "keke.com",
+      "aliases": [],
+      "documentRoot": "public",
+      "entrypointMode": "front-controller",
+      "phpVersion": "8.5",
+      "phpService": "php85",
+      "fpmProfile": "small",
+      "tls": {
+        "kind": "boot"
+      },
+      "accessLog": false,
+      "mysqlService": "mysql84",
+      "mysqlUser": "vb1",
+      "mysqlPassword": "458a2a1a88ff552f3ae50d8f93dd5a92dfe2",
+      "databases": [
+        {
+          "name": "vb1",
+          "createdAt": "2026-07-16T15:45:52.920Z"
+        }
+      ],
+      "redis": {
+        "mode": "shared",
+        "prefix": "vb1:"
+      },
+      "deploy": {
+        "enabled": false,
+        "queuePolicy": "latest",
+        "timeoutSec": 900,
+        "workdir": "/home/vb1",
+        "argv": [
+          "sh",
+          "/home/vb1/.bento/deploy.sh"
+        ]
+      },
+      "vhostTemplate": {
+        "kind": "upstream"
+      },
+      "poolTemplate": {
+        "kind": "upstream"
+      },
+      "createdAt": "2026-07-16T15:45:52.920Z",
+      "updatedAt": "2026-07-16T15:45:52.920Z"
+    }
+  },
+  "proxies": {},
+  "domains": {
+    "keke.com": {
+      "kind": "app",
+      "slug": "vb1"
+    }
+  },
+  "cronJobs": [],
+  "workers": [],
+  "createdAt": "2026-07-16T15:34:08.904Z",
+  "updatedAt": "2026-07-16T15:45:52.927Z"
+}

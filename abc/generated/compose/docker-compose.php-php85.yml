@@ -1,0 +1,58 @@
+# bento-managed: true
+services:
+  php85:
+    image: "bento/php:8.5"
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: "8.5"
+    restart: unless-stopped
+    networks:
+      - private
+    user: root
+    volumes:
+      - "./homes:/home"
+      - "./generated/php/php85/pools:/usr/local/etc/php-fpm.d/bento:ro"
+      - "./runtime/php-fpm/php85:/run/php-fpm"
+      - "./helpers:/opt/bento/helpers:ro"
+    environment:
+      BENTO_PHP_VERSION: "8.5"
+      BENTO_ROLE: fpm
+  php85-runner:
+    image: "bento/php:8.5"
+    restart: unless-stopped
+    networks:
+      - private
+    user: root
+    entrypoint:
+      - bento-runner-entrypoint
+    command:
+      - supervisord
+      - "-c"
+      - /etc/bento/supervisord.conf
+    volumes:
+      - "./homes:/home"
+      - "./generated/runner/php85/supervisord.conf:/etc/bento/supervisord.conf:ro"
+      - "./generated/runner/php85/cron:/etc/bento/cron:ro"
+      - "./helpers:/opt/bento/helpers:ro"
+      - "./runtime/locks/php85:/run/bento"
+    environment:
+      BENTO_PHP_VERSION: "8.5"
+      BENTO_ROLE: runner
+  php85-cli:
+    image: "bento/php:8.5"
+    profiles:
+      - cli
+    networks:
+      - private
+    user: root
+    entrypoint:
+      - bento-php-entrypoint
+    working_dir: /home
+    volumes:
+      - "./homes:/home"
+      - "./helpers:/opt/bento/helpers:ro"
+    environment:
+      BENTO_PHP_VERSION: "8.5"
+      BENTO_ROLE: cli

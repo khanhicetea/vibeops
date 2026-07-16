@@ -1,0 +1,22 @@
+{
+  "assetVersion": "0.1.0",
+  "assetDigest": "e59c6a623676356783e1a0d4c644e8087a1246679144f99f57b6242b600b4aae",
+  "renderedAt": "2026-07-16T15:46:06.479Z",
+  "managedFiles": [
+    "MANIFEST.txt",
+    "compose/compose.files",
+    "compose/docker-compose.base.yml",
+    "compose/docker-compose.generated.yml",
+    "compose/docker-compose.mysql84.yml",
+    "compose/docker-compose.php-php85.yml",
+    "mysql/mysql84/root.cnf.tpl",
+    "nginx/nginx.conf",
+    "nginx/sites/vb1.conf",
+    "nginx/snippets/app-common.conf",
+    "nginx/snippets/boot-ssl.conf",
+    "php/php85/pools/.keep",
+    "php/php85/pools/vb1.conf",
+    "runner/php85/cron/vb1.crontab",
+    "runner/php85/supervisord.conf"
+  ]
+}

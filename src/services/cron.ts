@@ -1,0 +1,105 @@
+/**
+ * Per-app scheduled jobs.
+ */
+
+import type { CronJob, DesiredState } from "../domain/state.ts";
+import { asAppSlug, asCronJobName } from "../domain/types.ts";
+import { conflictError, notFoundError, validationError } from "../domain/errors.ts";
+import {
+  parseAppSlug,
+  parseCronSchedule,
+  parseStringArray,
+  unwrap,
+} from "../schemas/validators.ts";
+import type { Platform } from "../platform/mod.ts";
+import { type ReloadPlan, reloadPlanForRunnerChange } from "../domain/reload.ts";
+
+export type AddCronInput = {
+  name: string;
+  app: string;
+  schedule: string;
+  command: string[];
+  timezone?: string;
+  workdir?: string;
+  output?: "log" | "null" | "inherit";
+  timeoutSec?: number;
+  lock?: string;
+};
+
+export function addCronJob(
+  state: DesiredState,
+  input: AddCronInput,
+  platform: Platform,
+): { state: DesiredState; job: CronJob; reloadPlan: ReloadPlan } {
+  const appSlug = unwrap(parseAppSlug(input.app), "app");
+  const app = state.apps[appSlug];
+  if (!app) throw notFoundError(`app not found: ${appSlug}`);
+
+  const name = input.name.trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw validationError("cron job name must be alphanumeric/underscore/hyphen");
+  }
+  if (state.cronJobs.some((j) => j.app === appSlug && j.name === name)) {
+    throw conflictError(`cron job ${name} already exists for app ${appSlug}`);
+  }
+
+  const schedule = unwrap(parseCronSchedule(input.schedule), "schedule");
+  const command = unwrap(
+    parseStringArray(input.command, "command"),
+    "command",
+  );
+  if (command.length === 0) throw validationError("command must not be empty");
+
+  const workdir = platform.paths.assertInsideHome(
+    app.home,
+    input.workdir ?? app.home,
+  );
+
+  const job: CronJob = {
+    name: asCronJobName(name),
+    app: asAppSlug(appSlug),
+    schedule,
+    timezone: input.timezone ?? "UTC",
+    workdir,
+    command,
+    output: input.output ?? "log",
+    enabled: true,
+    ...(input.timeoutSec !== undefined ? { timeoutSec: input.timeoutSec } : {}),
+    ...(input.lock ? { lock: input.lock } : {}),
+  };
+
+  return {
+    state: {
+      ...state,
+      cronJobs: [...state.cronJobs, job],
+      updatedAt: platform.clock.nowIso(),
+    },
+    job,
+    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+  };
+}
+
+export function removeCronJob(
+  state: DesiredState,
+  appSlug: string,
+  name: string,
+  now: string,
+): { state: DesiredState; reloadPlan: ReloadPlan } {
+  const app = state.apps[appSlug];
+  if (!app) throw notFoundError(`app not found: ${appSlug}`);
+  const before = state.cronJobs.length;
+  const cronJobs = state.cronJobs.filter((j) => !(j.app === appSlug && j.name === name));
+  if (cronJobs.length === before) {
+    throw notFoundError(`cron job ${name} not found for app ${appSlug}`);
+  }
+  return {
+    state: { ...state, cronJobs, updatedAt: now },
+    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+  };
+}
+
+export function listCronJobs(state: DesiredState, appSlug?: string): CronJob[] {
+  return state.cronJobs
+    .filter((j) => !appSlug || j.app === appSlug)
+    .sort((a, b) => `${a.app}:${a.name}`.localeCompare(`${b.app}:${b.name}`));
+}
