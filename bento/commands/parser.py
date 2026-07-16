@@ -9,6 +9,7 @@ from bento.commands import (
     app_config_commands,
     cron_commands,
     db_commands,
+    deploy_commands,
     mysql_admin_commands,
     maintenance_commands,
     permission_commands,
@@ -266,6 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
     cron_reload_cmd.set_defaults(func=cron_commands.cmd_cron_reload)
 
     worker_commands.add_parser(sub)
+    deploy_commands.add_parser(sub)
     php_version_commands.add_parser(sub)
     mysql_version_commands.add_parser(sub)
     maintenance_commands.add_parser(sub)

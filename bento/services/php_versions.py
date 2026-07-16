@@ -50,6 +50,8 @@ def render_php_versions_compose(db: dict[str, Any], path: Path = PHP_COMPOSE_PAT
         "./docker/php/bin/php-app-run:/usr/local/bin/php-app-run:ro",
         "./docker/php/bin/php-cron-job:/usr/local/bin/php-cron-job:ro",
         "./docker/php/bin/php-supercronic:/usr/local/bin/php-supercronic:ro",
+        "./docker/php/bin/bento-deploy-drain:/usr/local/bin/bento-deploy-drain:ro",
+        "./docker/php/lib/bento:/usr/local/lib/bento:ro",
     ]
     for version in managed_php_versions(db):
         service = php_service_for(version)

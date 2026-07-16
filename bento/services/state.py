@@ -67,6 +67,16 @@ def normalize_db(data: dict[str, Any]) -> dict[str, Any]:
             app["php_entrypoint"] = validate_php_entrypoint(str(app.get("php_entrypoint") or "auto"), public_dir)
             app["fpm_profile"] = validate_fpm_profile(str(app.get("fpm_profile") or default_fpm_profile()))
             app["access_log"] = bool(app.get("access_log"))
+            if isinstance(app.get("deploy"), dict):
+                from bento.services.deploy import normalize_deploy
+                from bento.utils.errors import StackError
+
+                # Keep disabled records; only require secret when enabled.
+                try:
+                    app["deploy"] = normalize_deploy(app_name, app.get("deploy"), php_version=str(app.get("php_version") or ""))
+                except StackError:
+                    # Leave raw deploy block for operator repair if secret missing while enabled.
+                    pass
             if "service_config" in app:
                 app["service_config"] = normalize_service_config(app_name, app.get("service_config"))
             if app.get("vhost"):

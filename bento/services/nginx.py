@@ -130,6 +130,18 @@ def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> P
         from bento.services.access_log import ensure_access_log_dir
 
         ensure_access_log_dir()
+    from bento.services.deploy import deploy_enabled, normalize_deploy, write_deploy_config
+
+    deploy_on = deploy_enabled(app)
+    deploy_secret = ""
+    deploy_policy = "latest"
+    if deploy_on:
+        deploy = normalize_deploy(app_name, app.get("deploy"), php_version=str(app.get("php_version") or ""))
+        app["deploy"] = deploy
+        deploy_secret = str(deploy.get("webhook_secret") or "")
+        deploy_policy = str(deploy.get("queue_policy") or "latest")
+        # Keep app-local drain config in sync whenever vhosts are rendered.
+        write_deploy_config(app_name, deploy)
     render_template(selected_template_path(app, "vhost"), conf_path, {
         "USERNAME": app_name,
         "APP_NAME": app_name,
@@ -140,6 +152,9 @@ def render_app_vhost(app: dict[str, Any], ctx: RenderContext | None = None) -> P
         "PHP_FRONT_CONTROLLER": php_entrypoint == "front-controller",
         "DOCUMENT_ROOT": container_document_root(app_name, public_dir),
         "ACCESS_LOG": access_log,
+        "DEPLOY_ENABLED": deploy_on,
+        "DEPLOY_WEBHOOK_SECRET": deploy_secret,
+        "DEPLOY_QUEUE_POLICY": deploy_policy,
     })
     apply_vhost_tls(conf_path, app)
     # State always records the live path so stack.json stays mount-stable.

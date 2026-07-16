@@ -36,6 +36,26 @@ server {
 
     index index.php index.html;
 
+{% if DEPLOY_ENABLED %}
+    # Stack-owned internal helper (deploy webhook, opcache, …). HTTPS only.
+    location ^~ /_bento {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php-fpm/${PHP_SERVICE}/${APP_NAME}.sock;
+        fastcgi_param SCRIPT_FILENAME /usr/local/lib/bento/index.php;
+        fastcgi_param SCRIPT_NAME /index.php;
+        fastcgi_param DOCUMENT_ROOT /usr/local/lib/bento;
+        fastcgi_param DEPLOY_WEBHOOK_SECRET ${DEPLOY_WEBHOOK_SECRET};
+        fastcgi_param DEPLOY_QUEUE_POLICY ${DEPLOY_QUEUE_POLICY};
+        fastcgi_param PHP_ADMIN_VALUE "open_basedir=/home/${APP_NAME}/:/tmp/:/usr/local/lib/php/:/usr/local/lib/bento/:/var/log/php/";
+        fastcgi_buffers 8 16k;
+        fastcgi_buffer_size 32k;
+        fastcgi_read_timeout 60s;
+        limit_req zone=req_per_ip burst=10 nodelay;
+        limit_conn conn_per_ip 10;
+        fastcgi_param HTTP_PROXY "";
+    }
+{% endif %}
+
     location / {
         try_files $uri $uri/ /index.php$is_args$args;
     }

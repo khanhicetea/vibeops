@@ -93,7 +93,7 @@ apply_path() {
 }
 
 private_dirs() {
-  for d in .ssh .credentials .composer logs; do
+  for d in .ssh .credentials .composer logs .bento; do
     path="$home/$d"
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || { say "skipping symlink: $path"; continue; }

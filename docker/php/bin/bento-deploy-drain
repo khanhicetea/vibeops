@@ -1,0 +1,497 @@
+#!/usr/bin/env php
+<?php
+/**
+ * Consume /home/<app>/.bento/queue.json and run one deploy at a time.
+ *
+ * Invoked as the app user via Supercronic (managed cron job bento-deploy-drain).
+ *
+ * Exit codes from deploy.sh:
+ *   0  -> success
+ *   99 -> skipped
+ *   other -> failed
+ *
+ * After each finished job, requests FPM OPcache reset via the app unix socket
+ * (POST /_bento/clean-opcache with X-Bento-Deploy-Id).
+ */
+declare(strict_types=1);
+
+const BENTO_SKIP_EXIT = 99;
+const BENTO_QUEUE_RETENTION = 30;
+const BENTO_DEFAULT_TIMEOUT = 900;
+
+$app = getenv('bento_APP') ?: '';
+if ($app === '' || !preg_match('/^[a-z_][a-z0-9_-]{0,31}$/', $app)) {
+    fwrite(STDERR, "bento-deploy-drain: missing or invalid bento_APP\n");
+    exit(2);
+}
+
+$actual = posix_getpwuid(posix_geteuid());
+$actualName = is_array($actual) ? (string)($actual['name'] ?? '') : '';
+if ($actualName !== $app) {
+    fwrite(STDERR, "bento-deploy-drain: expected user {$app}, running as {$actualName}\n");
+    exit(1);
+}
+
+$home = "/home/{$app}";
+$bentoDir = "{$home}/.bento";
+$queuePath = "{$bentoDir}/queue.json";
+$logsDir = "{$home}/logs";
+$configPath = "{$bentoDir}/deploy.json";
+
+if (!is_dir($bentoDir) && !mkdir($bentoDir, 0700, true) && !is_dir($bentoDir)) {
+    fwrite(STDERR, "bento-deploy-drain: cannot create {$bentoDir}\n");
+    exit(1);
+}
+if (!is_dir($logsDir) && !mkdir($logsDir, 0700, true) && !is_dir($logsDir)) {
+    fwrite(STDERR, "bento-deploy-drain: cannot create {$logsDir}\n");
+    exit(1);
+}
+
+$config = bento_load_deploy_config($configPath, $app);
+$timeout = (int)($config['timeout'] ?? BENTO_DEFAULT_TIMEOUT);
+if ($timeout < 1) {
+    $timeout = BENTO_DEFAULT_TIMEOUT;
+}
+$workdir = (string)($config['workdir'] ?? "{$home}/www");
+$command = $config['command'] ?? null;
+if (!is_array($command) || $command === []) {
+    $command = ['sh', "{$bentoDir}/deploy.sh"];
+}
+$command = array_values(array_map('strval', $command));
+
+$fh = fopen($queuePath, file_exists($queuePath) ? 'c+' : 'w+');
+if ($fh === false) {
+    // Create empty queue.
+    file_put_contents($queuePath, json_encode(['version' => 1, 'jobs' => []], JSON_PRETTY_PRINT) . "\n");
+    $fh = fopen($queuePath, 'c+');
+}
+if ($fh === false) {
+    fwrite(STDERR, "bento-deploy-drain: cannot open {$queuePath}\n");
+    exit(1);
+}
+
+if (!flock($fh, LOCK_EX)) {
+    fwrite(STDERR, "bento-deploy-drain: queue lock busy\n");
+    exit(0);
+}
+
+$queue = bento_queue_read($fh);
+$now = time();
+$changed = false;
+
+// Reclaim stale running jobs (timeout + 60s grace).
+foreach ($queue['jobs'] as &$job) {
+    if (!is_array($job) || ($job['status'] ?? '') !== 'running') {
+        continue;
+    }
+    $started = strtotime((string)($job['started_at'] ?? '')) ?: 0;
+    if ($started > 0 && ($now - $started) > ($timeout + 60)) {
+        $job['status'] = 'failed';
+        $job['error'] = 'interrupted';
+        $job['finished_at'] = gmdate('c');
+        $job['exit_code'] = null;
+        $changed = true;
+    }
+}
+unset($job);
+
+$running = null;
+$queued = null;
+foreach ($queue['jobs'] as $job) {
+    if (!is_array($job)) {
+        continue;
+    }
+    $status = (string)($job['status'] ?? '');
+    if ($status === 'running' && $running === null) {
+        $running = $job;
+    }
+    if ($status === 'queued' && $queued === null) {
+        $queued = $job;
+    }
+}
+
+if ($running !== null) {
+    if ($changed) {
+        bento_queue_write($fh, $queue);
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    exit(0);
+}
+
+if ($queued === null) {
+    if ($changed) {
+        bento_queue_write($fh, $queue);
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    exit(0);
+}
+
+$jobId = (string)$queued['id'];
+$logName = (string)($queued['log_file'] ?? "deploy-{$jobId}.log");
+$logName = basename($logName);
+$logPath = "{$logsDir}/{$logName}";
+
+foreach ($queue['jobs'] as &$job) {
+    if (!is_array($job) || (string)($job['id'] ?? '') !== $jobId) {
+        continue;
+    }
+    $job['status'] = 'running';
+    $job['started_at'] = gmdate('c');
+    $job['error'] = null;
+    $job['log_file'] = $logName;
+}
+unset($job);
+bento_queue_write($fh, $queue);
+flock($fh, LOCK_UN);
+fclose($fh);
+
+// Snapshot payload for the deploy script (optional).
+$payloadFile = "{$bentoDir}/payload-{$jobId}.json";
+$payload = $queued['request']['payload'] ?? null;
+if (is_array($payload)) {
+    file_put_contents($payloadFile, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    @chmod($payloadFile, 0600);
+} else {
+    $payloadFile = '';
+}
+
+$exitCode = bento_run_deploy($app, $workdir, $command, $timeout, $logPath, $jobId, $payloadFile);
+
+$status = 'failed';
+$error = null;
+if ($exitCode === 0) {
+    $status = 'success';
+} elseif ($exitCode === BENTO_SKIP_EXIT) {
+    $status = 'skipped';
+} else {
+    $error = "exit {$exitCode}";
+    $script = $command[0] === 'sh' ? (string)($command[1] ?? '') : (string)($command[0] ?? '');
+    if ($script !== '' && !file_exists($script)) {
+        $error = 'deploy script missing';
+    }
+}
+
+$fh = fopen($queuePath, 'c+');
+if ($fh === false) {
+    fwrite(STDERR, "bento-deploy-drain: cannot reopen queue to finalize {$jobId}\n");
+    exit(1);
+}
+if (!flock($fh, LOCK_EX)) {
+    fwrite(STDERR, "bento-deploy-drain: cannot lock queue to finalize {$jobId}\n");
+    exit(1);
+}
+$queue = bento_queue_read($fh);
+foreach ($queue['jobs'] as &$job) {
+    if (!is_array($job) || (string)($job['id'] ?? '') !== $jobId) {
+        continue;
+    }
+    $job['status'] = $status;
+    $job['exit_code'] = $exitCode;
+    $job['finished_at'] = gmdate('c');
+    $job['error'] = $error;
+    $job['log_file'] = $logName;
+}
+unset($job);
+bento_queue_write($fh, $queue);
+flock($fh, LOCK_UN);
+fclose($fh);
+
+if ($payloadFile !== '' && is_file($payloadFile)) {
+    @unlink($payloadFile);
+}
+
+// Always attempt FPM OPcache clean after a finished deploy.
+bento_clean_opcache($app, $jobId, $logPath);
+
+exit(0);
+
+/**
+ * @return array<string,mixed>
+ */
+function bento_load_deploy_config(string $path, string $app): array
+{
+    if (is_file($path)) {
+        $data = json_decode((string)file_get_contents($path), true);
+        if (is_array($data)) {
+            return $data;
+        }
+    }
+    // Fallback defaults when host-side config has not been rendered yet.
+    return [
+        'timeout' => BENTO_DEFAULT_TIMEOUT,
+        'workdir' => "/home/{$app}/www",
+        'command' => ['sh', "/home/{$app}/.bento/deploy.sh"],
+        'queue_policy' => 'latest',
+    ];
+}
+
+/**
+ * @param resource $fh
+ * @return array{version:int,jobs:list<array<string,mixed>>}
+ */
+function bento_queue_read($fh): array
+{
+    rewind($fh);
+    $raw = stream_get_contents($fh);
+    if ($raw === false || trim((string)$raw) === '') {
+        return ['version' => 1, 'jobs' => []];
+    }
+    $data = json_decode((string)$raw, true);
+    if (!is_array($data)) {
+        return ['version' => 1, 'jobs' => []];
+    }
+    $jobs = $data['jobs'] ?? [];
+    if (!is_array($jobs)) {
+        $jobs = [];
+    }
+    return ['version' => (int)($data['version'] ?? 1), 'jobs' => array_values($jobs)];
+}
+
+/**
+ * @param resource $fh
+ * @param array{version:int,jobs:list<array<string,mixed>>} $queue
+ */
+function bento_queue_write($fh, array $queue): void
+{
+    $jobs = array_values($queue['jobs'] ?? []);
+    if (count($jobs) > BENTO_QUEUE_RETENTION) {
+        $active = [];
+        $terminal = [];
+        foreach ($jobs as $job) {
+            if (!is_array($job)) {
+                continue;
+            }
+            if (in_array((string)($job['status'] ?? ''), ['queued', 'running'], true)) {
+                $active[] = $job;
+            } else {
+                $terminal[] = $job;
+            }
+        }
+        usort($terminal, static function (array $a, array $b): int {
+            return strcmp((string)($b['finished_at'] ?? $b['received_at'] ?? ''), (string)($a['finished_at'] ?? $a['received_at'] ?? ''));
+        });
+        $keep = max(0, BENTO_QUEUE_RETENTION - count($active));
+        $jobs = array_merge($active, array_slice($terminal, 0, $keep));
+    }
+    $payload = json_encode(['version' => (int)($queue['version'] ?? 1), 'jobs' => $jobs], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    rewind($fh);
+    ftruncate($fh, 0);
+    fwrite($fh, $payload);
+    fflush($fh);
+}
+
+/**
+ * @param list<string> $command
+ */
+function bento_run_deploy(
+    string $app,
+    string $workdir,
+    array $command,
+    int $timeout,
+    string $logPath,
+    string $jobId,
+    string $payloadFile
+): int {
+    if (!is_dir($workdir)) {
+        file_put_contents($logPath, "workdir missing: {$workdir}\n", FILE_APPEND);
+        return 1;
+    }
+
+    $script = $command[0] === 'sh' ? (string)($command[1] ?? '') : (string)($command[0] ?? '');
+    if ($command[0] === 'sh' && $script !== '' && !is_file($script)) {
+        file_put_contents($logPath, "deploy script missing: {$script}\n", FILE_APPEND);
+        return 1;
+    }
+
+    $descriptors = [
+        0 => ['file', '/dev/null', 'r'],
+        1 => ['file', $logPath, 'a'],
+        2 => ['file', $logPath, 'a'],
+    ];
+    $env = array_merge($_ENV ?: [], [
+        'HOME' => "/home/{$app}",
+        'USER' => $app,
+        'LOGNAME' => $app,
+        'COMPOSER_HOME' => "/home/{$app}/.composer",
+        'bento_APP' => $app,
+        'BENTO_APP' => $app,
+        'BENTO_DEPLOY_ID' => $jobId,
+        'BENTO_DEPLOY_LOG' => $logPath,
+        'BENTO_DEPLOY_PAYLOAD_FILE' => $payloadFile,
+    ]);
+    // Preserve PATH from current process.
+    $env['PATH'] = getenv('PATH') ?: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+    file_put_contents(
+        $logPath,
+        sprintf("[%s] starting deploy id=%s cmd=%s\n", gmdate('c'), $jobId, implode(' ', $command)),
+        FILE_APPEND
+    );
+
+    $cmd = $command;
+    if ($timeout > 0) {
+        $cmd = array_merge(['timeout', '--foreground', '--kill-after=30', (string)$timeout], $command);
+    }
+
+    $proc = proc_open($cmd, $descriptors, $pipes, $workdir, $env);
+    if (!is_resource($proc)) {
+        file_put_contents($logPath, "failed to start deploy process\n", FILE_APPEND);
+        return 1;
+    }
+    $code = proc_close($proc);
+    file_put_contents(
+        $logPath,
+        sprintf("[%s] finished deploy id=%s exit=%s\n", gmdate('c'), $jobId, $code),
+        FILE_APPEND
+    );
+    return (int)$code;
+}
+
+function bento_clean_opcache(string $app, string $jobId, string $logPath): void
+{
+    $socket = "/run/php-fpm/{$app}.sock";
+    if (!file_exists($socket)) {
+        file_put_contents($logPath, "opcache clean skipped: missing socket {$socket}\n", FILE_APPEND);
+        return;
+    }
+    $body = json_encode(['deploy_id' => $jobId], JSON_UNESCAPED_SLASHES);
+    try {
+        $response = bento_fastcgi_request(
+            $socket,
+            '/_bento/clean-opcache',
+            $body,
+            [
+                'CONTENT_TYPE' => 'application/json',
+                'HTTP_X_BENTO_DEPLOY_ID' => $jobId,
+            ]
+        );
+        file_put_contents($logPath, "opcache clean response: {$response}\n", FILE_APPEND);
+    } catch (Throwable $e) {
+        file_put_contents($logPath, 'opcache clean failed: ' . $e->getMessage() . "\n", FILE_APPEND);
+    }
+}
+
+/**
+ * Minimal FastCGI BEGIN_REQUEST + params + stdin over a unix socket.
+ *
+ * @param array<string,string> $extraParams
+ */
+function bento_fastcgi_request(string $socketPath, string $requestUri, string $body, array $extraParams = []): string
+{
+    $fp = stream_socket_client('unix://' . $socketPath, $errno, $errstr, 5.0);
+    if ($fp === false) {
+        throw new RuntimeException("connect failed: {$errstr} ({$errno})");
+    }
+    stream_set_timeout($fp, 10);
+
+    $params = array_merge([
+        'SCRIPT_FILENAME' => '/usr/local/lib/bento/index.php',
+        'SCRIPT_NAME' => '/index.php',
+        'REQUEST_METHOD' => 'POST',
+        'REQUEST_URI' => $requestUri,
+        'QUERY_STRING' => '',
+        'DOCUMENT_ROOT' => '/usr/local/lib/bento',
+        'SERVER_SOFTWARE' => 'bento-deploy-drain',
+        'SERVER_NAME' => 'localhost',
+        'SERVER_PORT' => '80',
+        'SERVER_PROTOCOL' => 'HTTP/1.1',
+        'REMOTE_ADDR' => '127.0.0.1',
+        'CONTENT_LENGTH' => (string)strlen($body),
+        'GATEWAY_INTERFACE' => 'CGI/1.1',
+    ], $extraParams);
+
+    $reqId = 1;
+    fwrite($fp, bento_fcgi_record(1, $reqId, bento_fcgi_begin_request()));
+    fwrite($fp, bento_fcgi_record(4, $reqId, bento_fcgi_params($params)));
+    fwrite($fp, bento_fcgi_record(4, $reqId, '')); // empty params
+    fwrite($fp, bento_fcgi_record(5, $reqId, $body));
+    if ($body !== '') {
+        fwrite($fp, bento_fcgi_record(5, $reqId, '')); // empty stdin
+    }
+
+    $stdout = '';
+    $deadline = microtime(true) + 10.0;
+    while (microtime(true) < $deadline) {
+        $header = bento_fcgi_read_exact($fp, 8);
+        if ($header === null) {
+            break;
+        }
+        $type = ord($header[1]);
+        $contentLength = (ord($header[4]) << 8) | ord($header[5]);
+        $paddingLength = ord($header[6]);
+        $content = $contentLength > 0 ? bento_fcgi_read_exact($fp, $contentLength) : '';
+        if ($paddingLength > 0) {
+            bento_fcgi_read_exact($fp, $paddingLength);
+        }
+        if ($content === null) {
+            break;
+        }
+        if ($type === 6) { // STDOUT
+            $stdout .= $content;
+        } elseif ($type === 3) { // END_REQUEST
+            break;
+        }
+    }
+    fclose($fp);
+
+    // Strip CGI headers.
+    $parts = explode("\r\n\r\n", $stdout, 2);
+    return $parts[1] ?? $stdout;
+}
+
+function bento_fcgi_record(int $type, int $requestId, string $content): string
+{
+    $len = strlen($content);
+    $pad = (8 - ($len % 8)) % 8;
+    return chr(1) . chr($type)
+        . chr(($requestId >> 8) & 0xff) . chr($requestId & 0xff)
+        . chr(($len >> 8) & 0xff) . chr($len & 0xff)
+        . chr($pad) . chr(0)
+        . $content . str_repeat("\0", $pad);
+}
+
+function bento_fcgi_begin_request(): string
+{
+    // role=responder (1), flags=0
+    return chr(0) . chr(1) . chr(0) . str_repeat("\0", 5);
+}
+
+/**
+ * @param array<string,string> $params
+ */
+function bento_fcgi_params(array $params): string
+{
+    $out = '';
+    foreach ($params as $name => $value) {
+        $out .= bento_fcgi_nv((string)$name, (string)$value);
+    }
+    return $out;
+}
+
+function bento_fcgi_nv(string $name, string $value): string
+{
+    return bento_fcgi_len(strlen($name)) . bento_fcgi_len(strlen($value)) . $name . $value;
+}
+
+function bento_fcgi_len(int $len): string
+{
+    if ($len < 128) {
+        return chr($len);
+    }
+    return chr(($len >> 24) | 0x80) . chr(($len >> 16) & 0xff) . chr(($len >> 8) & 0xff) . chr($len & 0xff);
+}
+
+function bento_fcgi_read_exact($fp, int $n): ?string
+{
+    $data = '';
+    while (strlen($data) < $n) {
+        $chunk = fread($fp, $n - strlen($data));
+        if ($chunk === false || $chunk === '') {
+            return $data === '' ? null : $data;
+        }
+        $data .= $chunk;
+    }
+    return $data;
+}
