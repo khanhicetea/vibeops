@@ -1,5 +1,7 @@
 /** Operator-facing output helpers (no secrets). */
 
+import cliui from "cliui";
+
 export type Logger = {
   info: (msg: string) => void;
   warn: (msg: string) => void;
@@ -27,12 +29,44 @@ export function createLogger(opts?: { json?: boolean }): Logger {
   };
 }
 
+/** Format a simple aligned table via cliui. */
 export function printTable(headers: string[], rows: string[][]): string {
-  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
-  const line = (cols: string[]) => cols.map((c, i) => c.padEnd(widths[i]!)).join("  ");
-  const out = [line(headers), line(widths.map((w) => "-".repeat(w)))];
-  for (const r of rows) out.push(line(r.map((c) => c ?? "")));
-  return out.join("\n");
+  const widths = headers.map((h, i) =>
+    Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length), 1)
+  );
+  const colGap = 2;
+  const totalWidth = widths.reduce((sum, w) => sum + w + colGap, 0);
+  const ui = cliui({ width: Math.max(totalWidth, 40), wrap: false });
+
+  const cells = (cols: string[]) =>
+    cols.map((c, i) => ({
+      text: c,
+      width: widths[i]! + colGap,
+      padding: [0, 0, 0, 0] as [number, number, number, number],
+    }));
+
+  ui.div(...cells(headers));
+  ui.div(...cells(widths.map((w) => "-".repeat(w))));
+  for (const row of rows) {
+    ui.div(...cells(headers.map((_, i) => row[i] ?? "")));
+  }
+  return ui.toString().replace(/\s+$/gm, "");
+}
+
+/** Multi-column help / section layout via cliui. */
+export function printColumns(
+  pairs: Array<[string, string]>,
+  opts?: { leftWidth?: number; width?: number },
+): string {
+  const leftWidth = opts?.leftWidth ?? 28;
+  const ui = cliui({ width: opts?.width ?? 100, wrap: true });
+  for (const [left, right] of pairs) {
+    ui.div(
+      { text: left, width: leftWidth, padding: [0, 2, 0, 0] },
+      { text: right },
+    );
+  }
+  return ui.toString().replace(/\s+$/gm, "");
 }
 
 /** Redact common secret-like values from diagnostics. */

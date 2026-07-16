@@ -16,7 +16,7 @@ This repository is a **Deno 2.9 / TypeScript** reimplementation of the Bento hos
 
 - Deno **2.9.x** (development / source mode)
 - Linux with Docker Engine + Docker Compose v2 (data plane)
-- No Python, Node.js, or `npm install` required to run the control plane
+- No Python, Node.js, or `npm install` required to run the control plane (JSR/npm packages resolve through Deno + `deno.lock`)
 
 ## Quick start (source mode)
 
@@ -94,7 +94,7 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | Compose | `compose -- <args>` (refuses `down -v`) |
 | Safety | `permissions check\|repair`, `backup`, `restore` |
 
-Global flags: `--stack PATH` (or `BENTO_STACK_ROOT`), `--json`.
+Global flags: `--stack PATH` (or `BENTO_STACK_ROOT`), `--json`. Command parsing and help use **yargs**; table layout uses **cliui**.
 
 ## Specs and acceptance
 

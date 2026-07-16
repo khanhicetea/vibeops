@@ -35,6 +35,7 @@ import {
 import type { Platform } from "../platform/mod.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { type ReloadPlan, reloadPlanForPoolChange } from "../domain/reload.ts";
+import { applyAppPermissionPolicy } from "./permissions.ts";
 
 export type ProvisionAppInput = {
   slug: string;
@@ -348,12 +349,10 @@ export async function materializeAppHome(
   }
 
   if (recursivePerms) {
-    // Best-effort: record intended ownership in a meta file (actual chown needs root)
-    await platform.fs.atomicWriteText(
-      join(home, ".bento", "identity.json"),
-      `${JSON.stringify({ uid: app.uid, gid: app.gid, slug: app.slug }, null, 2)}\n`,
-      0o640,
-    );
+    // Initial recursive policy while the tree is still small (chown needs root/CAP_CHOWN).
+    await applyAppPermissionPolicy(platform, app, { recursive: true });
+  } else {
+    await applyAppPermissionPolicy(platform, app, { recursive: false });
   }
 }
 

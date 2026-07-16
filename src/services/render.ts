@@ -75,15 +75,29 @@ type RenderJournal = {
   };
 };
 
-const MANAGED_MARKER = "# bento-managed: true\n";
 const MANAGED_MARKER_HASH = "# bento-managed: true\n";
+const MANAGED_MARKER_SEMI = "; bento-managed: true\n";
 
-export function withManagedMarker(content: string, style: "hash" | "none" = "hash"): string {
+export type ManagedMarkerStyle = "hash" | "semicolon" | "none";
+
+export function withManagedMarker(
+  content: string,
+  style: ManagedMarkerStyle = "hash",
+): string {
   if (style === "none") return content;
-  if (content.startsWith(MANAGED_MARKER) || content.startsWith(MANAGED_MARKER_HASH)) {
+  const marker = style === "semicolon" ? MANAGED_MARKER_SEMI : MANAGED_MARKER_HASH;
+  if (
+    content.startsWith(MANAGED_MARKER_HASH) ||
+    content.startsWith(MANAGED_MARKER_SEMI) ||
+    content.startsWith(marker)
+  ) {
     return content;
   }
-  return `${MANAGED_MARKER_HASH}${content}`;
+  return `${marker}${content}`;
+}
+
+export function isManagedMarker(head: string): boolean {
+  return head.startsWith("# bento-managed:") || head.startsWith("; bento-managed:");
 }
 
 export class RenderService {
@@ -415,7 +429,7 @@ export class RenderService {
             if (!managed) {
               try {
                 const head = await this.platform.fs.readText(full);
-                if (head.startsWith("# bento-managed:")) managed = true;
+                if (isManagedMarker(head)) managed = true;
               } catch {
                 // binary
               }
@@ -482,6 +496,23 @@ function defaultValidators(
         const detail = `${result.stderr}\n${result.stdout}`;
         if (result.code !== 0 && !isDockerUnavailable(detail)) {
           throw platformError(`nginx validation failed: ${result.stderr || result.stdout}`);
+        }
+      },
+    });
+  }
+  for (const svc of plan.phpFpm) {
+    validators.push({
+      name: `php-fpm:${svc}`,
+      validate: async () => {
+        const result = await platform.process.run(
+          ["docker", "compose", "exec", "-T", svc, "php-fpm", "-t"],
+          { cwd: platform.paths.paths.root, timeoutMs: 3_000 },
+        ).catch(() => ({ code: 0, stdout: "", stderr: "skipped" }));
+        const detail = `${result.stderr}\n${result.stdout}`;
+        if (result.code !== 0 && !isDockerUnavailable(detail)) {
+          throw platformError(
+            `php-fpm validation failed for ${svc}: ${result.stderr || result.stdout}`,
+          );
         }
       },
     });

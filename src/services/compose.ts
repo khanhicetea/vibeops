@@ -221,7 +221,9 @@ function renderPhpFragment(service: string, image: string, version: string): str
         user: "root",
         volumes: [
           "./homes:/home",
+          // Pools directory is not matched by php-fpm.d/*.conf; include file below pulls it in.
           `./generated/php/${service}/pools:/usr/local/etc/php-fpm.d/bento:ro`,
+          `./generated/php/${service}/zz-bento-pools.conf:/usr/local/etc/php-fpm.d/zz-bento-pools.conf:ro`,
           `./runtime/php-fpm/${service}:/run/php-fpm`,
           "./helpers:/opt/bento/helpers:ro",
         ],

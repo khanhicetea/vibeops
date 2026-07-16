@@ -14,6 +14,7 @@ services:
     volumes:
       - "./homes:/home"
       - "./generated/php/php85/pools:/usr/local/etc/php-fpm.d/bento:ro"
+      - "./generated/php/php85/zz-bento-pools.conf:/usr/local/etc/php-fpm.d/zz-bento-pools.conf:ro"
       - "./runtime/php-fpm/php85:/run/php-fpm"
       - "./helpers:/opt/bento/helpers:ro"
     environment:

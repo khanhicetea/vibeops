@@ -6,10 +6,14 @@ ROLE="${BENTO_ROLE:-fpm}"
 # Ensure runtime dirs exist (volatile)
 mkdir -p /run/php-fpm /var/log/supervisor /tmp
 
-# Include Bento-managed pools if present
+# php-fpm only auto-includes php-fpm.d/*.conf (not subdirectories).
+# Ensure Bento pool directory is included even on older images that lack
+# the baked-in include from zz-docker.conf.
 if [ -d /usr/local/etc/php-fpm.d/bento ]; then
-  # pools are mounted read-only from generated state
-  true
+  cat > /usr/local/etc/php-fpm.d/zz-bento-pools.conf <<'EOF'
+; Auto-included Bento per-app pools (bind-mounted under php-fpm.d/bento/)
+include=/usr/local/etc/php-fpm.d/bento/*.conf
+EOF
 fi
 
 if [ "$ROLE" = "runner" ]; then

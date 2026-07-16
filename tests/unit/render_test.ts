@@ -219,3 +219,53 @@ Deno.test("app provision materializes home without secrets in public tree", asyn
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("app apply emits INI-safe pool marker, include file, and code/ docroot", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    const render = new RenderService(platform);
+    await store.init();
+    let state = await store.load();
+    state = provisionApp(platform, state, {
+      slug: "alpha",
+      domain: "alpha.test",
+      documentRoot: "public",
+    }).state;
+    await store.save(state);
+    await render.apply(state, {
+      renderOnly: true,
+      skipValidate: true,
+    });
+
+    const pool = await platform.fs.readText(
+      join(root, "generated/php/php85/pools/alpha.conf"),
+    );
+    assertEquals(pool.startsWith("; bento-managed: true\n"), true);
+    assertEquals(pool.includes("# bento-managed"), false);
+    assertEquals(pool.includes("[alpha]"), true);
+    assertEquals(pool.includes("listen = /run/php-fpm/alpha.sock"), true);
+
+    const includeFile = await platform.fs.readText(
+      join(root, "generated/php/php85/zz-bento-pools.conf"),
+    );
+    assertEquals(includeFile.includes("include=/usr/local/etc/php-fpm.d/bento/*.conf"), true);
+
+    const vhost = await platform.fs.readText(
+      join(root, "generated/nginx/sites/alpha.conf"),
+    );
+    assertEquals(vhost.includes("root /home/alpha/code/public;"), true);
+    assertEquals(vhost.includes("fastcgi_pass unix:/run/php-fpm/php85/alpha.sock;"), true);
+
+    const phpCompose = await platform.fs.readText(
+      join(root, "generated/compose/docker-compose.php-php85.yml"),
+    );
+    assertEquals(
+      phpCompose.includes("zz-bento-pools.conf:/usr/local/etc/php-fpm.d/zz-bento-pools.conf:ro"),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

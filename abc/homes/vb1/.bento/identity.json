@@ -1,5 +1,6 @@
 {
   "uid": 2000,
   "gid": 2000,
-  "slug": "vb1"
+  "slug": "vb1",
+  "webGid": 1500
 }

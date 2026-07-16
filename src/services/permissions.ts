@@ -1,12 +1,26 @@
 /**
  * Permission check / dry-run / shallow / recursive repair workflows.
  * Does not follow symlink targets. Startup must not recursively rewrite large trees.
+ *
+ * Policy (shared socket/read group = 1500 / bento-web):
+ * - App home + code path: owner app, world-traverse (o+x) so Nginx can reach the public tree
+ * - Public document tree: owner app, group bento-web, group-readable
+ * - Private dirs (credentials, .ssh, .composer, .bento, logs, tmp): owner-only (or 750 for logs/tmp)
  */
 
 import { join } from "@std/path";
 import type { AppState, DesiredState } from "../domain/state.ts";
+import { notFoundError } from "../domain/errors.ts";
 import type { Platform } from "../platform/mod.ts";
-import { getAppOrThrow } from "./app.ts";
+
+function requireApp(state: DesiredState, slug: string): AppState {
+  const app = state.apps[slug];
+  if (!app) throw notFoundError(`app not found: ${slug}`);
+  return app;
+}
+
+/** Shared Nginx / FPM socket group (must match pool listen.group and nginx image). */
+export const BENTO_WEB_GID = 1500;
 
 export type PermIssue = {
   path: string;
@@ -35,7 +49,7 @@ export async function checkPermissions(
   slug: string,
   opts: { recursive?: boolean } = {},
 ): Promise<PermReport> {
-  const app = getAppOrThrow(state, slug);
+  const app = requireApp(state, slug);
   const home = platform.paths.appHome(app.slug);
   const issues: PermIssue[] = [];
   let checked = 0;
@@ -48,7 +62,10 @@ export async function checkPermissions(
     };
   }
 
-  const checkPath = async (path: string, expectPrivate: boolean) => {
+  const checkPath = async (
+    path: string,
+    expect: { private?: boolean; worldTraverse?: boolean },
+  ) => {
     checked++;
     if (!(await platform.fs.exists(path))) {
       issues.push({ path, issue: "missing", fix: "create directory" });
@@ -56,13 +73,19 @@ export async function checkPermissions(
     }
     try {
       const st = await platform.fs.stat(path);
-      // We cannot reliably read ownership without root; check mode bits when available
       const mode = st.mode & 0o777;
-      if (expectPrivate && (mode & 0o077) !== 0) {
+      if (expect.private && (mode & 0o077) !== 0) {
         issues.push({
           path,
           issue: `mode ${mode.toString(8)} is group/world accessible`,
           fix: `chmod 700 or 750 as appropriate`,
+        });
+      }
+      if (expect.worldTraverse && (mode & 0o001) === 0) {
+        issues.push({
+          path,
+          issue: `mode ${mode.toString(8)} is not world-traversable (nginx cannot reach public tree)`,
+          fix: `chmod 751 ${path}`,
         });
       }
     } catch (e) {
@@ -73,21 +96,21 @@ export async function checkPermissions(
     }
   };
 
-  await checkPath(home, false);
+  await checkPath(home, { worldTraverse: true });
+  await checkPath(join(home, "code"), { worldTraverse: true });
   for (const d of PRIVATE_DIRS) {
-    await checkPath(join(home, d), true);
+    // logs/tmp may be 750; credentials/ssh/composer/bento should be 700
+    const strict = d !== "logs" && d !== "tmp";
+    await checkPath(join(home, d), { private: strict });
   }
 
   // Public document tree should exist
   const doc = join(home, "code", app.documentRoot || ".");
-  await checkPath(doc, false);
+  await checkPath(doc, {});
 
   if (opts.recursive) {
-    // Shallow walk of code tree without following symlinks (lstat via Deno in fs adapter uses stat;
-    // for safety we only list one level unless recursive true, then bounded walk)
     await walkLimited(platform, join(home, "code"), 5000, async (p) => {
       checked++;
-      // skip symlink targets: if we cannot stat as file/dir, report
       try {
         await platform.fs.stat(p);
       } catch {
@@ -126,87 +149,189 @@ export async function checkPermissions(
   return { app: slug, issues, checked };
 }
 
+/**
+ * Apply the product permission policy for an app home.
+ * Used by app provision (initial) and `permissions repair`.
+ */
+export async function applyAppPermissionPolicy(
+  platform: Platform,
+  app: AppState,
+  opts: { recursive?: boolean } = {},
+): Promise<string[]> {
+  const home = platform.paths.appHome(app.slug);
+  const actions: string[] = [];
+  const uid = Number(app.uid);
+  const gid = Number(app.gid);
+  const docRel = app.documentRoot && app.documentRoot !== "."
+    ? app.documentRoot
+    : "";
+  const docRoot = docRel ? join(home, "code", docRel) : join(home, "code");
+
+  const ensureDir = async (path: string, mode: number) => {
+    if (!(await platform.fs.exists(path))) {
+      await platform.fs.mkdirp(path, mode);
+      actions.push(`created ${path}`);
+    }
+  };
+
+  await ensureDir(home, 0o751);
+  await ensureDir(join(home, "code"), 0o751);
+  await ensureDir(join(home, "logs"), 0o750);
+  await ensureDir(join(home, "tmp"), 0o750);
+  await ensureDir(join(home, "tmp", "sessions"), 0o700);
+  await ensureDir(join(home, ".bento"), 0o700);
+  await ensureDir(join(home, ".ssh"), 0o700);
+  await ensureDir(join(home, ".composer"), 0o700);
+  await ensureDir(join(home, "credentials"), 0o700);
+  await ensureDir(docRoot, 0o750);
+
+  await platform.fs.atomicWriteText(
+    join(home, ".bento", "identity.json"),
+    `${JSON.stringify({ uid, gid, slug: app.slug, webGid: BENTO_WEB_GID }, null, 2)}\n`,
+    0o640,
+  );
+  actions.push("wrote identity metadata");
+
+  // Path components nginx must traverse (world +x; still no world read).
+  for (const p of [home, join(home, "code")]) {
+    try {
+      await platform.fs.chmod(p, 0o751);
+      actions.push(`chmod 751 ${p}`);
+    } catch {
+      actions.push(`skip chmod ${p}`);
+    }
+  }
+
+  // Private dirs
+  for (const d of PRIVATE_DIRS) {
+    const p = join(home, d);
+    if (!(await platform.fs.exists(p))) continue;
+    const mode = d === "logs" || d === "tmp" ? 0o750 : 0o700;
+    try {
+      await platform.fs.chmod(p, mode);
+      actions.push(`chmod ${mode.toString(8)} ${p}`);
+    } catch {
+      actions.push(`skip chmod ${p}`);
+    }
+  }
+
+  // Public document root: group-readable by bento-web
+  if (await platform.fs.exists(docRoot)) {
+    try {
+      await platform.fs.chmod(docRoot, 0o750);
+      actions.push(`chmod 750 ${docRoot}`);
+    } catch {
+      actions.push(`skip chmod ${docRoot}`);
+    }
+  }
+
+  // Ownership via host chown (best-effort; needs root/CAP_CHOWN)
+  const chown = async (path: string, owner: string, recursive = false) => {
+    const args = ["chown", ...(recursive ? ["-R"] : []), owner, path];
+    const r = await platform.process.run(args, { timeoutMs: 10_000 }).catch((e) => ({
+      code: 1,
+      stdout: "",
+      stderr: String(e),
+    }));
+    if (r.code === 0) {
+      actions.push(`chown ${owner} ${recursive ? "-R " : ""}${path}`);
+    } else {
+      actions.push(
+        `skip chown ${path}: ${(r.stderr || r.stdout || "failed").trim().slice(0, 120)}`,
+      );
+    }
+  };
+
+  // App owns the home tree
+  await chown(home, `${uid}:${gid}`, opts.recursive === true);
+  if (!opts.recursive) {
+    // Shallow: still chown core leaves
+    for (
+      const p of [
+        home,
+        join(home, "code"),
+        join(home, "logs"),
+        join(home, "tmp"),
+        join(home, "tmp", "sessions"),
+        join(home, ".bento"),
+        join(home, ".ssh"),
+        join(home, ".composer"),
+        join(home, "credentials"),
+        docRoot,
+      ]
+    ) {
+      if (await platform.fs.exists(p)) await chown(p, `${uid}:${gid}`, false);
+    }
+  }
+
+  // Public tree group = bento-web so nginx can read; path still app-owned
+  if (await platform.fs.exists(docRoot)) {
+    await chown(docRoot, `${uid}:${BENTO_WEB_GID}`, true);
+    // Ensure dirs 750 / files 640 under public tree (bounded)
+    await walkLimited(platform, docRoot, 5000, async (p) => {
+      try {
+        const st = await platform.fs.stat(p);
+        if (st.isDirectory) await platform.fs.chmod(p, 0o750);
+        else if (st.isFile) await platform.fs.chmod(p, 0o640);
+      } catch {
+        // ignore
+      }
+    });
+    actions.push(`public tree group ${BENTO_WEB_GID} under ${docRoot}`);
+  }
+
+  // Re-apply world-traverse after chown (chown doesn't change mode, but be explicit)
+  for (const p of [home, join(home, "code")]) {
+    try {
+      await platform.fs.chmod(p, 0o751);
+    } catch {
+      // ignore
+    }
+  }
+
+  await platform.fs.atomicWriteText(
+    join(home, ".bento", "permission-policy.json"),
+    `${
+      JSON.stringify(
+        {
+          uid,
+          gid,
+          publicGroup: BENTO_WEB_GID,
+          recursive: opts.recursive === true,
+          updatedAt: platform.clock.nowIso(),
+        },
+        null,
+        2,
+      )
+    }\n`,
+    0o640,
+  );
+  actions.push("wrote permission-policy metadata");
+
+  return actions;
+}
+
 export async function repairPermissions(
   platform: Platform,
   state: DesiredState,
   slug: string,
   opts: { dryRun?: boolean; recursive?: boolean; shallow?: boolean } = {},
 ): Promise<{ report: PermReport; actions: string[] }> {
-  const app = getAppOrThrow(state, slug);
-  const home = platform.paths.appHome(app.slug);
+  const app = requireApp(state, slug);
   const report = await checkPermissions(platform, state, slug, {
     recursive: opts.recursive,
   });
-  const actions: string[] = [];
 
   if (opts.dryRun) {
-    for (const issue of report.issues) {
-      actions.push(`DRY-RUN would fix: ${issue.path} (${issue.issue})`);
-    }
+    const actions = report.issues.map(
+      (issue) => `DRY-RUN would fix: ${issue.path} (${issue.issue})`,
+    );
     return { report, actions };
   }
 
-  // Always ensure core dirs (shallow)
-  const dirs = [
-    home,
-    join(home, "code"),
-    join(home, "logs"),
-    join(home, "tmp"),
-    join(home, "tmp", "sessions"),
-    join(home, ".bento"),
-    join(home, ".ssh"),
-    join(home, ".composer"),
-    join(home, "credentials"),
-  ];
-  for (const d of dirs) {
-    if (!(await platform.fs.exists(d))) {
-      await platform.fs.mkdirp(d, 0o750);
-      actions.push(`created ${d}`);
-    }
-  }
-
-  await platform.fs.atomicWriteText(
-    join(home, ".bento", "identity.json"),
-    `${JSON.stringify({ uid: app.uid, gid: app.gid, slug: app.slug }, null, 2)}\n`,
-    0o640,
-  );
-  actions.push("wrote identity metadata");
-
-  // Restrict private dirs
-  for (const d of PRIVATE_DIRS) {
-    const p = join(home, d);
-    if (await platform.fs.exists(p)) {
-      try {
-        await platform.fs.chmod(p, d === "logs" ? 0o750 : 0o700);
-        actions.push(`chmod ${p}`);
-      } catch {
-        actions.push(`skip chmod ${p} (permission denied)`);
-      }
-    }
-  }
-
-  if (opts.recursive && !opts.shallow) {
-    actions.push(
-      "recursive ownership repair requires host root/chown and is recorded as intended policy only",
-    );
-    await platform.fs.atomicWriteText(
-      join(home, ".bento", "permission-policy.json"),
-      `${
-        JSON.stringify(
-          {
-            uid: app.uid,
-            gid: app.gid,
-            publicGroup: 1500,
-            recursive: true,
-            updatedAt: platform.clock.nowIso(),
-          },
-          null,
-          2,
-        )
-      }\n`,
-      0o640,
-    );
-  }
+  const actions = await applyAppPermissionPolicy(platform, app, {
+    recursive: opts.recursive === true && opts.shallow !== true,
+  });
 
   const after = await checkPermissions(platform, state, slug, {
     recursive: opts.recursive,

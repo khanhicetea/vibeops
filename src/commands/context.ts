@@ -19,6 +19,11 @@ export type GlobalFlags = {
   repoRoot?: string;
 };
 
+export function defaultStackRoot(): string {
+  return Deno.env.get("BENTO_STACK_ROOT") ?? Deno.env.get("BENTO_ROOT") ??
+    "./.bento-stack";
+}
+
 export function createContext(flags: GlobalFlags): CliContext {
   const stackRoot = resolve(flags.stackRoot);
   const platform = createPlatform(stackRoot, flags.repoRoot);
@@ -32,29 +37,15 @@ export function createContext(flags: GlobalFlags): CliContext {
   };
 }
 
-export function parseGlobalFlags(args: string[]): {
-  flags: GlobalFlags;
-  rest: string[];
-} {
-  let stackRoot = Deno.env.get("BENTO_STACK_ROOT") ?? Deno.env.get("BENTO_ROOT") ??
-    "./.bento-stack";
-  let json = false;
-  let repoRoot: string | undefined;
-  const rest: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (a === "--stack" || a === "--root") {
-      stackRoot = args[++i] ?? stackRoot;
-    } else if (a.startsWith("--stack=")) {
-      stackRoot = a.slice("--stack=".length);
-    } else if (a === "--json") {
-      json = true;
-    } else if (a === "--repo-root") {
-      repoRoot = args[++i];
-    } else {
-      // Preserve "--" so subcommands can separate argv payloads.
-      rest.push(a);
-    }
-  }
-  return { flags: { stackRoot, json, repoRoot }, rest };
+/** Build a CliContext from yargs-parsed global options. */
+export function contextFromArgv(argv: Record<string, unknown>): CliContext {
+  const stack = argv.stack ?? argv.root ?? defaultStackRoot();
+  const repoRoot = argv["repo-root"] ?? argv.repoRoot;
+  return createContext({
+    stackRoot: String(stack),
+    json: argv.json === true,
+    ...(typeof repoRoot === "string" && repoRoot.length > 0
+      ? { repoRoot }
+      : {}),
+  });
 }

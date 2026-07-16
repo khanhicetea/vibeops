@@ -19,7 +19,9 @@
     "@std/path": "./src/vendor/path.ts",
     "@std/yaml": "./src/vendor/yaml.ts",
     "@std/encoding/hex": "./src/vendor/encoding_hex.ts",
-    "@std/encoding": "./src/vendor/encoding_hex.ts"
+    "@std/encoding": "./src/vendor/encoding_hex.ts",
+    "yargs": "npm:yargs@18",
+    "cliui": "npm:cliui@9"
   },
   "compilerOptions": {
     "strict": true,

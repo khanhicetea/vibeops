@@ -118,9 +118,11 @@ async function generateAppVhost(
   }
 
   const serverNames = [app.mainDomain, ...app.aliases].join(" ");
-  const docRoot = app.documentRoot
-    ? `${containerAppHome(app.slug)}/${app.documentRoot}`
-    : containerAppHome(app.slug);
+  // App code lives under /home/<slug>/code; documentRoot is relative to that tree.
+  const codeRoot = `${containerAppHome(app.slug)}/code`;
+  const docRoot = app.documentRoot && app.documentRoot !== "."
+    ? `${codeRoot}/${app.documentRoot}`
+    : codeRoot;
   const socketPath = `/run/php-fpm/${app.phpService}/${app.slug}.sock`;
   const realTls = app.tls.kind !== "boot";
   const content = renderTemplate(tpl, {
@@ -213,16 +215,26 @@ async function generatePhpPools(
     });
     files.push({
       relPath: `php/${app.phpService}/pools/${app.slug}.conf`,
-      content: withManagedMarker(content),
+      // PHP-FPM pool files are INI-style: only ';' comments are valid.
+      content: withManagedMarker(content, "semicolon"),
       mode: 0o644,
       managed: true,
     });
   }
-  // Ensure per-version pool directory placeholder
+  // Ensure per-version pool directory placeholder + include snippet for the image
   for (const v of state.phpVersions) {
     files.push({
       relPath: `php/${v.service}/pools/.keep`,
-      content: withManagedMarker(`# pools for ${v.service}\n`),
+      content: withManagedMarker(`; pools for ${v.service}\n`, "semicolon"),
+      mode: 0o644,
+      managed: true,
+    });
+    files.push({
+      relPath: `php/${v.service}/zz-bento-pools.conf`,
+      content: withManagedMarker(
+        `; Include bind-mounted per-app pools\ninclude=/usr/local/etc/php-fpm.d/bento/*.conf\n`,
+        "semicolon",
+      ),
       mode: 0o644,
       managed: true,
     });
@@ -475,6 +487,7 @@ server {
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
 
   root {{docRoot}};
+  include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;

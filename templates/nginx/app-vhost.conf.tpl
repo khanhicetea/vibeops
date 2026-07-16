@@ -9,6 +9,7 @@ server {
   {{/redirectHttps}}
   {{^redirectHttps}}
   root {{docRoot}};
+  include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;
@@ -66,6 +67,7 @@ server {
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
 
   root {{docRoot}};
+  include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;
