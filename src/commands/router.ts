@@ -1,6 +1,6 @@
 /**
  * CLI command router backed by yargs + cliui.
- * Scriptable operations; interactive wizard is optional convenience.
+ * Scriptable operations; interactive wizard via `bento tui`.
  */
 
 import yargs from "yargs";
@@ -36,6 +36,7 @@ import { checkPermissions, formatPermReport, repairPermissions } from "../servic
 import { assertSafeComposeArgs, composeArgs } from "../services/compose.ts";
 import { printTable, redact } from "../ui/output.ts";
 import type { TlsMode } from "../domain/state.ts";
+import { runWizard } from "./wizard.ts";
 
 type RunState = { code: number };
 // deno-lint-ignore no-explicit-any
@@ -117,7 +118,7 @@ function buildParser(state: RunState) {
   let parser: Argv<any> = yargs()
     .scriptName("bento")
     .usage(
-      "bento — single-server PHP application operations\n\nUsage: $0 [options] <command> [args]",
+      "bento — single-server PHP application operations\n\nUsage: $0 [options] <command> [args]\n\nTip: $0 tui opens the interactive wizard.",
     )
     .strict()
     .help()
@@ -148,6 +149,12 @@ function buildParser(state: RunState) {
         printVersion();
         state.code = 0;
       },
+    )
+    .command(
+      "tui",
+      "Interactive wizard (numbered menus for common operations)",
+      () => {},
+      bind(state, cmdTui),
     )
     .command(
       "init",
@@ -665,6 +672,10 @@ function stripGlobalTokens(args: string[]): string[] {
 }
 
 // --- command handlers -------------------------------------------------------
+
+async function cmdTui(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+  return await runWizard(ctx);
+}
 
 async function cmdInit(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const force = argv.force === true;

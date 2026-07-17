@@ -82,6 +82,7 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 
 | Area | Commands |
 |------|----------|
+| Interactive | `tui` (wizard: menus, tables, alerts for common ops) |
 | Bootstrap | `init`, `render`, `apply`, `status` |
 | Apps | `app create\|list\|show` |
 | PHP | `php add\|remove\|list` |
@@ -116,7 +117,7 @@ src/
   platform/               # Deno adapters (fs, lock, process, assets, paths)
   services/               # app, php, mysql, render, deploy, …
   commands/               # CLI router
-  ui/                     # operator output helpers
+  ui/                     # operator output + interactive TUI helpers
 templates/                # immutable nginx/php/helpers assets
 tests/                    # unit + contract suites
 specs/                    # product specifications
