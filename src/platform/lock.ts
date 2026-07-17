@@ -67,26 +67,30 @@ export function createMemoryLock(): FileLock {
     for (const w of current) w();
   }
 
-  async function waitUntil(pred: () => boolean): Promise<void> {
-    while (!pred()) {
-      await new Promise<void>((resolve) => waiters.push(resolve));
-    }
-  }
-
   return {
     async exclusive(path: string): Promise<() => Promise<void>> {
-      await waitUntil(
-        () => !exclusiveOwners.has(path) && (sharedCounts.get(path) ?? 0) === 0,
-      );
-      exclusiveOwners.set(path, 1);
+      // Check-and-set must be synchronous (no await between) so concurrent
+      // acquirers cannot all observe a free lock in the same turn (R-01).
+      while (true) {
+        if (!exclusiveOwners.has(path) && (sharedCounts.get(path) ?? 0) === 0) {
+          exclusiveOwners.set(path, 1);
+          break;
+        }
+        await new Promise<void>((resolve) => waiters.push(resolve));
+      }
       return async () => {
         exclusiveOwners.delete(path);
         notify();
       };
     },
     async shared(path: string): Promise<() => Promise<void>> {
-      await waitUntil(() => !exclusiveOwners.has(path));
-      sharedCounts.set(path, (sharedCounts.get(path) ?? 0) + 1);
+      while (true) {
+        if (!exclusiveOwners.has(path)) {
+          sharedCounts.set(path, (sharedCounts.get(path) ?? 0) + 1);
+          break;
+        }
+        await new Promise<void>((resolve) => waiters.push(resolve));
+      }
       return async () => {
         const n = (sharedCounts.get(path) ?? 1) - 1;
         if (n <= 0) sharedCounts.delete(path);

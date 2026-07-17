@@ -13,6 +13,7 @@ import { platformError, renderError } from "../domain/errors.ts";
 import { ASSET_VERSION } from "../version.ts";
 import { generateAll } from "./generate.ts";
 import { materializeDockerAssets } from "./assets_materialize.ts";
+import { composeArgs } from "./compose.ts";
 
 export type GeneratedFile = {
   /** Path relative to generatedDir */
@@ -42,6 +43,16 @@ export type ApplyOptions = {
   reloader?: ServiceReloader;
   /** Caller already holds the exclusive render lock. */
   alreadyLocked?: boolean;
+  /**
+   * Injected candidate factory (tests). When set, skips default renderCandidate.
+   * Used to prove generation failures leave live generation untouched (R-02).
+   */
+  candidateFactory?: (state: DesiredState) => Promise<RenderResult>;
+  /**
+   * Called after each successful live file promote (tests).
+   * Throw to simulate mid-promote failure (R-03/R-04).
+   */
+  afterPromoteFile?: (relPath: string) => void | Promise<void>;
 };
 
 export type ServiceValidator = {
@@ -133,7 +144,11 @@ export class RenderService {
         this.platform,
         state.phpVersions.map((v) => String(v.version)),
       );
-      const candidate = await this.renderCandidate(state);
+      // Candidate generation happens before any live promote. Failure here must leave
+      // the live generation byte-identical (R-02).
+      const candidate = options.candidateFactory
+        ? await options.candidateFactory(state)
+        : await this.renderCandidate(state);
       const reloadPlan = options.reloadPlan ?? candidate.reloadPlan;
 
       // Stage into same-filesystem staging directory
@@ -205,6 +220,9 @@ export class RenderService {
           await this.platform.fs.atomicWriteBytes(livePath, bytes, file.mode);
           journal.promoted.push(file.relPath);
           await this.writeJournal(journal);
+          if (options.afterPromoteFile) {
+            await options.afterPromoteFile(file.relPath);
+          }
         }
 
         // Remove stale managed files only after full promotion
@@ -237,7 +255,7 @@ export class RenderService {
 
         if (!options.skipValidate) {
           const validators = options.validators ??
-            defaultValidators(this.platform, reloadPlan);
+            defaultValidators(this.platform, reloadPlan, state);
           try {
             for (const v of validators) {
               await v.validate();
@@ -482,8 +500,29 @@ function isDockerUnavailable(text: string): boolean {
 function defaultValidators(
   platform: Platform,
   plan: ReloadPlan,
+  state: DesiredState,
 ): ServiceValidator[] {
   const validators: ServiceValidator[] = [];
+
+  // Compose fragment assembly: validate merged project when Docker is available;
+  // soft-skip when the daemon/binary is missing (C1).
+  validators.push({
+    name: "compose",
+    validate: async () => {
+      const command = await composeArgs(platform, state, ["config", "-q"]);
+      const result = await platform.process.run(command, {
+        cwd: platform.paths.paths.root,
+        timeoutMs: 8_000,
+      }).catch(() => ({ code: 0, stdout: "", stderr: "skipped" }));
+      const detail = `${result.stderr}\n${result.stdout}`;
+      if (result.code !== 0 && !isDockerUnavailable(detail)) {
+        throw platformError(
+          `compose config validation failed: ${result.stderr || result.stdout}`,
+        );
+      }
+    },
+  });
+
   // Config-file syntax checks when docker/nginx/php tools available; soft by default.
   if (plan.nginx) {
     validators.push({

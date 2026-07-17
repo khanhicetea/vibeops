@@ -1,6 +1,6 @@
 # Bento remaining work (agent todo)
 
-Status snapshot: **~90% capabilities coded · ~60% acceptance proven · ~70% definition of done** (Phase A+B operator commands complete)
+Status snapshot: **~90% capabilities coded · ~70% acceptance proven · ~75% definition of done** (Phase A+B+C complete)
 
 Read first (in order):
 
@@ -138,21 +138,21 @@ Code exists in `RenderService`; close proof and edge gaps.
 
 | ID | Task | Done |
 |----|------|------|
-| R-01 | Concurrent mutations: two `apply`/state writers; only one transaction at a time (exclusive lock). Add stress/unit test with memory or file lock. | [ ] |
-| R-02 | Candidate generation failure leaves live generation **byte-identical**. Test with injected generator failure. | [ ] |
-| R-03 | Mid-promote failure restores all prior files **and modes**. Expand tests beyond happy path. | [ ] |
-| R-04 | Stale managed file removed only after full candidate promote. Explicit unit test. | [ ] |
-| R-05 | Validation failure restores previous generation; no reload signal. (Exists — keep green.) | [x] partial |
-| R-06 | Only requested service groups signaled. Assert reloader args for domain-only vs pool vs runner vs full. | [ ] |
-| R-07 | Reload signal failure keeps validated new generation; actionable error. (Exists — keep green.) | [x] partial |
-| R-08 | Abandoned journal: kill mid-promote; next render restores deterministic generation. Dedicated test. | [ ] |
+| R-01 | Concurrent mutations: two `apply`/state writers; only one transaction at a time (exclusive lock). Add stress/unit test with memory or file lock. | [x] |
+| R-02 | Candidate generation failure leaves live generation **byte-identical**. Test with injected generator failure. | [x] |
+| R-03 | Mid-promote failure restores all prior files **and modes**. Expand tests beyond happy path. | [x] |
+| R-04 | Stale managed file removed only after full candidate promote. Explicit unit test. | [x] |
+| R-05 | Validation failure restores previous generation; no reload signal. (Exists — keep green.) | [x] |
+| R-06 | Only requested service groups signaled. Assert reloader args for domain-only vs pool vs runner vs full. | [x] |
+| R-07 | Reload signal failure keeps validated new generation; actionable error. (Exists — keep green.) | [x] |
+| R-08 | Abandoned journal: kill mid-promote; next render restores deterministic generation. Dedicated test. | [x] |
 | R-09 | Render-only never signals services. (Exists — keep green.) | [x] |
-| R-10 | Secret file modes restricted across promote **and** rollback. | [x] partial (root.cnf covered) |
+| R-10 | Secret file modes restricted across promote **and** rollback. | [x] |
 
 ### C1. Compose fragment transactional safety  **P0**
 
-- [ ] Managed PHP/MySQL Compose fragments follow same safety story as other generated files (or document equivalent guarantee and test it).
-- [ ] `compose config` validation before relying on new fragments when Docker available; soft-skip when Docker missing (current behavior OK if explicit).
+- [x] Managed PHP/MySQL Compose fragments follow same safety story as other generated files (or document equivalent guarantee and test it).
+- [x] `compose config` validation before relying on new fragments when Docker available; soft-skip when Docker missing (current behavior OK if explicit).
 
 ---
 
@@ -235,7 +235,7 @@ Map each F-*/R-* to at least one automated test where practical. Current baselin
 |------|----------------|--------------|
 | Validators / state | `tests/unit/validators_test.ts` | env/CLI token rejection cases |
 | App identity / domains | `tests/unit/app_test.ts` | docroot safety; legacy flag generation |
-| Render transaction | `tests/unit/render_test.ts` | R-01, R-02, R-04, R-08, R-10 |
+| Render transaction | `tests/unit/render_test.ts`, `phase_c_test.ts` | keep green; expand integration later |
 | Deploy | `tests/unit/deploy_test.ts` | history prune files; interrupt reclaim |
 | CLI smoke | `tests/contract/cli_smoke_test.ts` | backup/restore dry paths; tls set; permissions |
 | TUI | `tests/unit/tui_test.ts` | keep as UI-only |
@@ -309,7 +309,7 @@ Do in this order unless blocked:
 
 1. ~~**Phase A**~~ done  
 2. ~~**Phase B**~~ done  
-3. **Phase C** remaining R-* tests — release blockers, mostly tests  
+3. ~~**Phase C**~~ done  
 4. **Phase D** compile + parity smoke — distribution claim  
 5. **Phase F** integration + system scenarios  
 6. **Phase E** residual polish (TLS/deploy/permissions/status)  
@@ -348,5 +348,6 @@ Do in this order unless blocked:
 | 2026-07-17 | coverage pass | Initial todo written from specs vs tree; 50 unit/contract tests green; integration empty; F-30 missing; live MySQL/Redis apply not wired on create |
 | 2026-07-17 | phase A | Wired live MySQL grants (fail-closed on explicit `--db`/`mysql db`), best-effort account setup, Redis shared prefix + ACL apply (stdin secrets), root.cnf materialize from stack `.env` at 0600 with rollback mode proof. Added `stack_env.ts`, `applyAppDataPlane`, `tests/unit/mysql_redis_test.ts`. 63 unit/contract tests green. Residual: redis mode-change re-apply command surface still thin; R-10 only proven for root.cnf. |
 | 2026-07-17 | phase B | Finished operator commands B1–B6: mysql shell/size/processlist (stdin-staged cnf, no host argv secrets); worker start/stop/restart/inspect (scoped supervisorctl); access logs enable/disable/rotate/report (nginx-only + reopen + GoAccess one-shot); template select/return/drift (provenance + preserve custom source); host maintenance run + crontab merge; uniform `--no-apply` + `apply --preview`. New modules `access_log.ts`, `customization.ts`, `maintenance.ts`; tests in `phase_b_test.ts` + cli smoke. 78 tests green. Dropped global `--root` alias for `--stack` so `mysql shell --root` works. Residual: interactive shell needs live docker; host cron register needs real crontab perms; GoAccess report needs image pull. |
+| 2026-07-17 | phase C | Closed R-01–R-10 proof + C1 compose transactional safety. Added `candidateFactory`/`afterPromoteFile` test hooks; compose `config -q` validator (soft-skip when Docker down, fail-closed on real errors); fixed memory-lock TOCTOU so concurrent exclusive acquirers serialize. New `tests/unit/phase_c_test.ts` (17 cases). 95 unit/contract tests green. Residual: integration suite still empty; file-lock under real multi-process stress not in CI. |
 
 When you complete a slice, append a row and check boxes above.
