@@ -142,11 +142,12 @@ Bento must manage one durable MySQL service and named volume per selected MySQL 
 
 The product must not create the same app identity across multiple MySQL services. Moving an app to another MySQL version is an explicit migration outside ordinary provisioning.
 
+The MySQL root password is generated once when the stack environment is initialized. An app user's password is generated once during initial app provisioning. Reconciliation and later database grants must not alter an existing account's password. Bento does not provide password rotation; the operator is responsible for manually updating MySQL, Bento's state and credential material, and dependent applications.
+
 Required MySQL operations are:
 
 - add and list managed versions;
 - create and list app databases;
-- rotate an app database password;
 - open root or app-authenticated database shells without exposing passwords in host arguments;
 - show database sizes and active processes;
 - create logical backups for one database, one app, or all user databases;
@@ -295,7 +296,7 @@ The operator creates compressed logical dumps, copies them off-host, and later r
 - One container per app or hard container-level isolation between apps sharing a PHP version.
 - General-purpose hosting for arbitrary language runtimes; non-PHP services are supported only through reverse proxying.
 - Automatic source-control checkout strategy, zero-downtime release directories, or application-specific rollback logic.
-- Automatic app teardown, proxy teardown, database migration between MySQL versions, MySQL service removal, or volume destruction.
+- Automatic app teardown, proxy teardown, database migration between MySQL versions, MySQL service removal, volume destruction, or MySQL password rotation.
 - Automatic off-host backup replication.
 - Per-app CPU/memory quotas inside a shared PHP version container.
 - Real-time hosted analytics; access-log analysis is ad hoc.

@@ -14,7 +14,7 @@ import {
   retainJobs,
 } from "../../src/services/deploy.ts";
 import { generateAll } from "../../src/services/generate.ts";
-import { createAppDatabase, rotateAppPassword } from "../../src/services/mysql.ts";
+import { createAppDatabase } from "../../src/services/mysql.ts";
 import { aclRules, redisConnectionEnv } from "../../src/services/redis.ts";
 import { addCronJob } from "../../src/services/cron.ts";
 import { addWorker, workerProgramName } from "../../src/services/worker.ts";
@@ -209,7 +209,7 @@ Deno.test("F1 legacy flag generation allows non-index PHP; front-controller does
 
 // --- F-09 / F-10 / F-11 matrix anchors -------------------------------------
 
-Deno.test("F1 MySQL namespace refuse + password rotate isolation", async () => {
+Deno.test("F1 MySQL namespace refuse + one-time app passwords", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-f1-" });
   try {
     const platform = testPlatform(root);
@@ -236,10 +236,12 @@ Deno.test("F1 MySQL namespace refuse + password rotate isolation", async () => {
       "namespace",
     );
 
-    const rotated = rotateAppPassword(platform, state, "alpha");
-    assertEquals(rotated.password !== pwA, true);
-    assertEquals(rotated.state.apps["beta"]!.mysqlPassword, pwB);
-    assertEquals(rotated.state.apps["alpha"]!.mysqlPassword, rotated.password);
+    const updated = provisionApp(platform, state, {
+      slug: "alpha",
+      domain: "a.test",
+    });
+    assertEquals(updated.app.mysqlPassword, pwA);
+    assertEquals(updated.state.apps["beta"]!.mysqlPassword, pwB);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

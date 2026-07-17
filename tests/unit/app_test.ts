@@ -93,6 +93,7 @@ Deno.test("main domain change retains identity", async () => {
     });
     assertEquals(second.app.uid, first.app.uid);
     assertEquals(second.app.home, first.app.home);
+    assertEquals(second.app.mysqlPassword, first.app.mysqlPassword);
     assertEquals(second.state.domains["old.example"], undefined);
     assertEquals(second.state.domains["new.example"]?.kind, "app");
   } finally {

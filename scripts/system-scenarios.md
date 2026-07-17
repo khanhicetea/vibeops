@@ -42,7 +42,7 @@ Pin **Deno 2.9.x** (see `src/version.ts` `DENO_TARGET_VERSION` and README).
 | 3  | Second PHP version; migrate one app end-to-end                 | F2 PHP add/move; unit F-06/F-07                                                     | [ ]      |
 | 4  | Front-controller + legacy + reverse-proxy sites                | F2 routing + proxy; unit E2/F-04                                                    | [ ]      |
 | 5  | Boot TLS → real cert mode without disturbing PHP/workers       | F2 TLS external; unit E1; nginx-only plan                                           | [ ]      |
-| 6  | DBs for two apps; refuse cross-MySQL; rotate one password      | F2 MySQL isolation; unit F1 rotate; Phase A live grants                             | [ ]      |
+| 6  | DBs for two apps; refuse cross-MySQL; passwords remain stable  | F2 MySQL isolation; unit F1 stability; Phase A live grants                          | [ ]      |
 | 7  | Redis shared + ACL cross-app denial                            | F2 redis materialize; unit F-11 ACL rules                                           | [ ]      |
 | 8  | Schedules with locks/timeouts; independent worker restart      | F2 cron/worker; unit Phase B worker control                                         | [ ]      |
 | 9  | Deploy valid/invalid/burst/FIFO/skip/fail/timeout; OPcache     | unit deploy_test + F1 prune/interrupt; `test-stack` live webhook→drain→hook→OPcache | [ ]      |

@@ -340,10 +340,10 @@ Deno.test("F2 TLS mode switch boot → external (files) nginx-only plan", async 
 });
 
 // ---------------------------------------------------------------------------
-// F2.6 MySQL create/refuse + password rotate isolation
+// F2.6 MySQL create/refuse + one-time app passwords
 // ---------------------------------------------------------------------------
 
-Deno.test("F2 MySQL namespace refuse + password rotate isolation (control plane)", async () => {
+Deno.test("F2 MySQL namespace refuse + stable app passwords (control plane)", async () => {
   await withStack(async (h) => {
     await bootstrapStack(h);
     // Without --db (MySQL may be down)
@@ -368,19 +368,25 @@ Deno.test("F2 MySQL namespace refuse + password rotate isolation (control plane)
       );
     }
 
-    // Namespace refuse for cross-app name via CLI (validation before SQL)
-    // Plant a recorded db so rotate path is meaningful
+    // App passwords are distinct and remain stable during reconciliation.
     const statePath = join(h.stack, "state.json");
     const state = JSON.parse(await readText(statePath));
     const pwAlpha = state.apps.alpha.mysqlPassword;
     const pwBeta = state.apps.beta.mysqlPassword;
     assertEquals(pwAlpha !== pwBeta, true);
 
-    // Password rotate updates only one app in state
-    assertEquals(await h.run("mysql", "password", "alpha"), 0);
+    assertEquals(
+      await h.run("app", "create", "alpha", "--domain", "a.test", "--no-apply"),
+      0,
+    );
     const after = JSON.parse(await readText(statePath));
-    assertEquals(after.apps.alpha.mysqlPassword !== pwAlpha, true);
+    assertEquals(after.apps.alpha.mysqlPassword, pwAlpha);
     assertEquals(after.apps.beta.mysqlPassword, pwBeta);
+
+    // Password rotation is deliberately not a Bento command.
+    assertEquals((await h.run("mysql", "password", "alpha")) !== 0, true);
+    const afterUnsupportedCommand = JSON.parse(await readText(statePath));
+    assertEquals(afterUnsupportedCommand.apps.alpha.mysqlPassword, pwAlpha);
 
     // Cross-service: app is locked to its mysqlService; adding another MySQL version
     // must not reassign existing apps.

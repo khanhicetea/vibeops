@@ -54,7 +54,24 @@ Deno.test("parseDotEnv reads MYSQL_ROOT_PASSWORD", () => {
   assertEquals(env.REDIS_PASSWORD, "r1");
 });
 
-Deno.test("grantSql embeds password as SQL literal and escapes wildcards", () => {
+Deno.test("stack init generates the MySQL root password only once", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-mysql-init-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    await store.init();
+    const initialEnv = await platform.fs.readText(platform.paths.paths.envFile);
+
+    await store.init(true);
+    const forcedInitEnv = await platform.fs.readText(platform.paths.paths.envFile);
+
+    assertEquals(forcedInitEnv, initialEnv);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("grantSql sets the password only when creating the app user", () => {
   const state = createEmptyState("2026-07-16T12:00:00.000Z");
   const platform = testPlatform("/tmp/unused");
   const { app } = provisionApp(platform, state, {
@@ -66,6 +83,7 @@ Deno.test("grantSql embeds password as SQL literal and escapes wildcards", () =>
   assertEquals(sql.includes("CREATE DATABASE IF NOT EXISTS `myapp`"), true);
   // mysqlStringLiteral: \ -> \\ then ' -> \'
   assertEquals(sql.includes("IDENTIFIED BY 'p\\'ass\\\\word'"), true);
+  assertEquals(sql.includes("ALTER USER"), false);
   // namespace grant pattern
   assertEquals(sql.includes("`myapp\\_%`"), true);
   // raw unescaped password fragment must not appear as a SQL string close
@@ -81,6 +99,7 @@ Deno.test("accountSetupSql does not create a database", () => {
   const sql = accountSetupSql(app, "secret");
   assertEquals(sql.includes("CREATE DATABASE"), false);
   assertEquals(sql.includes("CREATE USER"), true);
+  assertEquals(sql.includes("ALTER USER"), false);
 });
 
 Deno.test("execMysqlSql keeps password off host argv (stdin only)", async () => {

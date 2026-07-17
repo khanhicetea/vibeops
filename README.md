@@ -123,7 +123,7 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | Live proof   | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron + worker, permissions, HTTP boot TLS, signed webhook → runner hook → OPcache; ACME skipped |
 | Apps         | `app create\|list\|show\|update\|shell` (delete/remove blocked)                                                                                                                                                                  |
 | PHP          | `php add\|remove\|list`                                                                                                                                                                                                          |
-| MySQL        | `mysql add\|list\|db\|password` (version removal blocked)                                                                                                                                                                        |
+| MySQL        | `mysql add\|list\|db\|shell\|size\|processlist` (version removal blocked; password rotation unsupported)                                                                                                         |
 | Proxy        | `proxy create\|list` (delete/remove blocked)                                                                                                                                                                                     |
 | TLS          | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below)                                                                                                                                                       |
 | Background   | `cron …`, `worker …`                                                                                                                                                                                                             |
@@ -170,6 +170,7 @@ Bento intentionally does **not** provide:
 - one container per app (apps share PHP version containers; isolation is identity-based)
 - automatic app or proxy teardown (`app delete` / `proxy delete` are blocked)
 - automated MySQL version or volume deletion (`mysql remove` and `compose down -v` are blocked)
+- MySQL password rotation (the operator must update MySQL and dependent credentials manually)
 - automatic off-host backup replication (logical dumps stay under the stack root)
 - a hard-coded Git deploy workflow (webhook orchestration + operator `deploy.sh` only)
 - a Python runtime dependency
@@ -202,6 +203,8 @@ specs/                    # product specifications
 
 - Only Nginx is public in the base topology.
 - Database and webhook secrets are not printed in ordinary status output.
+- The MySQL root password is generated once when `init` first creates the stack `.env`; each app password is generated once during initial app provisioning.
+- Bento does not rotate MySQL passwords or reset existing MySQL accounts during reconciliation. Operators must coordinate any password change manually, including MySQL, Bento state/credential material, and dependent applications.
 - MySQL passwords are not passed on host process argv for admin SQL.
 - Deploy HMAC secrets live in desired state / FastCGI params, not app-writable secret files.
 - Deno permissions are explicit in `deno.json` tasks (not `-A` by default).

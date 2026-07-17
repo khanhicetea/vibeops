@@ -25,7 +25,6 @@ import {
 } from "../services/php.ts";
 import {
   addMysqlVersion,
-  applyRotatedMysqlPassword,
   assertShellPlanSecretsOffArgv,
   buildMysqlShellPlan,
   createAppDatabaseLive,
@@ -34,7 +33,6 @@ import {
   queryProcesslist,
   removeMysqlVersion,
   resolveMysqlServices,
-  rotateAppPassword,
   runBackup,
   runRestore,
 } from "../services/mysql.ts";
@@ -487,12 +485,6 @@ function buildParser(state: RunState) {
           bind(state, cmdMysqlDb),
         )
         .command(
-          "password <app>",
-          "Rotate app MySQL password (printed once)",
-          (y2: YargsBuilder) => y2.positional("app", { type: "string", demandOption: true }),
-          bind(state, cmdMysqlPassword),
-        )
-        .command(
           "shell",
           "Open MySQL shell (password staged via stdin; never host argv)",
           (y2: YargsBuilder) =>
@@ -546,10 +538,7 @@ function buildParser(state: RunState) {
             }),
           bind(state, cmdMysqlProcesslist),
         )
-        .demandCommand(
-          1,
-          "Specify a mysql subcommand: add|list|db|password|shell|size|processlist",
-        )
+        .demandCommand(1, "Specify a mysql subcommand: add|list|db|shell|size|processlist")
         .recommendCommands())
     .command("proxy", "Reverse-proxy sites", (y: YargsBuilder) =>
       y
@@ -1494,39 +1483,6 @@ async function cmdMysqlDb(argv: AnyArgv, ctx: CliContext): Promise<number> {
     return next;
   });
   ctx.log.info(`created database ${dbName} for app ${slug}`);
-  return 0;
-}
-
-async function cmdMysqlPassword(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) {
-    ctx.log.error("usage: bento mysql password <app>");
-    return 2;
-  }
-  const result = await ctx.store.withExclusive(async (state) => {
-    const rotated = rotateAppPassword(ctx.platform, state, slug);
-    const app = rotated.state.apps[slug]!;
-    const rootPassword = await requireMysqlRootPassword(ctx.platform).catch(() => undefined);
-    const applied = await applyRotatedMysqlPassword(
-      ctx.platform,
-      app,
-      rootPassword,
-    );
-    const redisShared = await loadRedisPassword(ctx.platform);
-    await materializeAppHome(ctx.platform, app, {
-      recursivePerms: false,
-      redisSharedPassword: redisShared,
-    });
-    await ctx.store.save(rotated.state);
-    return { ...rotated, applied };
-  });
-  // Password is intentionally printed once for the operator (not status/list).
-  ctx.log.out(result.password);
-  ctx.log.info(
-    result.applied
-      ? `rotated MySQL password for ${slug} (shown once above; applied to live MySQL)`
-      : `rotated MySQL password for ${slug} (shown once above; live MySQL apply deferred — retry when MySQL is up)`,
-  );
   return 0;
 }
 

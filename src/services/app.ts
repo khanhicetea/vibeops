@@ -155,6 +155,7 @@ export function provisionApp(
   const homeContainer = containerAppHome(slug);
   const now = platform.clock.nowIso();
 
+  // Generate once for a new app; all later reconciliation preserves it.
   const mysqlPassword = existing?.mysqlPassword ?? platform.random.hex(18);
   const redisPassword = existing?.redis.password ??
     (state.defaults.redisMode === "shared" ? undefined : platform.random.hex(18));

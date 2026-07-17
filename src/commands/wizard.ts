@@ -22,14 +22,12 @@ import {
 } from "../services/php.ts";
 import {
   addMysqlVersion,
-  applyRotatedMysqlPassword,
   buildMysqlShellPlan,
   createAppDatabaseLive,
   listMysqlVersions,
   queryDatabaseSizes,
   queryProcesslist,
   resolveMysqlServices,
-  rotateAppPassword,
   runBackup,
   runRestore,
 } from "../services/mysql.ts";
@@ -97,7 +95,7 @@ export async function runWizard(ctx: CliContext): Promise<number> {
         { label: "Bootstrap", value: "bootstrap", hint: "init · render · apply" },
         { label: "Applications", value: "apps", hint: "create · list · show · shell" },
         { label: "PHP versions", value: "php", hint: "add · remove · list" },
-        { label: "MySQL", value: "mysql", hint: "versions · shell · size · password" },
+        { label: "MySQL", value: "mysql", hint: "versions · databases · shell · size" },
         { label: "Reverse proxies", value: "proxy", hint: "create · list" },
         { label: "Deploy webhooks", value: "deploy", hint: "enable · rotate · drain" },
         { label: "Cron jobs", value: "cron", hint: "add · remove · list" },
@@ -650,7 +648,6 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
         disabled: true,
       },
       { label: "Record database for app", value: "db" },
-      { label: "Rotate app password", value: "password", hint: "printed once" },
       { label: "Open shell (root)", value: "shell-root", hint: "scriptable: mysql shell --root" },
       { label: "Open shell (app)", value: "shell-app", hint: "scriptable: mysql shell --app" },
       { label: "Database sizes", value: "size" },
@@ -708,43 +705,6 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
           return next;
         });
         ui.success(`Created database ${dbName}`, `app=${slug}`);
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    } else if (action === "password") {
-      const slug = await pickApp(ui, ctx);
-      if (!slug) continue;
-      ui.warn("Password will be printed once below");
-      if (!(await ui.confirm(`Rotate MySQL password for ${slug}?`))) continue;
-      try {
-        const result = await ctx.store.withExclusive(async (state) => {
-          const rotated = rotateAppPassword(ctx.platform, state, slug);
-          const app = rotated.state.apps[slug]!;
-          const rootPassword = await requireMysqlRootPassword(ctx.platform).catch(
-            () => undefined,
-          );
-          const applied = await applyRotatedMysqlPassword(
-            ctx.platform,
-            app,
-            rootPassword,
-          );
-          const redisShared = await loadRedisPassword(ctx.platform);
-          await materializeAppHome(ctx.platform, app, {
-            recursivePerms: false,
-            redisSharedPassword: redisShared,
-          });
-          await ctx.store.save(rotated.state);
-          return { ...rotated, applied };
-        });
-        ui.success(
-          result.applied
-            ? "Password rotated and applied to live MySQL (copy now)"
-            : "Password rotated in state (live MySQL apply deferred; copy now)",
-        );
-        ui.blank();
-        ui.message(result.password);
-        ui.blank();
       } catch (err) {
         handleError(ui, err);
       }

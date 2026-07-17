@@ -252,7 +252,7 @@ The transaction covers generated service files and sensitive generated MySQL opt
 | Domain, proxy, TLS, access-log toggle, vhost customization | Nginx only |
 | App identity, PHP version/profile, pool customization | PHP-FPM and, when applicable, Nginx |
 | Cron, deploy drain, worker definition | Matching PHP runner only |
-| Database creation, password rotation, backup/restore | No web/runtime reload |
+| Database creation, backup/restore | No web/runtime reload |
 | Full apply | Nginx, all relevant PHP-FPM services, all relevant runners |
 
 Stopped services are not treated as fatal solely because they cannot be signaled; generated config must be ready for their next startup. Running services must be validated before reload.

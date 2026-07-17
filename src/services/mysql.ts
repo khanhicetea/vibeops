@@ -84,7 +84,7 @@ export function createAppDatabase(
   };
 }
 
-/** SQL to ensure app user and grants for a specific database. */
+/** SQL to ensure app user and grants without changing an existing user's password. */
 export function grantSql(app: AppState, dbName: string, password: string): string {
   const user = mysqlIdent(app.mysqlUser);
   const db = mysqlIdent(dbName);
@@ -93,14 +93,13 @@ export function grantSql(app: AppState, dbName: string, password: string): strin
   return [
     `CREATE DATABASE IF NOT EXISTS ${db};`,
     `CREATE USER IF NOT EXISTS ${user}@'%' IDENTIFIED BY ${pw};`,
-    `ALTER USER ${user}@'%' IDENTIFIED BY ${pw};`,
     `GRANT ALL PRIVILEGES ON ${db}.* TO ${user}@'%';`,
     `GRANT ALL PRIVILEGES ON \`${like}\\_%\`.* TO ${user}@'%';`,
     `FLUSH PRIVILEGES;`,
   ].join("\n");
 }
 
-/** Best-effort account setup without recording a database. */
+/** Best-effort account setup without recording a database or resetting its password. */
 export function accountSetupSql(app: AppState, password: string): string {
   const user = mysqlIdent(app.mysqlUser);
   const slugDb = mysqlIdent(app.slug);
@@ -108,19 +107,8 @@ export function accountSetupSql(app: AppState, password: string): string {
   const pw = mysqlStringLiteral(password);
   return [
     `CREATE USER IF NOT EXISTS ${user}@'%' IDENTIFIED BY ${pw};`,
-    `ALTER USER ${user}@'%' IDENTIFIED BY ${pw};`,
     `GRANT ALL PRIVILEGES ON ${slugDb}.* TO ${user}@'%';`,
     `GRANT ALL PRIVILEGES ON \`${like}\\_%\`.* TO ${user}@'%';`,
-    `FLUSH PRIVILEGES;`,
-  ].join("\n");
-}
-
-/** SQL to rotate app user password only. */
-export function rotatePasswordSql(app: AppState, password: string): string {
-  const user = mysqlIdent(app.mysqlUser);
-  const pw = mysqlStringLiteral(password);
-  return [
-    `ALTER USER ${user}@'%' IDENTIFIED BY ${pw};`,
     `FLUSH PRIVILEGES;`,
   ].join("\n");
 }
@@ -523,46 +511,6 @@ export async function runRestore(
       }`,
     );
   }
-}
-
-export function rotateAppPassword(
-  platform: Platform,
-  state: DesiredState,
-  slug: string,
-): { state: DesiredState; password: string } {
-  const app = state.apps[slug];
-  if (!app) throw notFoundError(`app not found: ${slug}`);
-  const password = platform.random.hex(18);
-  const nextApp: AppState = {
-    ...app,
-    mysqlPassword: password,
-    updatedAt: platform.clock.nowIso(),
-  };
-  return {
-    state: {
-      ...state,
-      apps: { ...state.apps, [slug]: nextApp },
-      updatedAt: nextApp.updatedAt,
-    },
-    password,
-  };
-}
-
-/** Apply a rotated password to a live MySQL service when reachable. */
-export async function applyRotatedMysqlPassword(
-  platform: Platform,
-  app: AppState,
-  rootPassword: string | undefined,
-): Promise<boolean> {
-  if (!rootPassword) return false;
-  if (!(await isMysqlReachable(platform, app.mysqlService))) return false;
-  const result = await execMysqlSql(
-    platform,
-    app.mysqlService,
-    rotatePasswordSql(app, app.mysqlPassword),
-    rootPassword,
-  );
-  return result.code === 0;
 }
 
 function shellQuote(s: string): string {

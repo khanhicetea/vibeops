@@ -82,7 +82,7 @@ P1 items are current features, not speculative roadmap work. The tiers describe 
 | F-07 | PHP versions | Adding a version creates all three roles. Removing a default, in-use, or final version is refused. |
 | F-08 | Capacity | Apps select named FPM profiles; status warns when aggregate per-version pool maxima exceed the global process cap. |
 | F-09 | MySQL ownership | An app can create only its namespaced databases on its single selected MySQL service. Cross-service creation is refused before SQL runs. |
-| F-10 | Secret handling | Root/app database passwords do not appear in host process arguments or ordinary CLI output; credential files have restricted modes. |
+| F-10 | Secret handling | The root password is generated once at stack initialization and each app password once at initial provisioning. Reconciliation does not alter existing MySQL account passwords, and no rotation command is provided. Passwords do not appear in host process arguments or ordinary CLI output; credential files have restricted modes. |
 | F-11 | Redis modes | Shared mode emits shared auth plus an app prefix. ACL mode creates a unique app user restricted to that prefix/channel namespace. |
 | F-12 | TLS | Every new site can start with boot TLS, switch to ACME or external files, and enable HTTPS redirect only for a real-certificate mode. |
 | F-13 | Reverse proxy | A domain can proxy HTTP traffic to a host-reachable upstream and participate in normal TLS/domain rules. |
@@ -227,7 +227,7 @@ Before declaring the replacement complete, run these end-to-end scenarios on a d
 3. Add a second PHP version, migrate one app intentionally, and prove its shell, FPM, cron, worker, and deploy path all follow it.
 4. Serve one front-controller app, one legacy app, and one reverse-proxy site with globally unique domains.
 5. Transition a site from boot TLS to a real certificate mode without disrupting PHP or workers.
-6. Create databases for two apps, refuse a cross-MySQL-service operation, rotate one password, and prove the other app is unaffected.
+6. Create databases for two apps, refuse a cross-MySQL-service operation, and prove each generated password remains stable through reconciliation.
 7. Exercise Redis shared mode and ACL mode, confirming prefix behavior and denied cross-app access in ACL mode.
 8. Run schedules with locks/timeouts and workers with independent restart behavior.
 9. Execute valid, invalid, burst, FIFO, skipped, failed, and timed-out deploy requests; inspect history/logs and verify OPcache cleanup is attempted.
