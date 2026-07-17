@@ -4,7 +4,7 @@
 
 import type { DesiredState, ProxySite, TlsMode } from "../domain/state.ts";
 import { asDomainName, asProxySiteName } from "../domain/types.ts";
-import { conflictError, notFoundError, validationError } from "../domain/errors.ts";
+import { conflictError, notFoundError, safetyError, validationError } from "../domain/errors.ts";
 import { parseAppSlug, parseDomainName, unwrap } from "../schemas/validators.ts";
 import { type ReloadPlan, reloadPlanForDomainChange } from "../domain/reload.ts";
 
@@ -75,6 +75,16 @@ export function getProxyOrThrow(state: DesiredState, name: string): ProxySite {
   const p = state.proxies[name];
   if (!p) throw notFoundError(`proxy site not found: ${name}`);
   return p;
+}
+
+/**
+ * Automatic proxy teardown is an explicit non-goal (product §8 / Phase G).
+ */
+export function deleteProxy(_state: DesiredState, _name: string): never {
+  throw safetyError(
+    "automatic proxy teardown is unsupported",
+    "Proxy site deletion is outside the product contract. Adjust routing manually only with an operator-owned procedure outside Bento if required.",
+  );
 }
 
 export function setProxyTls(

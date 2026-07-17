@@ -20,7 +20,7 @@ import {
   type FpmProfile,
   type PhpVersion,
 } from "../domain/types.ts";
-import { conflictError, notFoundError, validationError } from "../domain/errors.ts";
+import { conflictError, notFoundError, safetyError, validationError } from "../domain/errors.ts";
 import {
   parseAppSlug,
   parseDomainName,
@@ -441,6 +441,17 @@ export function getAppOrThrow(state: DesiredState, slug: string): AppState {
   const app = state.apps[slug];
   if (!app) throw notFoundError(`app not found: ${slug}`);
   return app;
+}
+
+/**
+ * First-class app teardown is an explicit non-goal (product §8 / Phase G).
+ * Homes, credentials, and domains must not be destroyed through the control plane.
+ */
+export function deleteApp(_state: DesiredState, _slug: string): never {
+  throw safetyError(
+    "automatic app teardown is unsupported",
+    "First-class app deletion is outside the product contract. Remove durable data only with an explicit, operator-owned procedure outside Bento.",
+  );
 }
 
 export function capacityWarnings(state: DesiredState): string[] {

@@ -81,6 +81,10 @@ Deno.test("cli init render status app create", async () => {
     // mysql remove blocked
     assertEquals((await runCli([...base, "mysql", "remove", "8.4"])) !== 0, true);
 
+    // Phase G: app/proxy teardown blocked
+    assertEquals((await runCli([...base, "app", "delete", "demo"])) !== 0, true);
+    assertEquals((await runCli([...base, "app", "remove", "demo"])) !== 0, true);
+
     // proxy
     assertEquals(
       await runCli([
@@ -95,6 +99,10 @@ Deno.test("cli init render status app create", async () => {
       ]),
       0,
     );
+    assertEquals((await runCli([...base, "proxy", "delete", "api"])) !== 0, true);
+    assertEquals((await runCli([...base, "proxy", "remove", "api"])) !== 0, true);
+    // proxy still listed after blocked delete
+    assertEquals(await runCli([...base, "proxy", "list"]), 0);
 
     // cron + worker
     assertEquals(

@@ -1,6 +1,6 @@
 # Bento remaining work (agent todo)
 
-Status snapshot: **~98% capabilities coded · ~96% acceptance proven · ~97% definition of done** (Phase A+B+C+D+E+F complete; host scenarios residual)
+Status snapshot: **~99% capabilities coded · ~97% acceptance proven · ~98% definition of done** (Phase A+B+C+D+E+F+G complete; host scenarios residual)
 
 Read first (in order):
 
@@ -288,18 +288,20 @@ Track the fourteen scenarios from contract §8. Automated proxies exist; mark **
 
 ---
 
-## Phase G — Explicit non-goals (do **not** implement)
+## Phase G — Explicit non-goals (do **not** implement)  **P0** · product §8
 
-Agents must **not** spend time on:
+Agents must **not** spend time implementing these. Phase G closes by **locking** the refusals and proving architectural absence:
 
-- Multi-host / k8s / remote control plane / browser admin UI
-- One container per app
-- Automatic app or proxy teardown
-- Automated MySQL version/volume deletion
-- Automatic off-host backup replication
-- Hard-coded Git deploy workflow (orchestration only)
-- Python runtime dependency or Python plugin compatibility as a requirement
-- Per-app CPU/memory quotas inside shared PHP containers
+- [x] Multi-host / k8s / remote control plane / browser admin UI — out of scope; not present
+- [x] One container per app — shared PHP version FPM/runner/cli only (`phase_g_test.ts`)
+- [x] Automatic app or proxy teardown — `deleteApp` / `deleteProxy` + CLI `app|proxy delete|remove` safety-blocked
+- [x] Automated MySQL version/volume deletion — `removeMysqlVersion` + `assertSafeComposeArgs` (down -v/--volumes/--rmi)
+- [x] Automatic off-host backup replication — local stack `backupsDir` only; no s3/rsync API
+- [x] Hard-coded Git deploy workflow — webhook + `deploy.sh` orchestration only
+- [x] Python runtime dependency — Deno/TS only (`deno.json` tasks/imports)
+- [x] Per-app CPU/memory quotas inside shared PHP containers — absent from compose fragments
+
+**Touch:** `src/services/app.ts`, `proxy.ts`, `mysql.ts`, `compose.ts`, `src/commands/router.ts`, `tests/unit/phase_g_test.ts`, `tests/contract/cli_smoke_test.ts`, `README.md`.
 
 ---
 
@@ -313,6 +315,7 @@ Do in this order unless blocked:
 4. ~~**Phase D**~~ done  
 5. ~~**Phase E**~~ done  
 6. ~~**Phase F**~~ done (automated proof + CI; host scenarios residual in `scripts/system-scenarios.md`)  
+7. ~~**Phase G**~~ done (non-goals locked as safety refusals + absence tests)  
 
 ---
 
@@ -355,5 +358,6 @@ Do in this order unless blocked:
 | 2026-07-17 | phase D | Distribution parity F-28/F-29/F-30. Digest-addressed asset cache (`.asset-cache/<digest>/` → publish `docker/`+`helpers/`); asset resolver notes for compile `--include=templates`; version banner kept accurate; `deno task test:parity` + `smoke:compiled`; contract suite `tests/contract/parity_test.ts` (source smoke always; binary smoke/parity when `BENTO_BIN`/`dist/bento`). README CI/release notes. Residual: cross-arch binary execution still release-host only (compile:amd64/arm64 produce artifacts). |
 | 2026-07-17 | phase E | Closed thin product edges E1–E8 (except optional live nginx integration). TLS: ACME challenge locations + per-site ssl snippets, external path/mode validation, boot redirect-off proof, DNS/certbot docs in README. PHP routing fixture for front-controller vs legacy. Deploy routes match helpers; disabled absent; interrupt reclaim + log prune. Permissions lstat walk never follows symlinks; check/dry-run/shallow/recursive documented. Status: roles, DB health soft-probe, compose files, config-ready notes, secret-redacted JSON. Schema migration chain + `loadAndMigrate` backup; no-op load does not rewrite. Compose `files` command + lexicographic overlay test. Module `tls.ts`, `schemas/migrations.ts`; tests `phase_e_test.ts` (11). 111 tests green. Residual: Phase F integration suite + system scenarios still open. |
 | 2026-07-17 | phase F | Closed acceptance proof F1–F4. F1: `phase_f_test.ts` (env/CLI tokens, docroot/legacy, MySQL/Redis matrix, cron/worker plans, deploy prune/interrupt, backup empty/restore namespace) + CLI smoke tls/permissions/backup-restore/legacy. F2: `tests/integration/` helpers + 14 stack tests (bootstrap/compose, two-app isolation, PHP move, routing+proxy, TLS external, MySQL rotate, Redis materialize, cron/worker, deploy surface, render restore, access logs, custom templates, corrupt boundaries, compose files). F3: `scripts/system-scenarios.md` maps 14 host scenarios to automated proxies; host-run boxes residual. F4: `.github/workflows/ci.yml` (fmt/lint/check/frozen lockfile/test/integration/compile/parity/cross-compile), README Deno 2.9.3 pin + no `-A`, `deno task ci`/`test:all`. 126 unit/contract + 14 integration green. Residual: live data-plane host scenarios 1–14 checkboxes; cross-arch binary execution on matching hosts. |
+| 2026-07-17 | phase G | Locked explicit non-goals (product §8). Added `deleteApp`/`deleteProxy` safety errors; CLI `app|proxy delete|remove` blocked like `mysql remove`; compose down -v already refused. Tests `tests/unit/phase_g_test.ts` (app/proxy/MySQL teardown, volume flags, shared PHP topology without per-app containers/quotas, deploy no-git, no Python surface, on-host backups only) + CLI smoke. README non-goals section. Residual: host scenarios still manual. |
 
 When you complete a slice, append a row and check boxes above.

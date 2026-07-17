@@ -118,10 +118,10 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 |------|----------|
 | Interactive | `tui` (wizard: menus, tables, alerts for common ops) |
 | Bootstrap | `init`, `render`, `apply`, `status` |
-| Apps | `app create\|list\|show` |
+| Apps | `app create\|list\|show\|update` (delete/remove blocked) |
 | PHP | `php add\|remove\|list` |
 | MySQL | `mysql add\|list\|db\|password` (version removal blocked) |
-| Proxy | `proxy create\|list` |
+| Proxy | `proxy create\|list` (delete/remove blocked) |
 | TLS | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below) |
 | Background | `cron …`, `worker …` |
 | Deploy | `deploy enable\|disable\|rotate\|status\|drain\|instructions` |
@@ -157,7 +157,22 @@ Product, architecture, and reimplementation contract live in:
 2. [`specs/02-system-architecture.md`](specs/02-system-architecture.md)
 3. [`specs/03-reimplementation-contract.md`](specs/03-reimplementation-contract.md)
 
-Unit, contract, and integration tests cover state validation, domain uniqueness, render rollback, compose safety, deploy HMAC/queue policies, CLI smoke flows, multi-app isolation, TLS/routing modes, and corrupt-boundary rejection (Phase F acceptance matrix).
+Unit, contract, and integration tests cover state validation, domain uniqueness, render rollback, compose safety, deploy HMAC/queue policies, CLI smoke flows, multi-app isolation, TLS/routing modes, and corrupt-boundary rejection (Phase F acceptance matrix). Phase G locks explicit non-goals as safety refusals (no app/proxy teardown, no MySQL volume deletion, no per-app container quotas).
+
+## Explicit non-goals (Phase G)
+
+Bento intentionally does **not** provide:
+
+- multi-host / Kubernetes / remote control plane / browser admin UI
+- one container per app (apps share PHP version containers; isolation is identity-based)
+- automatic app or proxy teardown (`app delete` / `proxy delete` are blocked)
+- automated MySQL version or volume deletion (`mysql remove` and `compose down -v` are blocked)
+- automatic off-host backup replication (logical dumps stay under the stack root)
+- a hard-coded Git deploy workflow (webhook orchestration + operator `deploy.sh` only)
+- a Python runtime dependency
+- per-app CPU/memory quotas inside shared PHP containers
+
+See [`specs/01-product-spec.md`](specs/01-product-spec.md) §8 and `tests/unit/phase_g_test.ts`.
 
 ## Project layout
 

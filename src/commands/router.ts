@@ -12,6 +12,7 @@ import { type CliContext, contextFromArgv, defaultStackRoot } from "./context.ts
 import {
   applyAppDataPlane,
   capacityWarnings,
+  deleteApp,
   materializeAppHome,
   provisionApp,
 } from "../services/app.ts";
@@ -32,7 +33,7 @@ import {
   runRestore,
 } from "../services/mysql.ts";
 import { loadRedisPassword, requireMysqlRootPassword } from "../services/stack_env.ts";
-import { createProxy } from "../services/proxy.ts";
+import { createProxy, deleteProxy } from "../services/proxy.ts";
 import {
   deployWebhookInstructions,
   disableDeploy,
@@ -338,7 +339,19 @@ function buildParser(state: RunState) {
               .option("skip-validate", { type: "boolean", default: false }),
           bind(state, cmdAppCreate),
         )
-        .demandCommand(1, "Specify an app subcommand: create|list|show")
+        .command(
+          "delete <slug>",
+          "Blocked: automatic app teardown is unavailable",
+          (y2: YargsBuilder) => y2.positional("slug", { type: "string", demandOption: true }),
+          bind(state, cmdAppDelete),
+        )
+        .command(
+          "remove <slug>",
+          "Blocked: automatic app teardown is unavailable",
+          (y2: YargsBuilder) => y2.positional("slug", { type: "string", demandOption: true }),
+          bind(state, cmdAppDelete),
+        )
+        .demandCommand(1, "Specify an app subcommand: create|list|show|update")
         .recommendCommands())
     .command("php", "Manage PHP versions", (y: YargsBuilder) =>
       y
@@ -496,6 +509,18 @@ function buildParser(state: RunState) {
                 }),
             ),
           bind(state, cmdProxyCreate),
+        )
+        .command(
+          "delete <name>",
+          "Blocked: automatic proxy teardown is unavailable",
+          (y2: YargsBuilder) => y2.positional("name", { type: "string", demandOption: true }),
+          bind(state, cmdProxyDelete),
+        )
+        .command(
+          "remove <name>",
+          "Blocked: automatic proxy teardown is unavailable",
+          (y2: YargsBuilder) => y2.positional("name", { type: "string", demandOption: true }),
+          bind(state, cmdProxyDelete),
         )
         .demandCommand(1, "Specify a proxy subcommand: create|list")
         .recommendCommands())
@@ -1184,6 +1209,11 @@ async function cmdAppCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
+async function cmdAppDelete(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  deleteApp(await ctx.store.load(), String(argv.slug ?? ""));
+  return 10;
+}
+
 async function cmdPhpList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rows = listPhpVersions(state).map((v) => [
@@ -1526,6 +1556,11 @@ async function cmdProxyCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
     noApply ? `created proxy ${name} (state only; run bento apply)` : `created proxy ${name}`,
   );
   return 0;
+}
+
+async function cmdProxyDelete(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  deleteProxy(await ctx.store.load(), String(argv.name ?? ""));
+  return 10;
 }
 
 async function cmdDeployEnable(argv: AnyArgv, ctx: CliContext): Promise<number> {
