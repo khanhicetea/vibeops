@@ -317,6 +317,9 @@ Deno.test("root MySQL client option files get real password and mode 0600", asyn
     assertEquals(await platform.fs.exists(cnfPath), true);
     const content = await platform.fs.readText(cnfPath);
     assertEquals(content.includes(`password=${rootPassword}`), true);
+    assertEquals(content.includes("protocol=socket"), true);
+    assertEquals(content.includes("socket=/var/run/mysqld/mysqld.sock"), true);
+    assertEquals(content.includes("host=mysql84"), false);
     assertEquals(content.includes("{{MYSQL_ROOT_PASSWORD}}"), false);
     // no .tpl placeholder left
     assertEquals(
@@ -333,6 +336,12 @@ Deno.test("root MySQL client option files get real password and mode 0600", asyn
     assertEquals(files[0]!.relPath, "mysql/mysql84/root.cnf");
     assertEquals(files[0]!.mode, 0o600);
     assertEquals(String(files[0]!.content).includes("password=unit-test-pw"), true);
+    assertEquals(String(files[0]!.content).includes("protocol=socket"), true);
+
+    const compose = await platform.fs.readText(
+      join(root, "generated/compose/docker-compose.mysql84.yml"),
+    );
+    assertEquals(compose.includes("./backups/mysql84:/var/backups/bento"), true);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

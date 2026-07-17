@@ -721,11 +721,9 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
             await ui.pause();
             continue;
           }
-          const password = await requireMysqlRootPassword(ctx.platform);
           plan = buildMysqlShellPlan(ctx.platform, {
             kind: "root",
             service,
-            password,
           });
         } else {
           const slug = await pickApp(ui, ctx);
@@ -752,42 +750,47 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
         ui.message(pcDim("Exit the MySQL client to return to the wizard."));
         ui.blank();
 
-        // Stage credentials through stdin, attach with inherited terminal I/O, and
-        // always remove the temporary option file when the client exits.
-        const staged = await ctx.platform.process.run(plan.stage.command, {
-          cwd: ctx.stackRoot,
-          stdin: plan.stage.stdin,
-          timeoutMs: 15_000,
-        });
-        if (staged.code !== 0) {
-          ui.error(
-            "Failed to stage MySQL credentials",
-            (staged.stderr || staged.stdout || "unknown error").trim(),
-          );
-        } else {
-          let exitCode = 1;
-          try {
-            const [cmd, ...args] = plan.open.command;
-            const child = new Deno.Command(cmd!, {
-              args,
-              cwd: ctx.stackRoot,
-              stdin: "inherit",
-              stdout: "inherit",
-              stderr: "inherit",
-            });
-            exitCode = (await child.output()).code;
-          } finally {
+        // App sessions stage credentials through stdin. Root sessions use the
+        // generated read-only option file mounted in the MySQL container.
+        if (plan.stage) {
+          const staged = await ctx.platform.process.run(plan.stage.command, {
+            cwd: ctx.stackRoot,
+            stdin: plan.stage.stdin,
+            timeoutMs: 15_000,
+          });
+          if (staged.code !== 0) {
+            ui.error(
+              "Failed to stage MySQL credentials",
+              (staged.stderr || staged.stdout || "unknown error").trim(),
+            );
+            await ui.pause();
+            continue;
+          }
+        }
+        let exitCode = 1;
+        try {
+          const [cmd, ...args] = plan.open.command;
+          const child = new Deno.Command(cmd!, {
+            args,
+            cwd: ctx.stackRoot,
+            stdin: "inherit",
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          exitCode = (await child.output()).code;
+        } finally {
+          if (plan.cleanup) {
             await ctx.platform.process.run(plan.cleanup.command, {
               cwd: ctx.stackRoot,
               timeoutMs: 10_000,
             }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
           }
-          ui.blank();
-          if (exitCode === 0) {
-            ui.success("MySQL shell closed", plan.service);
-          } else {
-            ui.warn(`MySQL shell exited ${exitCode}`, plan.service);
-          }
+        }
+        ui.blank();
+        if (exitCode === 0) {
+          ui.success("MySQL shell closed", plan.service);
+        } else {
+          ui.warn(`MySQL shell exited ${exitCode}`, plan.service);
         }
       } catch (err) {
         handleError(ui, err);
@@ -1597,18 +1600,12 @@ async function sectionBackup(ui: WizardUI, ctx: CliContext): Promise<void> {
   if (!(await ensureState(ui, ctx))) return;
 
   const action = await ui.menu("Backup & restore", [
-    { label: "Backup", value: "backup", hint: "requires MYSQL_ROOT_PASSWORD" },
+    { label: "Backup", value: "backup", hint: "in-container dump over MySQL socket" },
     { label: "Restore", value: "restore", hint: "non-atomic import" },
   ]);
   if (!action) return;
 
   if (action === "backup") {
-    const rootPassword = Deno.env.get("MYSQL_ROOT_PASSWORD");
-    if (!rootPassword) {
-      ui.error("MYSQL_ROOT_PASSWORD must be set in the environment");
-      await ui.pause();
-      return;
-    }
     const scope = await ui.menu<"app" | "database" | "all">("Backup scope", [
       { label: "All managed databases", value: "all" },
       { label: "One app (all its DBs)", value: "app" },
@@ -1642,7 +1639,7 @@ async function sectionBackup(ui: WizardUI, ctx: CliContext): Promise<void> {
         slug,
         database,
         compress,
-      }, rootPassword);
+      });
       if (artifacts.length === 0) ui.warn("No databases backed up");
       for (const a of artifacts) {
         ui.success(`backup ${a.database}`, `${a.path} (${a.bytes} bytes)`);
@@ -1659,12 +1656,6 @@ async function sectionBackup(ui: WizardUI, ctx: CliContext): Promise<void> {
     "Restore is not object-level atomic",
     "A failed import can leave a partial destination database.",
   );
-  const rootPassword = Deno.env.get("MYSQL_ROOT_PASSWORD");
-  if (!rootPassword) {
-    ui.error("MYSQL_ROOT_PASSWORD must be set");
-    await ui.pause();
-    return;
-  }
   const file = await ui.prompt("Dump file path", { required: true });
   if (!file) return;
   const slug = await pickApp(ui, ctx, { title: "Target app (ownership)" });
@@ -1697,7 +1688,7 @@ async function sectionBackup(ui: WizardUI, ctx: CliContext): Promise<void> {
       slug,
       targetDatabase: target,
       replaceOriginal: replaceName,
-    }, rootPassword);
+    });
     ui.success(`Restore completed into ${target}`);
   } catch (err) {
     handleError(ui, err);

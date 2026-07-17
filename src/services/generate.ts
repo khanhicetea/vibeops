@@ -395,7 +395,8 @@ export function generateMysqlSecrets(
       content: withManagedMarker(`[client]
 user=root
 password=${rootPassword.replace(/\n/g, "")}
-host=${m.service}
+protocol=socket
+socket=/var/run/mysqld/mysqld.sock
 `),
       mode: 0o600,
       managed: true,

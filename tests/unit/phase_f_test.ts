@@ -489,7 +489,7 @@ Deno.test("F1 backup refuses empty dump and leaves no final artifact", async () 
     const { runBackup } = await import("../../src/services/mysql.ts");
     let threw = false;
     try {
-      await runBackup(platform, state, { scope: "app", slug: "alpha", compress: "none" }, "rootpw");
+      await runBackup(platform, state, { scope: "app", slug: "alpha", compress: "none" });
     } catch (e) {
       threw = true;
       assertEquals(String(e).includes("empty"), true);
@@ -505,6 +505,51 @@ Deno.test("F1 backup refuses empty dump and leaves no final artifact", async () 
         assertEquals(finals.length, 0);
       }
     }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("F1 backup writes in-container with socket config and zstd level 3", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-f1-" });
+  try {
+    const fs = createFileSystem();
+    const finalPath = join(
+      root,
+      "backups",
+      "mysql84",
+      "alpha",
+      "mysql84_alpha_2026-07-17T15-00-00-000Z.sql.zst",
+    );
+    const process = createRecordingProcessRunner(async () => {
+      await fs.writeBytes(finalPath, new Uint8Array([1, 2, 3, 4]), 0o600);
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const platform: Platform = {
+      clock: createFixedClock("2026-07-17T15:00:00.000Z"),
+      random: createSeededRandom("f1f1f1f1f1f1f1f1"),
+      fs,
+      lock: createMemoryLock(),
+      process,
+      assets: createAssetResolver(fs),
+      paths: createPathPolicy(root),
+    };
+    const state = provisionApp(platform, createEmptyState(), {
+      slug: "alpha",
+      domain: "a.test",
+      createDatabase: true,
+    }).state;
+    const { runBackup } = await import("../../src/services/mysql.ts");
+    const artifacts = await runBackup(platform, state, { scope: "app", slug: "alpha" });
+
+    assertEquals(artifacts[0]?.path, finalPath);
+    assertEquals(artifacts[0]?.bytes, 4);
+    const call = process.calls[0]!;
+    const script = call.command.at(-1) ?? "";
+    assertEquals(script.includes("--defaults-extra-file=/etc/bento/mysql/root.cnf"), true);
+    assertEquals(script.includes("zstd -3 -q -c"), true);
+    assertEquals(script.includes("/var/backups/bento/alpha/"), true);
+    assertEquals(call.options?.stdin, undefined);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -538,11 +583,53 @@ Deno.test("F1 restore refuses cross-namespace target before side effects", async
           file: dump,
           slug: "alpha",
           targetDatabase: "otherapp_db",
-        }, "rootpw"),
+        }),
       "namespace",
     );
     // No docker compose exec should have been attempted
     assertEquals(process.calls.length, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("F1 restore imports in-container from the writable backup bind", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-f1-" });
+  try {
+    const process = createRecordingProcessRunner(() => ({ code: 0, stdout: "", stderr: "" }));
+    const fs = createFileSystem();
+    const platform: Platform = {
+      clock: createFixedClock("2026-07-17T15:00:00.000Z"),
+      random: createSeededRandom("f1f1f1f1f1f1f1f1"),
+      fs,
+      lock: createMemoryLock(),
+      process,
+      assets: createAssetResolver(fs),
+      paths: createPathPolicy(root),
+    };
+    const state = provisionApp(platform, createEmptyState(), {
+      slug: "alpha",
+      domain: "a.test",
+      createDatabase: true,
+    }).state;
+    const dump = join(root, "external.sql.zst");
+    await fs.writeBytes(dump, new Uint8Array([1, 2, 3]), 0o600);
+    const { runRestore } = await import("../../src/services/mysql.ts");
+    await runRestore(platform, state, {
+      file: dump,
+      slug: "alpha",
+      targetDatabase: "alpha_restore",
+    });
+
+    assertEquals(process.calls.length, 1);
+    const call = process.calls[0]!;
+    const script = call.command.at(-1) ?? "";
+    assertEquals(script.includes("zstd -dc --"), true);
+    assertEquals(script.includes("/var/backups/bento/.restore/"), true);
+    assertEquals(script.match(/--defaults-extra-file=\/etc\/bento\/mysql\/root\.cnf/g)?.length, 2);
+    assertEquals(call.options?.stdin, undefined);
+    const stageDir = join(root, "backups", "mysql84", ".restore");
+    assertEquals(await fs.readDir(stageDir), []);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

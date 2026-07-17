@@ -3,7 +3,7 @@
  * Passwords never appear in host process arguments.
  */
 
-import { basename, join } from "@std/path";
+import { basename, isAbsolute, join, relative, resolve } from "@std/path";
 import type { AppState, DesiredState, ManagedMysqlVersion } from "../domain/state.ts";
 import { mysqlImage, mysqlServiceName } from "../domain/state.ts";
 import { asDatabaseName, asMysqlService, asMysqlVersion } from "../domain/types.ts";
@@ -261,7 +261,6 @@ export async function runBackup(
   platform: Platform,
   state: DesiredState,
   req: BackupRequest,
-  rootPassword: string,
 ): Promise<BackupArtifact[]> {
   const targets = resolveBackupTargets(state, req);
   const artifacts: BackupArtifact[] = [];
@@ -276,59 +275,62 @@ export async function runBackup(
       await platform.fs.mkdirp(dir, 0o700);
       const finalPath = join(dir, finalName);
       const partialPath = `${finalPath}.partial`;
+      const containerFinal = `/var/backups/bento/${t.database}/${finalName}`;
+      const containerPartial = `${containerFinal}.partial`;
+      const dump = `mysqldump --defaults-extra-file=/etc/bento/mysql/root.cnf ` +
+        `--single-transaction --routines --triggers ${shellQuote(t.database)}`;
+      const pipeline = compress === "gzip"
+        ? `${dump} | gzip -c`
+        : compress === "zstd"
+        ? `${dump} | zstd -3 -q -c`
+        : dump;
 
-      const dumpCmd = buildDumpCommand(t.service, t.database, compress);
-      // Stream dump through stdin-staged option file so password is not on argv.
+      // The dump and compression run beside mysqld over its Unix socket. The
+      // bind-mounted backup directory keeps dump bytes off the exec stream.
       const script = [
         "set -e",
+        "set -o pipefail",
         "umask 077",
-        "OPT=$(mktemp)",
-        "trap 'rm -f \"$OPT\"' EXIT",
-        "while IFS= read -r line; do",
-        '  case "$line" in',
-        "    __END_CNF__) break ;;",
-        '    *) printf \'%s\\n\' "$line" >> "$OPT" ;;',
-        "  esac",
-        "done",
-        `mysqldump --defaults-extra-file="$OPT" --single-transaction --routines --triggers --databases ${
-          shellQuote(t.database)
-        }${compress === "gzip" ? " | gzip -c" : compress === "zstd" ? " | zstd -c" : ""}`,
-      ].join("\n");
-
-      const stdin = [
-        "[client]",
-        "user=root",
-        `password=${rootPassword.replace(/\n/g, "")}`,
-        "__END_CNF__",
-        "",
+        "test -r /etc/bento/mysql/root.cnf || { echo 'missing generated MySQL root option file; run bento render' >&2; exit 1; }",
+        "grep -q '^protocol=socket$' /etc/bento/mysql/root.cnf || { echo 'stale MySQL root option file; run bento render' >&2; exit 1; }",
+        `test -d ${
+          shellQuote(`/var/backups/bento/${t.database}`)
+        } || { echo 'MySQL backup bind is not active; run bento render then bento compose -- up -d' >&2; exit 1; }`,
+        `PARTIAL=${shellQuote(containerPartial)}`,
+        `FINAL=${shellQuote(containerFinal)}`,
+        "trap 'rm -f \"$PARTIAL\"' EXIT",
+        `${pipeline} > "$PARTIAL"`,
+        'test -s "$PARTIAL"',
+        'chmod 600 "$PARTIAL"',
+        'mv -f "$PARTIAL" "$FINAL"',
+        "trap - EXIT",
       ].join("\n");
 
       const result = await platform.process.run(
         ["docker", "compose", "exec", "-T", t.service, "sh", "-c", script],
         {
           cwd: platform.paths.paths.root,
-          stdin,
           timeoutMs: 30 * 60_000,
         },
       );
 
-      void dumpCmd;
       if (result.code !== 0) {
         await platform.fs.remove(partialPath).catch(() => {});
         throw new Error(`dump failed for ${t.database}: ${result.stderr || result.stdout}`);
       }
-      const bytes = new TextEncoder().encode(result.stdout);
-      if (bytes.byteLength === 0) {
-        await platform.fs.remove(partialPath).catch(() => {});
+      if (!(await platform.fs.exists(finalPath))) {
         throw new Error(`dump for ${t.database} was empty; not publishing`);
       }
-      await platform.fs.writeBytes(partialPath, bytes, 0o600);
-      await platform.fs.rename(partialPath, finalPath);
+      const stat = await platform.fs.stat(finalPath);
+      if (!stat.isFile || stat.size === 0) {
+        await platform.fs.remove(finalPath).catch(() => {});
+        throw new Error(`dump for ${t.database} was empty; not publishing`);
+      }
       artifacts.push({
         path: finalPath,
         database: t.database,
         service: t.service,
-        bytes: bytes.byteLength,
+        bytes: stat.size,
       });
     }
   } catch (cause) {
@@ -339,19 +341,6 @@ export async function runBackup(
   // Retention per database only after full batch success
   await applyRetention(platform, artifacts, 10);
   return artifacts;
-}
-
-function buildDumpCommand(
-  _service: string,
-  database: string,
-  compress: "zstd" | "gzip" | "none",
-): { shell: string } {
-  const dump = `mysqldump --single-transaction --routines --triggers --databases ${
-    shellQuote(database)
-  }`;
-  if (compress === "gzip") return { shell: `${dump} | gzip -c` };
-  if (compress === "zstd") return { shell: `${dump} | zstd -c` };
-  return { shell: dump };
 }
 
 function resolveBackupTargets(
@@ -425,7 +414,6 @@ export async function runRestore(
   platform: Platform,
   state: DesiredState,
   req: RestoreRequest,
-  rootPassword: string,
 ): Promise<void> {
   const app = state.apps[req.slug];
   if (!app) throw notFoundError(`app not found: ${req.slug}`);
@@ -453,64 +441,76 @@ export async function runRestore(
     throw notFoundError(`backup file not found: ${file}`);
   }
 
-  const decompress = file.endsWith(".gz")
-    ? "gzip -dc"
-    : file.endsWith(".zst") || file.endsWith(".zstd")
-    ? "zstd -dc"
-    : "cat";
+  const sourceStat = await platform.fs.stat(file);
+  if (!sourceStat.isFile || sourceStat.size === 0) {
+    throw validationError(`backup file is empty or not a regular file: ${file}`);
+  }
 
-  // Non-atomic at object level — communicate limitation
+  const serviceBackupDir = join(platform.paths.paths.backupsDir, app.mysqlService);
+  await platform.fs.mkdirp(serviceBackupDir, 0o700);
+  let containerFile = pathInsideBackupMount(serviceBackupDir, file);
+  let stagedFile: string | undefined;
+  if (!containerFile) {
+    const stageDir = join(serviceBackupDir, ".restore");
+    await platform.fs.mkdirp(stageDir, 0o700);
+    stagedFile = join(stageDir, `${platform.random.hex(8)}-${basename(file)}`);
+    await platform.fs.copyFile(file, stagedFile);
+    await platform.fs.chmod(stagedFile, 0o600);
+    containerFile = `/var/backups/bento/.restore/${basename(stagedFile)}`;
+  }
+
+  const decompress = file.endsWith(".gz")
+    ? `gzip -dc -- ${shellQuote(containerFile)}`
+    : file.endsWith(".zst") || file.endsWith(".zstd")
+    ? `zstd -dc -- ${shellQuote(containerFile)}`
+    : `cat -- ${shellQuote(containerFile)}`;
+
+  // Create and import in the matching MySQL container. Both clients use the
+  // generated root option file and local mysqld Unix socket.
   const createSql = req.replaceOriginal
     ? `DROP DATABASE IF EXISTS ${mysqlIdent(dbName)}; CREATE DATABASE ${mysqlIdent(dbName)};`
     : `CREATE DATABASE IF NOT EXISTS ${mysqlIdent(dbName)};`;
-
-  await execMysqlSql(platform, app.mysqlService, createSql, rootPassword);
-
-  // Stream file into container mysql via stdin-staged option file
-  const bytes = await platform.fs.readBytes(file);
   const script = [
     "set -e",
-    "umask 077",
-    "OPT=$(mktemp)",
-    "DATA=$(mktemp)",
-    'trap \'rm -f "$OPT" "$DATA"\' EXIT',
-    "while IFS= read -r line; do",
-    '  case "$line" in',
-    "    __END_CNF__) break ;;",
-    '    *) printf \'%s\\n\' "$line" >> "$OPT" ;;',
-    "  esac",
-    "done",
-    'cat > "$DATA"',
-    `${decompress} < "$DATA" | mysql --defaults-extra-file="$OPT" ${shellQuote(dbName)}`,
+    "set -o pipefail",
+    "test -r /etc/bento/mysql/root.cnf || { echo 'missing generated MySQL root option file; run bento render' >&2; exit 1; }",
+    "grep -q '^protocol=socket$' /etc/bento/mysql/root.cnf || { echo 'stale MySQL root option file; run bento render' >&2; exit 1; }",
+    `test -r ${
+      shellQuote(containerFile)
+    } || { echo 'MySQL backup bind is not active; run bento render then bento compose -- up -d' >&2; exit 1; }`,
+    `mysql --defaults-extra-file=/etc/bento/mysql/root.cnf -e ${shellQuote(createSql)}`,
+    `${decompress} | mysql --defaults-extra-file=/etc/bento/mysql/root.cnf ${shellQuote(dbName)}`,
   ].join("\n");
 
-  const cnf = [
-    "[client]",
-    "user=root",
-    `password=${rootPassword.replace(/\n/g, "")}`,
-    "__END_CNF__",
-    "",
-  ].join("\n");
-  const stdin = new Uint8Array([
-    ...new TextEncoder().encode(cnf),
-    ...bytes,
-  ]);
-
-  const result = await platform.process.run(
-    ["docker", "compose", "exec", "-T", app.mysqlService, "sh", "-c", script],
-    {
-      cwd: platform.paths.paths.root,
-      stdin,
-      timeoutMs: 60 * 60_000,
-    },
-  );
-  if (result.code !== 0) {
-    throw new Error(
-      `restore failed (destination may be partial; restore is not object-level atomic): ${
-        result.stderr || result.stdout
-      }`,
+  try {
+    const result = await platform.process.run(
+      ["docker", "compose", "exec", "-T", app.mysqlService, "sh", "-c", script],
+      {
+        cwd: platform.paths.paths.root,
+        timeoutMs: 60 * 60_000,
+      },
     );
+    if (result.code !== 0) {
+      throw new Error(
+        `restore failed (destination may be partial; restore is not object-level atomic): ${
+          result.stderr || result.stdout
+        }`,
+      );
+    }
+  } finally {
+    if (stagedFile) await platform.fs.remove(stagedFile).catch(() => {});
   }
+}
+
+/** Map a host file already under a service backup bind to its container path. */
+function pathInsideBackupMount(serviceBackupDir: string, file: string): string | undefined {
+  const rel = relative(resolve(serviceBackupDir), resolve(file));
+  if (
+    !rel || isAbsolute(rel) || rel === ".." || rel.startsWith("../") || rel.startsWith("..\\")
+  ) {
+    return undefined;
+  }
+  return `/var/backups/bento/${rel.replaceAll("\\", "/")}`;
 }
 
 function shellQuote(s: string): string {
@@ -531,71 +531,74 @@ export function mysqlClientOptionPath(token: string): string {
 }
 
 export type MysqlShellIdentity =
-  | { kind: "root"; service: string; password: string }
+  | { kind: "root"; service: string }
   | { kind: "app"; app: AppState };
 
 export type MysqlShellPlan = {
   service: string;
   user: string;
   database?: string;
-  /** Stage protected option file via stdin (password never on host argv). */
-  stage: { command: string[]; stdin: string };
-  /** Open mysql using the staged option file. */
+  /** App sessions stage a protected option file via stdin. */
+  stage?: { command: string[]; stdin: string };
+  /** Open mysql using the generated or staged option file. */
   open: { command: string[]; interactive: boolean };
-  /** Always remove the staged option file. */
-  cleanup: { command: string[] };
+  /** App sessions remove their temporary option file. */
+  cleanup?: { command: string[] };
   optionPath: string;
 };
 
 /**
- * Plan a MySQL client session that stages a restricted option file in-container.
- * Password is only present on stage stdin — never host argv.
+ * Root sessions use the generated, read-only socket option file. App sessions
+ * stage their scoped credentials in-container and remove them afterward.
  */
 export function buildMysqlShellPlan(
   platform: Platform,
   identity: MysqlShellIdentity,
   opts?: { database?: string; interactive?: boolean },
 ): MysqlShellPlan {
-  const token = platform.random.hex(8);
-  const optionPath = mysqlClientOptionPath(token);
   const interactive = opts?.interactive ?? true;
-
-  let service: string;
-  let user: string;
-  let password: string;
   let database = opts?.database;
 
   if (identity.kind === "root") {
-    service = identity.service;
-    user = "root";
-    password = identity.password;
-  } else {
-    service = identity.app.mysqlService;
-    user = identity.app.mysqlUser;
-    password = identity.app.mysqlPassword;
-    if (!database && identity.app.databases[0]) {
-      database = identity.app.databases[0].name;
-    }
+    const optionPath = "/etc/bento/mysql/root.cnf";
+    const openArgs = ["mysql", `--defaults-extra-file=${optionPath}`];
+    if (database) openArgs.push(database);
+    return {
+      service: identity.service,
+      user: "root",
+      database,
+      optionPath,
+      open: {
+        command: interactive
+          ? ["docker", "compose", "exec", "-it", identity.service, ...openArgs]
+          : ["docker", "compose", "exec", "-T", identity.service, ...openArgs],
+        interactive,
+      },
+    };
   }
 
+  const service = identity.app.mysqlService;
+  const user = identity.app.mysqlUser;
+  const password = identity.app.mysqlPassword;
+  if (!database && identity.app.databases[0]) {
+    database = identity.app.databases[0].name;
+  }
+  const optionPath = mysqlClientOptionPath(platform.random.hex(8));
   const cnf = [
     "[client]",
     `user=${user}`,
     `password=${password.replace(/\n/g, "")}`,
+    "protocol=socket",
+    "socket=/var/run/mysqld/mysqld.sock",
     "",
   ].join("\n");
-
   const stageScript = [
     "set -e",
     "umask 077",
     `cat > ${shellQuote(optionPath)}`,
     `chmod 600 ${shellQuote(optionPath)}`,
   ].join("\n");
-
-  const openArgs = [
-    "mysql",
-    `--defaults-extra-file=${optionPath}`,
-  ];
+  const openArgs = ["mysql", `--defaults-extra-file=${optionPath}`];
   if (database) openArgs.push(database);
 
   return {
@@ -614,16 +617,7 @@ export function buildMysqlShellPlan(
       interactive,
     },
     cleanup: {
-      command: [
-        "docker",
-        "compose",
-        "exec",
-        "-T",
-        service,
-        "rm",
-        "-f",
-        optionPath,
-      ],
+      command: ["docker", "compose", "exec", "-T", service, "rm", "-f", optionPath],
     },
   };
 }
@@ -634,9 +628,9 @@ export function assertShellPlanSecretsOffArgv(
   secrets: string[],
 ): void {
   const argv = [
-    ...plan.stage.command,
+    ...(plan.stage?.command ?? []),
     ...plan.open.command,
-    ...plan.cleanup.command,
+    ...(plan.cleanup?.command ?? []),
   ].join(" ");
   for (const secret of secrets) {
     if (secret && argv.includes(secret)) {
@@ -769,5 +763,4 @@ export function resolveMysqlServices(
 }
 
 // silence unused
-void basename;
 void asMysqlService;

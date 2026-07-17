@@ -306,6 +306,7 @@ function renderMysqlFragment(service: string, image: string, volume: string): st
         volumes: [
           `${volume}:/var/lib/mysql`,
           `./generated/mysql/${service}:/etc/bento/mysql:ro`,
+          `./backups/${service}:/var/backups/bento`,
         ],
         // no public ports
       },

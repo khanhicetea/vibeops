@@ -90,26 +90,20 @@ async function withRoot(
 
 // --- B1 MySQL shell / size / processlist ------------------------------------
 
-Deno.test("mysql shell plan keeps password off host argv", async () => {
+Deno.test("root mysql shell uses generated socket option file", async () => {
   await withRoot(async (_root, platform) => {
-    const password = "root-s3cret-value";
     const plan = buildMysqlShellPlan(platform, {
       kind: "root",
       service: "mysql84",
-      password,
     });
-    assertShellPlanSecretsOffArgv(plan, [password]);
-    const argv = [
-      ...plan.stage.command,
-      ...plan.open.command,
-      ...plan.cleanup.command,
-    ].join(" ");
-    assertEquals(argv.includes(password), false);
-    assertEquals(plan.stage.stdin.includes(password), true);
-    assertEquals(plan.open.command.includes("mysql"), true);
-    assertEquals(plan.cleanup.command.includes("rm"), true);
-    // staged option file removed after
-    assertEquals(plan.cleanup.command.includes(plan.optionPath), true);
+    assertShellPlanSecretsOffArgv(plan, ["root-s3cret-value"]);
+    assertEquals(plan.stage, undefined);
+    assertEquals(plan.cleanup, undefined);
+    assertEquals(plan.optionPath, "/etc/bento/mysql/root.cnf");
+    assertEquals(
+      plan.open.command.includes("--defaults-extra-file=/etc/bento/mysql/root.cnf"),
+      true,
+    );
   });
 });
 
@@ -126,7 +120,7 @@ Deno.test("mysql shell plan for app uses app credentials on stdin only", async (
     assertShellPlanSecretsOffArgv(plan, [app.mysqlPassword]);
     assertEquals(plan.user, app.mysqlUser);
     assertEquals(plan.service, app.mysqlService);
-    assertEquals(plan.stage.stdin.includes(app.mysqlPassword), true);
+    assertEquals(plan.stage?.stdin.includes(app.mysqlPassword), true);
     assertEquals(plan.open.command.join(" ").includes(app.mysqlPassword), false);
   });
 });

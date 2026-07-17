@@ -486,7 +486,7 @@ function buildParser(state: RunState) {
         )
         .command(
           "shell",
-          "Open MySQL shell (password staged via stdin; never host argv)",
+          "Open MySQL shell (protected option file; never host argv)",
           (y2: YargsBuilder) =>
             y2
               .option("root", {
@@ -1507,12 +1507,10 @@ async function cmdMysqlShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
       ctx.log.error("no MySQL service managed");
       return 3;
     }
-    const password = await requireMysqlRootPassword(ctx.platform);
-    plan = buildMysqlShellPlan(ctx.platform, { kind: "root", service, password }, {
+    plan = buildMysqlShellPlan(ctx.platform, { kind: "root", service }, {
       database,
       interactive: !printOnly,
     });
-    assertShellPlanSecretsOffArgv(plan, [password]);
   } else {
     const app = state.apps[appSlug];
     if (!app) {
@@ -1533,32 +1531,34 @@ async function cmdMysqlShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
           service: plan.service,
           user: plan.user,
           database: plan.database,
-          stage: plan.stage.command,
+          stage: plan.stage?.command,
           open: plan.open.command,
-          cleanup: plan.cleanup.command,
+          cleanup: plan.cleanup?.command,
         },
         null,
         2,
       ));
     } else {
-      ctx.log.out(`stage: ${plan.stage.command.join(" ")}`);
+      if (plan.stage) ctx.log.out(`stage: ${plan.stage.command.join(" ")}`);
       ctx.log.out(`open:  ${plan.open.command.join(" ")}`);
-      ctx.log.out(`cleanup: ${plan.cleanup.command.join(" ")}`);
+      if (plan.cleanup) ctx.log.out(`cleanup: ${plan.cleanup.command.join(" ")}`);
     }
     return 0;
   }
 
-  // Stage option file (password on stdin only).
-  const staged = await ctx.platform.process.run(plan.stage.command, {
-    cwd: ctx.stackRoot,
-    stdin: plan.stage.stdin,
-    timeoutMs: 15_000,
-  });
-  if (staged.code !== 0) {
-    ctx.log.error(
-      `failed to stage mysql option file: ${(staged.stderr || staged.stdout || "").trim()}`,
-    );
-    return 8;
+  // App sessions stage their option file; root uses the generated read-only file.
+  if (plan.stage) {
+    const staged = await ctx.platform.process.run(plan.stage.command, {
+      cwd: ctx.stackRoot,
+      stdin: plan.stage.stdin,
+      timeoutMs: 15_000,
+    });
+    if (staged.code !== 0) {
+      ctx.log.error(
+        `failed to stage mysql option file: ${(staged.stderr || staged.stdout || "").trim()}`,
+      );
+      return 8;
+    }
   }
 
   try {
@@ -1574,10 +1574,12 @@ async function cmdMysqlShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
     const status = await child.output();
     return status.code;
   } finally {
-    await ctx.platform.process.run(plan.cleanup.command, {
-      cwd: ctx.stackRoot,
-      timeoutMs: 10_000,
-    }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+    if (plan.cleanup) {
+      await ctx.platform.process.run(plan.cleanup.command, {
+        cwd: ctx.stackRoot,
+        timeoutMs: 10_000,
+      }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+    }
   }
 }
 
@@ -2170,11 +2172,6 @@ async function cmdPermissionsRepair(argv: AnyArgv, ctx: CliContext): Promise<num
 }
 
 async function cmdBackup(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const rootPassword = Deno.env.get("MYSQL_ROOT_PASSWORD");
-  if (!rootPassword) {
-    ctx.log.error("MYSQL_ROOT_PASSWORD must be set in the environment for backup");
-    return 9;
-  }
   const state = await ctx.store.load();
   const scope = argv.all === true
     ? "all" as const
@@ -2191,7 +2188,7 @@ async function cmdBackup(argv: AnyArgv, ctx: CliContext): Promise<number> {
       slug: argv.app ? String(argv.app) : undefined,
       database: argv.database ? String(argv.database) : undefined,
       compress: argv.gzip === true ? "gzip" : argv.none === true ? "none" : "zstd",
-    }, rootPassword);
+    });
     for (const a of artifacts) {
       ctx.log.info(`backup ${a.database} -> ${a.path} (${a.bytes} bytes)`);
     }
@@ -2219,18 +2216,13 @@ async function cmdRestore(argv: AnyArgv, ctx: CliContext): Promise<number> {
   ctx.log.warn(
     "restore is not object-level atomic; a failed import can leave a partial destination",
   );
-  const rootPassword = Deno.env.get("MYSQL_ROOT_PASSWORD");
-  if (!rootPassword) {
-    ctx.log.error("MYSQL_ROOT_PASSWORD must be set");
-    return 9;
-  }
   const state = await ctx.store.load();
   await runRestore(ctx.platform, state, {
     file,
     slug: app,
     targetDatabase: target,
     replaceOriginal: argv.replace ? String(argv.replace) : undefined,
-  }, rootPassword);
+  });
   ctx.log.info(`restore completed into ${target}`);
   return 0;
 }

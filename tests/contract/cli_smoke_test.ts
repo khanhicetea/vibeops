@@ -389,23 +389,14 @@ Deno.test("cli tls set + permissions + backup/restore dry paths", async () => {
       0,
     );
 
-    // Backup without MYSQL_ROOT_PASSWORD fails closed (no side effects)
+    // Backup uses the generated in-container root option file; no shell export is required.
     const prev = Deno.env.get("MYSQL_ROOT_PASSWORD");
     Deno.env.delete("MYSQL_ROOT_PASSWORD");
     try {
-      assertEquals((await runCli([...base, "backup", "--app", "demo"])) !== 0, true);
-    } finally {
-      if (prev !== undefined) Deno.env.set("MYSQL_ROOT_PASSWORD", prev);
-    }
+      // demo has no databases recorded, so this completes without invoking Docker.
+      assertEquals(await runCli([...base, "backup", "--app", "demo", "--none"]), 0);
 
-    // Backup for app with no databases: should succeed with empty target list or error cleanly
-    Deno.env.set("MYSQL_ROOT_PASSWORD", "test-root-pw");
-    try {
-      // demo has no databases recorded — scope=app yields empty targets
-      const code = await runCli([...base, "backup", "--app", "demo", "--none"]);
-      // Empty target list completes without publishing artifacts (0 dumps)
-      assertEquals(code === 0 || code !== 0, true);
-      // Restore missing file fails before docker
+      // Restore missing file fails before docker.
       assertEquals(
         (await runCli([
           ...base,
@@ -419,7 +410,7 @@ Deno.test("cli tls set + permissions + backup/restore dry paths", async () => {
         ])) !== 0,
         true,
       );
-      // Replace confirmation mismatch fails closed
+      // Replace confirmation mismatch fails closed.
       const dump = join(stack, "empty.sql");
       await Deno.writeTextFile(dump, "-- empty\n");
       assertEquals(
@@ -438,7 +429,6 @@ Deno.test("cli tls set + permissions + backup/restore dry paths", async () => {
         true,
       );
     } finally {
-      Deno.env.delete("MYSQL_ROOT_PASSWORD");
       if (prev !== undefined) Deno.env.set("MYSQL_ROOT_PASSWORD", prev);
     }
 

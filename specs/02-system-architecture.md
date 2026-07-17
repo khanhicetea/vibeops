@@ -311,9 +311,9 @@ After any finished command, the runner sends `POST /_bento/clean-opcache` direct
 
 ### 7.7 Database backup and restore
 
-Backup runs the matching version's client tools inside the MySQL container. Output is streamed to a private partial host file. Optional compression also runs inside the container so only compressed bytes cross the Docker exec boundary. Successful, non-empty output is atomically renamed to its final unique filename. Retention runs per database only after the full requested batch succeeds.
+Backup runs the matching version's client tools inside the MySQL container, authenticating through the generated mode-0600 root option file and local mysqld Unix socket. Each service has only its own host backup directory bind-mounted read-write at `/var/backups/bento`. `mysqldump` writes a private partial file there; Zstandard compression uses explicit level 3 by default (`zstd -3`) and runs before bytes reach the bind. Successful, non-empty output is atomically renamed inside that directory, so dump bytes never cross the Docker exec stdout boundary. Retention runs per database only after the full requested batch succeeds.
 
-Restore streams plain or compressed input into a freshly created destination database. Replacing an original requires exact-name confirmation and performs drop/create before import. Therefore restore is not object-level atomic, and failed import can leave a partially restored destination.
+Restore makes the selected dump available through the same writable backup bind (temporarily staging external files), then decompresses and imports it inside the matching MySQL container over the Unix socket. Replacing an original requires exact-name confirmation and performs drop/create before import. Therefore restore is not object-level atomic, and failed import can leave a partially restored destination.
 
 ## 8. Security model
 
@@ -324,7 +324,7 @@ Only Nginx is public. The stack may expose app sites, proxy sites, ACME HTTP cha
 ### 8.2 Secrets
 
 - Stack secrets and desired state are local and untracked.
-- MySQL root credentials are mounted as protected client option files, not supplied on administrative argv.
+- MySQL root credentials are mounted as protected client option files configured for the local mysqld Unix socket, not supplied on administrative argv or streamed repeatedly over exec stdin.
 - App MySQL/Redis credentials are mode-restricted inside the app home.
 - Temporary app-authenticated database shells stage a protected in-container option file through stdin and remove it afterward.
 - Webhook signatures use constant-time HMAC comparison.
