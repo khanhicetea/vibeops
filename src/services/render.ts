@@ -469,8 +469,22 @@ function generatedReloadPlan(state: DesiredState): ReloadPlan {
   const plan = emptyReloadPlan();
   plan.nginx = true;
   for (const v of state.phpVersions) {
+    const runnerService = `${v.service}-runner`;
     plan.phpFpm.add(v.service);
-    plan.phpRunner.add(`${v.service}-runner`);
+    plan.phpRunner.add(runnerService);
+
+    // A full apply may follow one or more --no-apply cron mutations. Supervisor
+    // reread/update only notices supervisord.conf changes, not changes to the
+    // separately mounted crontabs, so every live scheduler must also reload.
+    const scheduledApps = Object.values(state.apps)
+      .filter((app) =>
+        app.phpVersion === v.version &&
+        (app.deploy.enabled || state.cronJobs.some((job) => job.app === app.slug && job.enabled))
+      )
+      .map((app) => String(app.slug));
+    if (scheduledApps.length > 0) {
+      (plan.cronSchedulers ??= new Map()).set(runnerService, new Set(scheduledApps));
+    }
   }
   return plan;
 }
@@ -610,6 +624,24 @@ function defaultReloader(platform: Platform): ServiceReloader {
           "supervisorctl",
           "update",
         ]);
+
+        // reread/update adds and removes Supervisor programs, but it does not
+        // restart an unchanged scheduler when only its bind-mounted crontab was
+        // replaced. Supercronic handles USR2 as an in-place crontab reload.
+        for (const app of plan.cronSchedulers?.get(svc) ?? []) {
+          const program = `scheduler-${app}`;
+          await soft([
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            svc,
+            "supervisorctl",
+            "signal",
+            "USR2",
+            program,
+          ]);
+        }
       }
     },
   };

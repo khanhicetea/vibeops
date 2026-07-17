@@ -12,7 +12,11 @@ import {
   unwrap,
 } from "../schemas/validators.ts";
 import type { Platform } from "../platform/mod.ts";
-import { type ReloadPlan, reloadPlanForRunnerChange } from "../domain/reload.ts";
+import {
+  type ReloadPlan,
+  reloadPlanForCronChange,
+  reloadPlanForRunnerChange,
+} from "../domain/reload.ts";
 
 export type AddCronInput = {
   name: string;
@@ -75,7 +79,7 @@ export function addCronJob(
       updatedAt: platform.clock.nowIso(),
     },
     job,
-    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+    reloadPlan: reloadPlanForCronChange(`${app.phpService}-runner`, appSlug),
   };
 }
 
@@ -92,9 +96,17 @@ export function removeCronJob(
   if (cronJobs.length === before) {
     throw notFoundError(`cron job ${name} not found for app ${appSlug}`);
   }
+  const runnerService = `${app.phpService}-runner`;
+  // If another schedule (or deploy drain) remains, Supervisor's program config
+  // is unchanged and Supercronic itself must reread the mounted crontab. When
+  // the final schedule is removed, supervisorctl update stops the program.
+  const schedulerRemains = app.deploy.enabled ||
+    cronJobs.some((j) => j.app === appSlug && j.enabled);
   return {
     state: { ...state, cronJobs, updatedAt: now },
-    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+    reloadPlan: schedulerRemains
+      ? reloadPlanForCronChange(runnerService, appSlug)
+      : reloadPlanForRunnerChange(runnerService),
   };
 }
 

@@ -16,7 +16,8 @@ import {
 import { generateAll } from "../../src/services/generate.ts";
 import { createAppDatabase, listRecentBackupFiles } from "../../src/services/mysql.ts";
 import { aclRules, redisConnectionEnv } from "../../src/services/redis.ts";
-import { addCronJob } from "../../src/services/cron.ts";
+import { addCronJob, removeCronJob } from "../../src/services/cron.ts";
+import { RenderService } from "../../src/services/render.ts";
 import { addWorker, workerProgramName } from "../../src/services/worker.ts";
 import { describeReloadPlan } from "../../src/domain/reload.ts";
 import { parseDotEnv } from "../../src/services/stack_env.ts";
@@ -310,6 +311,10 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
     );
     assertEquals(cron.reloadPlan.nginx, false);
     assertEquals(cron.reloadPlan.phpFpm.size, 0);
+    assertEquals(
+      cron.reloadPlan.cronSchedulers?.get("php85-runner")?.has("alpha"),
+      true,
+    );
 
     const worker = addWorker(state, {
       app: "alpha",
@@ -331,6 +336,75 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
       allBlob.includes("schedule:run") || blob.includes("schedule:run") ||
         allBlob.includes("tick") || allBlob.includes("queue:work") ||
         allBlob.includes("worker-alpha-queue"),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("cron add/remove renders crontab and reloads existing Supercronic", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-cron-reload-" });
+  try {
+    const process = createRecordingProcessRunner();
+    const platform: Platform = { ...testPlatform(root), process };
+    const render = new RenderService(platform);
+    let state = provisionApp(platform, createEmptyState(), {
+      slug: "alpha",
+      domain: "a.test",
+    }).state;
+
+    const first = addCronJob(state, {
+      app: "alpha",
+      name: "first",
+      schedule: "*/5 * * * *",
+      command: ["echo", "first-job"],
+    }, platform);
+    state = first.state;
+    await render.apply(state, { renderOnly: true, skipValidate: true });
+
+    // Adding another job leaves supervisord.conf unchanged, so reread/update
+    // alone is insufficient; the existing Supercronic process needs USR2.
+    const second = addCronJob(state, {
+      app: "alpha",
+      name: "second",
+      schedule: "*/10 * * * *",
+      command: ["echo", "second-job"],
+    }, platform);
+    state = second.state;
+    await render.apply(state, { reloadPlan: second.reloadPlan, skipValidate: true });
+    let crontab = await platform.fs.readText(
+      join(root, "generated/runner/php85/cron/alpha.crontab"),
+    );
+    assertEquals(crontab.includes("first-job"), true);
+    assertEquals(crontab.includes("second-job"), true);
+    assertEquals(
+      process.calls.some(({ command }) =>
+        command.includes("signal") && command.includes("USR2") &&
+        command.includes("scheduler-alpha")
+      ),
+      true,
+    );
+
+    process.calls.length = 0;
+    const removed = removeCronJob(
+      state,
+      "alpha",
+      "second",
+      platform.clock.nowIso(),
+    );
+    state = removed.state;
+    await render.apply(state, { reloadPlan: removed.reloadPlan, skipValidate: true });
+    crontab = await platform.fs.readText(
+      join(root, "generated/runner/php85/cron/alpha.crontab"),
+    );
+    assertEquals(crontab.includes("first-job"), true);
+    assertEquals(crontab.includes("second-job"), false);
+    assertEquals(
+      process.calls.some(({ command }) =>
+        command.includes("signal") && command.includes("USR2") &&
+        command.includes("scheduler-alpha")
+      ),
       true,
     );
   } finally {

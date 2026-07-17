@@ -54,11 +54,15 @@ export type EnableDeployInput = {
 };
 
 /** Enabling/disabling deploy changes the vhost, FPM open_basedir, and runner cron. */
-function deploySurfaceReloadPlan(app: AppState): ReloadPlan {
+function deploySurfaceReloadPlan(app: AppState, schedulerRemains: boolean): ReloadPlan {
+  const runnerService = `${app.phpService}-runner`;
   return {
     nginx: true,
     phpFpm: new Set([app.phpService]),
-    phpRunner: new Set([`${app.phpService}-runner`]),
+    phpRunner: new Set([runnerService]),
+    ...(schedulerRemains
+      ? { cronSchedulers: new Map([[runnerService, new Set([String(app.slug)])]]) }
+      : {}),
   };
 }
 
@@ -94,7 +98,7 @@ export function enableDeploy(
       updatedAt: next.updatedAt,
     },
     secret,
-    reloadPlan: deploySurfaceReloadPlan(app),
+    reloadPlan: deploySurfaceReloadPlan(app, true),
   };
 }
 
@@ -120,7 +124,10 @@ export function disableDeploy(
       apps: { ...state.apps, [slug]: next },
       updatedAt: now,
     },
-    reloadPlan: deploySurfaceReloadPlan(app),
+    reloadPlan: deploySurfaceReloadPlan(
+      app,
+      state.cronJobs.some((job) => job.app === slug && job.enabled),
+    ),
   };
 }
 
