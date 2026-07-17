@@ -256,6 +256,8 @@ function renderPhpFragment(service: string, image: string, version: string): str
           `./generated/runner/${service}/supervisord.conf:/etc/bento/supervisord.conf:ro`,
           `./generated/runner/${service}/cron:/etc/bento/cron:ro`,
           "./helpers:/opt/bento/helpers:ro",
+          // The drain resets OPcache through the app's own FPM Unix socket.
+          `./runtime/php-fpm/${service}:/run/php-fpm/${service}:ro`,
           `./runtime/locks/${service}:/run/bento`,
         ],
         environment: {

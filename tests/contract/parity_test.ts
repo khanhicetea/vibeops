@@ -139,6 +139,15 @@ Deno.test("materialize uses digest-addressed cache and skips republish", async (
       await Deno.stat(join(stack, "helpers/deploy-webhook.php")).then(() => true),
       true,
     );
+    const drainPhp = await Deno.readTextFile(join(stack, "helpers/deploy-drain.php"));
+    const drainSh = await Deno.readTextFile(join(stack, "helpers/deploy-drain.sh"));
+    assertEquals(drainPhp.includes("resetOpcache"), true);
+    assertEquals(drainSh.includes("deploy-drain.php"), true);
+    assertEquals(drainSh.includes("bento deploy drain"), false);
+    assertEquals(
+      await Deno.stat(join(stack, "docker/php/helpers/deploy-drain.php")).then(() => true),
+      true,
+    );
 
     const meta1 = await Deno.readTextFile(join(stack, "docker/.materialized.json"));
     assertEquals(JSON.parse(meta1).digest, first.digest);

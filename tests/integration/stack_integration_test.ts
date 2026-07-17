@@ -547,6 +547,16 @@ Deno.test("F2 deploy enable + queue surface + drain status", async () => {
     const vhost = await readText(gen(h, "nginx", "sites", "alpha.conf"));
     assertEquals(vhost.includes("/_bento/deploy"), true);
     assertEquals(vhost.includes("/_bento/clean-opcache"), true);
+    const state = JSON.parse(await readText(join(h.stack, "state.json")));
+    const service = state.apps.alpha.phpService;
+    const crontab = await readText(
+      gen(h, "runner", service, "cron", "alpha.crontab"),
+    );
+    assertEquals(crontab.includes("deploy-drain.sh alpha"), true);
+    assertEquals(crontab.includes(`/run/php-fpm/${service}/alpha.sock`), true);
+    const helper = await readText(join(h.stack, "helpers", "deploy-drain.sh"));
+    assertEquals(helper.includes("deploy-drain.php"), true);
+    assertEquals(helper.includes("bento deploy drain"), false);
 
     assertEquals(await h.run("deploy", "status", "alpha"), 0);
     assertEquals(await h.run("deploy", "instructions", "alpha"), 0);

@@ -288,7 +288,7 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       if (app.deploy.enabled) {
         // supercronic has no user field — drop privileges via setpriv.
         lines.push(
-          `* * * * * setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /opt/bento/helpers/deploy-drain.sh ${app.slug}`,
+          `* * * * * setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /opt/bento/helpers/deploy-drain.sh ${app.slug} /run/php-fpm/${app.phpService}/${app.slug}.sock`,
         );
       }
       for (const job of appJobs) {

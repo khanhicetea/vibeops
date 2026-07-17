@@ -42,8 +42,11 @@ const DOCKER_PHP_FILES = [
 const HELPER_FILES = [
   "helpers/deploy-webhook.php",
   "helpers/clean-opcache.php",
+  "helpers/deploy-drain.php",
   "helpers/deploy-drain.sh",
 ] as const;
+
+const HELPER_NAMES = HELPER_FILES.map((path) => path.slice("helpers/".length));
 
 /**
  * Materialize docker contexts + helpers under stack/docker and stack/helpers
@@ -71,7 +74,7 @@ export async function materializeDockerAssets(
   if (!(await isPublishedCurrent(platform, dockerRoot, helpersDir, digest))) {
     await publishFromCache(platform, cacheDir, dockerRoot, helpersDir);
     // Mirror stack helpers into PHP build context (Compose COPY helpers/)
-    for (const name of ["deploy-webhook.php", "clean-opcache.php", "deploy-drain.sh"]) {
+    for (const name of HELPER_NAMES) {
       const src = join(helpersDir, name);
       if (await platform.fs.exists(src)) {
         const dest = join(phpContext, "helpers", name);
@@ -149,7 +152,7 @@ async function buildDigestCache(
   await materializePaths(platform, [...HELPER_FILES], partial, "");
 
   // Also stage helpers into php build context inside the cache for completeness
-  for (const name of ["deploy-webhook.php", "clean-opcache.php", "deploy-drain.sh"]) {
+  for (const name of HELPER_NAMES) {
     const src = join(helpersRoot, name);
     if (await platform.fs.exists(src)) {
       const dest = join(dockerRoot, "php", "helpers", name);

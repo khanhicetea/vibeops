@@ -4,10 +4,12 @@ import { createEmptyState } from "../../src/domain/state.ts";
 import { materializeAppHome, provisionApp } from "../../src/services/app.ts";
 import {
   type DeployJob,
+  disableDeploy,
   drainDeploy,
   enableDeploy,
   enqueueDeploy,
   retainJobs,
+  rotateDeploySecret,
   verifyDeploySignature,
 } from "../../src/services/deploy.ts";
 import { createFixedClock } from "../../src/platform/clock.ts";
@@ -44,6 +46,30 @@ async function hmacSha256(secret: string, body: Uint8Array): Promise<string> {
   const sig = await crypto.subtle.sign("HMAC", key, body.slice());
   return encodeHex(new Uint8Array(sig));
 }
+
+Deno.test("deploy surface changes reload the required data-plane services", () => {
+  const root = "/tmp/bento-deploy-reload";
+  const platform = testPlatform(root);
+  const provisioned = provisionApp(platform, createEmptyState(), {
+    slug: "alpha",
+    domain: "a.test",
+  });
+
+  const enabled = enableDeploy(provisioned.state, { slug: "alpha" }, platform);
+  assertEquals(enabled.reloadPlan.nginx, true);
+  assertEquals(enabled.reloadPlan.phpFpm.has("php85"), true);
+  assertEquals(enabled.reloadPlan.phpRunner.has("php85-runner"), true);
+
+  const rotated = rotateDeploySecret(enabled.state, "alpha", platform);
+  assertEquals(rotated.reloadPlan.nginx, true);
+  assertEquals(rotated.reloadPlan.phpFpm.size, 0);
+  assertEquals(rotated.reloadPlan.phpRunner.size, 0);
+
+  const disabled = disableDeploy(rotated.state, "alpha", platform.clock.nowIso());
+  assertEquals(disabled.reloadPlan.nginx, true);
+  assertEquals(disabled.reloadPlan.phpFpm.has("php85"), true);
+  assertEquals(disabled.reloadPlan.phpRunner.has("php85-runner"), true);
+});
 
 Deno.test("verifyDeploySignature accepts valid sha256", async () => {
   const body = new TextEncoder().encode('{"ref":"refs/heads/main"}');

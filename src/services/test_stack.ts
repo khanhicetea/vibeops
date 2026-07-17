@@ -9,6 +9,7 @@
  *   5. cron-worker     * * * * * print cron + file worker, wait 61s
  *   6. permissions     break modes → repair → re-check
  *   7. http/tls/status boot TLS HTTP (ACME skipped)
+ *   8. deploy          live webhook → queue → runner drain → hook → OPcache
  *
  * Invoked as: `bento test-stack [name]` (default name: testbento)
  * or global:  `bento --test-stack [name]`
@@ -30,6 +31,7 @@ import { ensureAcmeWebroot } from "./tls.ts";
 import { addCronJob, removeCronJob } from "./cron.ts";
 import { addWorker, removeWorker, workerProgramName } from "./worker.ts";
 import { checkPermissions, repairPermissions } from "./permissions.ts";
+import { enableDeploy } from "./deploy.ts";
 
 export const DEFAULT_TEST_STACK_NAME = "testbento";
 /** Default wait for once-per-minute cron to fire (user requirement: 61s). */
@@ -287,6 +289,20 @@ function phpVersionProbe(): string {
   return `<?php
 echo PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . PHP_EOL;
 `;
+}
+
+async function hmacSha256Hex(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)),
+  );
+  return [...signature].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function loadAppCredEnv(
@@ -1501,6 +1517,193 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     };
   });
 
+  // =========================================================================
+  // CHAIN 8 — live deploy webhook → queue → runner → hook → OPcache
+  // =========================================================================
+  chain("deploy");
+
+  await record(
+    "deploy-live",
+    "Signed webhook drains in runner, executes hook, and resets app OPcache",
+    async () => {
+      const httpStep = steps.find((step) => step.id === "http");
+      if (opts.skipHttp || httpStep?.skipped || httpStep?.ok === false) {
+        return {
+          ok: true,
+          skipped: true,
+          detail: opts.skipHttp ? "--skip-http set" : "live host nginx check unavailable",
+        };
+      }
+
+      state = await store.load();
+      const current = state.apps[appSlug];
+      if (!current) return { ok: false, detail: "demo app missing" };
+      const enabled = enableDeploy(state, { slug: appSlug }, platform);
+      const app = enabled.state.apps[appSlug]!;
+      const appHome = join(platform.paths.paths.homesDir, appSlug);
+      const bentoDir = join(appHome, ".bento");
+      const markerPath = join(bentoDir, "live-deploy-hook-ran");
+      const queuePath = join(bentoDir, "queue.json");
+      await platform.fs.remove(markerPath).catch(() => {});
+      await platform.fs.atomicWriteText(
+        queuePath,
+        `${JSON.stringify({ schemaVersion: 1, jobs: [] }, null, 2)}\n`,
+        0o600,
+      );
+      await platform.fs.atomicWriteText(
+        join(bentoDir, "deploy.sh"),
+        `#!/bin/sh
+set -eu
+test -s "$BENTO_DEPLOY_PAYLOAD_FILE"
+printf '%s\n' "$BENTO_DEPLOY_ID" > "$HOME/.bento/live-deploy-hook-ran"
+echo "live deploy hook executed: $BENTO_DEPLOY_ID"
+`,
+        0o750,
+      );
+      const redisShared = await loadRedisPassword(platform);
+      await materializeAppHome(platform, app, {
+        recursivePerms: false,
+        redisSharedPassword: redisShared,
+      });
+      await store.save(enabled.state);
+      state = enabled.state;
+      await render.apply(state, { renderOnly: true, skipValidate: true });
+
+      const phpService = app.phpService;
+      const runner = `${phpService}-runner`;
+      const restarted = await composeCmd(
+        platform,
+        state,
+        ["restart", phpService, runner, "nginx"],
+        180_000,
+      );
+      if (restarted.code !== 0) {
+        return {
+          ok: false,
+          detail: `deploy service restart failed: ${
+            (restarted.stderr || restarted.stdout).trim().slice(0, 400)
+          }`,
+        };
+      }
+      const ready = await waitFor(
+        "deploy FPM socket",
+        30_000,
+        async () =>
+          await platform.fs.exists(
+            join(opts.stackRoot, "runtime", "php-fpm", phpService, `${appSlug}.sock`),
+          ),
+        log,
+      );
+      if (!ready) return { ok: false, detail: "app FPM socket did not return after restart" };
+      await sleep(1500);
+
+      const body = JSON.stringify({ ref: "refs/heads/main", live: true });
+      const signature = await hmacSha256Hex(enabled.secret, body);
+      const webhook = await runCapture(
+        [
+          "curl",
+          "-sS",
+          "--max-time",
+          "15",
+          "-w",
+          "\n%{http_code}",
+          "-H",
+          `Host: ${app.mainDomain}`,
+          "-H",
+          "Content-Type: application/json",
+          "-H",
+          `X-Hub-Signature-256: sha256=${signature}`,
+          "--data-binary",
+          "@-",
+          "http://127.0.0.1/_bento/deploy",
+        ],
+        { stdin: body, timeoutMs: 20_000 },
+      );
+      const responseLines = webhook.stdout.trimEnd().split("\n");
+      const statusCode = responseLines.pop() ?? "";
+      const responseBody = responseLines.join("\n");
+      if (webhook.code !== 0 || statusCode !== "202") {
+        return {
+          ok: false,
+          detail: `webhook exit=${webhook.code} HTTP=${statusCode}: ${
+            (webhook.stderr || responseBody).trim().slice(0, 300)
+          }`,
+        };
+      }
+      let accepted: { id?: string; status?: string };
+      try {
+        accepted = JSON.parse(responseBody) as { id?: string; status?: string };
+      } catch {
+        return { ok: false, detail: `invalid webhook response: ${responseBody.slice(0, 200)}` };
+      }
+      const jobId = accepted.id ?? "";
+      if (!/^dep_[A-Za-z0-9_-]+$/.test(jobId) || accepted.status !== "queued") {
+        return { ok: false, detail: `unexpected webhook response: ${responseBody.slice(0, 200)}` };
+      }
+
+      const socketPath = `/run/php-fpm/${phpService}/${appSlug}.sock`;
+      const drained = await composeCmd(
+        platform,
+        state,
+        [
+          "exec",
+          "-T",
+          runner,
+          "setpriv",
+          `--reuid=${app.uid}`,
+          `--regid=${app.gid}`,
+          "--clear-groups",
+          "--",
+          "/opt/bento/helpers/deploy-drain.sh",
+          appSlug,
+          socketPath,
+        ],
+        60_000,
+      );
+      if (drained.code !== 0) {
+        return {
+          ok: false,
+          detail: `runner drain exit ${drained.code}: ${
+            (drained.stderr || drained.stdout).trim().slice(0, 400)
+          }`,
+        };
+      }
+
+      const queue = JSON.parse(await platform.fs.readText(queuePath)) as {
+        jobs: Array<{ id?: string; status?: string; exitCode?: number; logName?: string }>;
+      };
+      const job = queue.jobs.find((candidate) => candidate.id === jobId);
+      if (job?.status !== "success" || job.exitCode !== 0) {
+        return {
+          ok: false,
+          detail: `job did not succeed: ${JSON.stringify(job ?? null)}`,
+        };
+      }
+      const marker = await platform.fs.readText(markerPath).catch(() => "");
+      if (marker.trim() !== jobId) {
+        return { ok: false, detail: `deploy hook marker missing for ${jobId}` };
+      }
+      const logPath = join(appHome, "logs", job.logName ?? `deploy-${jobId}.log`);
+      const deployLog = await platform.fs.readText(logPath);
+      if (!deployLog.includes("live deploy hook executed")) {
+        return { ok: false, detail: "deploy hook output missing from job log" };
+      }
+      if (!deployLog.includes("opcache reset: reset")) {
+        return {
+          ok: false,
+          detail: `OPcache reset was not confirmed: ${deployLog.trim().slice(-300)}`,
+        };
+      }
+      if (await platform.fs.exists(join(bentoDir, `payload-${jobId}.json`))) {
+        return { ok: false, detail: "deploy payload snapshot was not cleaned up" };
+      }
+      return {
+        ok: true,
+        detail: `webhook 202; ${jobId} success; hook marker + OPcache reset confirmed`,
+      };
+    },
+  );
+
   // Cleanup
   if (!opts.keep) {
     await record("cleanup", "Compose down (preserve volumes)", async () => {
@@ -1598,7 +1801,7 @@ export function formatTestStackReport(report: TestStackReport): string {
   lines.push(report.ok ? "RESULT: PASS" : "RESULT: FAIL");
   lines.push("");
   lines.push(
-    "Chains: bootstrap → apps-create → db-add → domain → cron-worker → permissions → http/tls",
+    "Chains: bootstrap → apps-create → db-add → domain → cron-worker → permissions → http/tls → deploy",
   );
   lines.push("Note: TLS ACME issuance is not exercised (requires public DNS).");
   return lines.join("\n");

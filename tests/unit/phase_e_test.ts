@@ -234,10 +234,22 @@ Deno.test("E3 disabled deploy omits /_bento routes; enabled matches helpers", as
       vhost.includes("SCRIPT_FILENAME /opt/bento/helpers/clean-opcache.php"),
       true,
     );
-    // default argv
+    // default argv and container-local drain wiring
     const app = state.apps["alpha"]!;
     assertEquals(app.deploy.argv[0], "sh");
     assertEquals(app.deploy.argv[1], "/home/alpha/.bento/deploy.sh");
+    const crontab = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/alpha.crontab")!.content,
+    );
+    assertEquals(crontab.includes("/opt/bento/helpers/deploy-drain.sh alpha"), true);
+    assertEquals(crontab.includes("/run/php-fpm/php85/alpha.sock"), true);
+    const compose = textContent(
+      files.find((f) => f.relPath === "compose/docker-compose.php-php85.yml")!.content,
+    );
+    assertEquals(
+      compose.includes("./runtime/php-fpm/php85:/run/php-fpm/php85:ro"),
+      true,
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }

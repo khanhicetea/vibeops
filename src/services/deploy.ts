@@ -16,7 +16,7 @@ import {
 } from "../domain/types.ts";
 import { conflictError, notFoundError, safetyError, validationError } from "../domain/errors.ts";
 import type { Platform } from "../platform/mod.ts";
-import { type ReloadPlan, reloadPlanForRunnerChange } from "../domain/reload.ts";
+import type { ReloadPlan } from "../domain/reload.ts";
 
 export type DeployJobStatus =
   | "queued"
@@ -53,6 +53,15 @@ export type EnableDeployInput = {
   argv?: string[];
 };
 
+/** Enabling/disabling deploy changes the vhost, FPM open_basedir, and runner cron. */
+function deploySurfaceReloadPlan(app: AppState): ReloadPlan {
+  return {
+    nginx: true,
+    phpFpm: new Set([app.phpService]),
+    phpRunner: new Set([`${app.phpService}-runner`]),
+  };
+}
+
 export function enableDeploy(
   state: DesiredState,
   input: EnableDeployInput,
@@ -85,7 +94,7 @@ export function enableDeploy(
       updatedAt: next.updatedAt,
     },
     secret,
-    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+    reloadPlan: deploySurfaceReloadPlan(app),
   };
 }
 
@@ -111,7 +120,7 @@ export function disableDeploy(
       apps: { ...state.apps, [slug]: next },
       updatedAt: now,
     },
-    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+    reloadPlan: deploySurfaceReloadPlan(app),
   };
 }
 
@@ -138,7 +147,12 @@ export function rotateDeploySecret(
       updatedAt: next.updatedAt,
     },
     secret,
-    reloadPlan: reloadPlanForRunnerChange(`${app.phpService}-runner`),
+    // Only the generated FastCGI secret changes during rotation.
+    reloadPlan: {
+      nginx: true,
+      phpFpm: new Set(),
+      phpRunner: new Set(),
+    },
   };
 }
 

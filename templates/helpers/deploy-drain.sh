@@ -1,15 +1,23 @@
 #!/bin/sh
-# Managed deploy drain entrypoint for supercronic (runs as app via bento runner helpers).
-# Actual drain authority lives in the control plane; this script is a container-side bridge.
+# Container-local deploy drain entrypoint for supercronic.
 set -eu
+umask 077
 APP="${1:-}"
+SOCKET="${2:-}"
 if [ -z "$APP" ]; then
-  echo "usage: deploy-drain.sh <app>" >&2
+  echo "usage: deploy-drain.sh <app> [fpm-socket]" >&2
   exit 2
 fi
-# Prefer invoking bento if present on host-mounted path; otherwise no-op with note.
-if command -v bento >/dev/null 2>&1; then
-  exec bento deploy drain "$APP"
+if ! command -v php >/dev/null 2>&1; then
+  echo "deploy drain unavailable: php CLI is missing" >&2
+  exit 127
 fi
-echo "bento deploy drain not available in runner image for $APP" >&2
-exit 0
+HELPER=/opt/bento/helpers/deploy-drain.php
+if [ ! -r "$HELPER" ]; then
+  echo "deploy drain unavailable: $HELPER is missing" >&2
+  exit 127
+fi
+if [ -n "$SOCKET" ]; then
+  exec php "$HELPER" "$APP" "$SOCKET"
+fi
+exec php "$HELPER" "$APP"

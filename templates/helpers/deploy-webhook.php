@@ -21,6 +21,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 
 $app = $_SERVER['BENTO_APP'] ?? '';
 $secret = $_SERVER['BENTO_DEPLOY_SECRET'] ?? '';
+// FastCGI parameters appear in $_SERVER; the environment fallback also makes
+// the same stack-owned controller testable under PHP's built-in HTTP server.
+if ($app === '') {
+    $fromEnv = getenv('BENTO_APP');
+    $app = is_string($fromEnv) ? $fromEnv : '';
+}
+if ($secret === '') {
+    $fromEnv = getenv('BENTO_DEPLOY_SECRET');
+    $secret = is_string($fromEnv) ? $fromEnv : '';
+}
 if ($app === '' || $secret === '') {
     respond(404, ['error' => 'not found']);
 }

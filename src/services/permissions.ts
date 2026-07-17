@@ -315,6 +315,21 @@ export async function applyAppPermissionPolicy(
   );
   actions.push("wrote permission-policy metadata");
 
+  // Atomic control-plane rewrites create new inodes. Re-assert ownership on the
+  // app-readable runtime files after all writes so the setpriv runner can drain.
+  for (
+    const p of [
+      join(home, "credentials", "app.env"),
+      join(home, ".bento", "deploy.sh"),
+      join(home, ".bento", "deploy.json"),
+      join(home, ".bento", "queue.json"),
+      join(home, ".bento", "identity.json"),
+      join(home, ".bento", "permission-policy.json"),
+    ]
+  ) {
+    if (await platform.fs.exists(p)) await chown(p, `${uid}:${gid}`, false);
+  }
+
   return actions;
 }
 

@@ -109,6 +109,7 @@ Internet -> host-network Nginx -> per-app PHP-FPM sockets
                                  -> private MySQL / Redis
 
 PHP runner (one per version) -> per-app supercronic + flat Supervisor workers
+                             -> local deploy drain -> hook -> app FPM OPcache reset
 ```
 
 Apps share containers by PHP version and isolate through UID/GID, pools, filesystem policy, DB grants, and optional Redis ACL — not one container per app.
@@ -119,7 +120,7 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Interactive  | `tui` (wizard: menus, tables, alerts for common ops)                                                                                                                                                                             |
 | Bootstrap    | `init`, `render`, `apply`, `status`                                                                                                                                                                                              |
-| Live proof   | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron `* * * * *` + worker (61s wait), permissions repair, HTTP boot TLS; ACME skipped |
+| Live proof   | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron + worker, permissions, HTTP boot TLS, signed webhook → runner hook → OPcache; ACME skipped |
 | Apps         | `app create\|list\|show\|update\|shell` (delete/remove blocked)                                                                                                                                                                  |
 | PHP          | `php add\|remove\|list`                                                                                                                                                                                                          |
 | MySQL        | `mysql add\|list\|db\|password` (version removal blocked)                                                                                                                                                                        |
@@ -159,7 +160,7 @@ Product, architecture, and reimplementation contract live in:
 2. [`specs/02-system-architecture.md`](specs/02-system-architecture.md)
 3. [`specs/03-reimplementation-contract.md`](specs/03-reimplementation-contract.md)
 
-Unit, contract, and integration tests cover state validation, domain uniqueness, render rollback, compose safety, deploy HMAC/queue policies, CLI smoke flows, multi-app isolation, TLS/routing modes, and corrupt-boundary rejection (Phase F acceptance matrix). Phase G locks explicit non-goals as safety refusals (no app/proxy teardown, no MySQL volume deletion, no per-app container quotas).
+Unit, contract, and integration tests cover state validation, domain uniqueness, render rollback, compose safety, deploy HMAC/queue policies, a live webhook → queue → runner hook → FPM OPcache pipeline, CLI smoke flows, multi-app isolation, TLS/routing modes, and corrupt-boundary rejection (Phase F acceptance matrix). Phase G locks explicit non-goals as safety refusals (no app/proxy teardown, no MySQL volume deletion, no per-app container quotas).
 
 ## Explicit non-goals (Phase G)
 
