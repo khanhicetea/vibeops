@@ -3,7 +3,7 @@
  * Complements existing unit suites; maps F-* and R-* coverage noted in specs/todo.md.
  */
 import { assertEquals, assertThrows } from "@std/assert";
-import { join } from "@std/path";
+import { basename, join } from "@std/path";
 import { createEmptyState } from "../../src/domain/state.ts";
 import { materializeAppHome, provisionApp } from "../../src/services/app.ts";
 import {
@@ -14,7 +14,7 @@ import {
   retainJobs,
 } from "../../src/services/deploy.ts";
 import { generateAll } from "../../src/services/generate.ts";
-import { createAppDatabase } from "../../src/services/mysql.ts";
+import { createAppDatabase, listRecentBackupFiles } from "../../src/services/mysql.ts";
 import { aclRules, redisConnectionEnv } from "../../src/services/redis.ts";
 import { addCronJob } from "../../src/services/cron.ts";
 import { addWorker, workerProgramName } from "../../src/services/worker.ts";
@@ -459,6 +459,36 @@ Deno.test("F1 deploy interrupt reclaim marks stale running failed", async () => 
 });
 
 // --- F-20 backup dry path (no docker) --------------------------------------
+
+Deno.test("restore picker finds only the latest 20 finalized backup files", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-restore-picker-" });
+  try {
+    const platform = testPlatform(root);
+    const dir = join(platform.paths.paths.backupsDir, "mysql84", "alpha");
+    await platform.fs.mkdirp(dir);
+
+    for (let i = 0; i < 22; i++) {
+      const path = join(dir, `backup-${String(i).padStart(2, "0")}.sql.zst`);
+      await platform.fs.writeBytes(path, new Uint8Array(i + 1).fill(1));
+      const time = new Date(Date.UTC(2026, 0, 1, 0, 0, i));
+      await Deno.utime(path, time, time);
+    }
+    await platform.fs.writeText(join(dir, "notes.txt"), "not a dump");
+    await platform.fs.writeText(join(dir, "unfinished.sql.partial"), "partial");
+    await platform.fs.writeText(
+      join(platform.paths.paths.backupsDir, "state", "state.json"),
+      "{}",
+    );
+
+    const files = await listRecentBackupFiles(platform);
+    assertEquals(files.length, 20);
+    assertEquals(basename(files[0]!.path), "backup-21.sql.zst");
+    assertEquals(basename(files.at(-1)!.path), "backup-02.sql.zst");
+    assertEquals(files[0]!.bytes, 22);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
 
 Deno.test("F1 backup refuses empty dump and leaves no final artifact", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-f1-" });

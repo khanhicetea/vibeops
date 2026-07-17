@@ -145,6 +145,31 @@ Deno.test("menu with >=10 items still selects letter key instantly", async () =>
   assertEquals(picked, "v10");
 });
 
+Deno.test("menu letter b selects item 11 rather than cancelling", async () => {
+  const choices: MenuChoice<string>[] = Array.from({ length: 12 }, (_, i) => ({
+    label: `Item ${i + 1}`,
+    value: `v${i + 1}`,
+  }));
+  const io = fakeTerminal(["b"]);
+  const ui = new WizardUI(io);
+  assertEquals(await ui.menu("Pick", choices), "v11");
+});
+
+Deno.test("table menu aligns columns and selects a row", async () => {
+  const io = fakeTerminal(["2"]);
+  const ui = new WizardUI(io);
+  const picked = await ui.tableMenu("Choose backup", ["File", "Created", "Size"], [
+    { columns: ["older.sql.zst", "2026-07-16", "1.5 MiB"], value: "older" },
+    { columns: ["newer.sql.zst", "2026-07-17", "2 MiB"], value: "newer" },
+    { columns: ["Path of file…", "", ""], value: "path" },
+  ]);
+  assertEquals(picked, "newer");
+  const output = io.out.join("");
+  assertEquals(output.includes("Created"), true);
+  assertEquals(output.includes("1.5 MiB"), true);
+  assertEquals(output.includes("Path of file…"), true);
+});
+
 Deno.test("menu j/k navigation when <10", async () => {
   const io = fakeTerminal(["j", "enter"]);
   const ui = new WizardUI(io);

@@ -21,6 +21,13 @@ export type MenuChoice<T = string> = {
   disabled?: boolean;
 };
 
+export type TableMenuChoice<T = string> = {
+  /** Cells displayed under the table headers. */
+  columns: string[];
+  value: T;
+  disabled?: boolean;
+};
+
 export type AlertLevel = "info" | "success" | "warn" | "error";
 
 /** Normalized key events from raw or line-mode input. */
@@ -418,6 +425,37 @@ export class WizardUI {
     }
   }
 
+  /** Select a row from an aligned table using the normal menu controls. */
+  async tableMenu<T>(
+    title: string,
+    headers: string[],
+    rows: TableMenuChoice<T>[],
+    opts?: { allowCancel?: boolean; cancelLabel?: string },
+  ): Promise<T | null> {
+    const widths = headers.map((header, index) =>
+      Math.max(header.length, ...rows.map((row) => (row.columns[index] ?? "").length), 1)
+    );
+    const formatRow = (columns: string[]) =>
+      headers.map((_, index) => {
+        const cell = columns[index] ?? "";
+        return index === headers.length - 1 ? cell : cell.padEnd(widths[index]!) + "  ";
+      }).join("");
+
+    return await this.menu(
+      title,
+      rows.map((row) => ({
+        label: formatRow(row.columns),
+        value: row.value,
+        disabled: row.disabled,
+      })),
+      {
+        ...opts,
+        // Align headers with labels after the menu marker and selection key.
+        subtitle: `          ${formatRow(headers)}`,
+      },
+    );
+  }
+
   /** Free-text prompt. Returns null on EOF/cancel. Empty allowed unless required. */
   async prompt(
     label: string,
@@ -572,7 +610,7 @@ function resolveKey<T>(
   allowCancel: boolean,
 ): ResolveResult<T> {
   const a = answer.trim().toLowerCase();
-  if (a === "0" || a === "q" || a === "b") {
+  if (a === "0" || a === "q") {
     return allowCancel ? "cancel" : "invalid";
   }
   const idx = keys.indexOf(a);

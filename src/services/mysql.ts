@@ -253,6 +253,59 @@ export type BackupArtifact = {
   bytes: number;
 };
 
+export type RecentBackupFile = {
+  path: string;
+  bytes: number;
+  /** Filesystem finalization time used as the backup creation date. */
+  createdAt: Date | null;
+};
+
+/**
+ * Find finalized logical dumps below the stack backup directory, newest first.
+ * Symlinks, partial dumps, restore staging files, and unrelated state backups
+ * are excluded.
+ */
+export async function listRecentBackupFiles(
+  platform: Platform,
+  limit = 20,
+): Promise<RecentBackupFile[]> {
+  const root = platform.paths.paths.backupsDir;
+  if (!(await platform.fs.exists(root))) return [];
+
+  const files: RecentBackupFile[] = [];
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    // Bento backup paths are root/service/database/file. Keep malformed trees
+    // bounded while still allowing a little room for operator organization.
+    if (depth > 8) return;
+    for (const name of await platform.fs.readDir(dir)) {
+      if (name.startsWith(".")) continue;
+      const path = join(dir, name);
+      const entry = await platform.fs.lstat(path).catch(() => null);
+      // A concurrent retention pass may remove a file while it is listed.
+      if (!entry) continue;
+      if (entry.isSymlink) continue;
+      if (entry.isDirectory) {
+        await walk(path, depth + 1);
+        continue;
+      }
+      if (!entry.isFile || entry.size === 0 || !/\.sql(?:\.gz|\.zst|\.zstd)?$/i.test(name)) {
+        continue;
+      }
+      const stat = await platform.fs.stat(path).catch(() => null);
+      if (!stat?.isFile || stat.size === 0) continue;
+      files.push({ path, bytes: stat.size, createdAt: stat.modifiedAt });
+    }
+  };
+
+  await walk(root, 0);
+  return files
+    .sort((a, b) => {
+      const newest = (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0);
+      return newest || a.path.localeCompare(b.path);
+    })
+    .slice(0, Math.max(0, Math.floor(limit)));
+}
+
 /**
  * Plan and execute logical backups with atomic finalize.
  * Failed/empty dumps leave no final artifact.

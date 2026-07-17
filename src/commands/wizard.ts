@@ -3,6 +3,7 @@
  * Guided numbered menus over the same services as scripted CLI commands.
  */
 
+import { relative } from "@std/path";
 import { isBentoError } from "../domain/errors.ts";
 import type { TlsMode } from "../domain/state.ts";
 import { FPM_PROFILES } from "../domain/types.ts";
@@ -25,6 +26,7 @@ import {
   buildMysqlShellPlan,
   createAppDatabaseLive,
   listMysqlVersions,
+  listRecentBackupFiles,
   queryDatabaseSizes,
   queryProcesslist,
   resolveMysqlServices,
@@ -64,7 +66,7 @@ import { buildStatus, formatStatus } from "../services/status.ts";
 import { checkPermissions, formatPermReport, repairPermissions } from "../services/permissions.ts";
 import { assertSafeComposeArgs, composeArgs } from "../services/compose.ts";
 import { redact } from "../ui/output.ts";
-import { type MenuChoice, WizardUI } from "../ui/tui.ts";
+import { type MenuChoice, type TableMenuChoice, WizardUI } from "../ui/tui.ts";
 import { BENTO_VERSION } from "../version.ts";
 import type { CliContext } from "./context.ts";
 
@@ -142,6 +144,22 @@ class WizardExit extends Error {
 function pcDim(s: string): string {
   // local helper to avoid importing picocolors into every message site for dim-only
   return `\x1b[2m${s}\x1b[22m`;
+}
+
+function formatHumanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = -1;
+  do {
+    value /= 1024;
+    unit++;
+  } while (value >= 1024 && unit < units.length - 1);
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatBackupDate(date: Date | null): string {
+  return date ? `${date.toISOString().slice(0, 19).replace("T", " ")} UTC` : "unknown";
 }
 
 function handleError(ui: WizardUI, err: unknown): void {
@@ -1656,8 +1674,35 @@ async function sectionBackup(ui: WizardUI, ctx: CliContext): Promise<void> {
     "Restore is not object-level atomic",
     "A failed import can leave a partial destination database.",
   );
-  const file = await ui.prompt("Dump file path", { required: true });
+  type RestoreSource = { kind: "backup"; path: string } | { kind: "path" };
+  const recent = await listRecentBackupFiles(ctx.platform, 20).catch((err) => {
+    handleError(ui, err);
+    return [];
+  });
+  const sourceRows: TableMenuChoice<RestoreSource>[] = recent.map((backup) => ({
+    columns: [
+      relative(ctx.platform.paths.paths.backupsDir, backup.path) || backup.path,
+      formatBackupDate(backup.createdAt),
+      formatHumanSize(backup.bytes),
+    ],
+    value: { kind: "backup", path: backup.path },
+  }));
+  sourceRows.push({
+    columns: ["Path of file…", "", ""],
+    value: { kind: "path" },
+  });
+
+  const source = await ui.tableMenu(
+    "Choose dump file",
+    ["Backup file (latest 20)", "Created", "Size"],
+    sourceRows,
+  );
+  if (!source) return;
+  const file = source.kind === "backup"
+    ? source.path
+    : await ui.prompt("Dump file path", { required: true });
   if (!file) return;
+
   const slug = await pickApp(ui, ctx, { title: "Target app (ownership)" });
   if (!slug) return;
   const target = await ui.prompt("Target database name", { required: true });

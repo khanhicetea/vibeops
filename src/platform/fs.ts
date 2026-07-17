@@ -113,7 +113,13 @@ export function createFileSystem(): FileSystem {
 
     async stat(
       path: string,
-    ): Promise<{ isFile: boolean; isDirectory: boolean; mode: number; size: number }> {
+    ): Promise<{
+      isFile: boolean;
+      isDirectory: boolean;
+      mode: number;
+      size: number;
+      modifiedAt: Date | null;
+    }> {
       try {
         const s = await Deno.stat(path);
         return {
@@ -121,6 +127,7 @@ export function createFileSystem(): FileSystem {
           isDirectory: s.isDirectory,
           mode: s.mode ?? 0,
           size: s.size,
+          modifiedAt: s.mtime,
         };
       } catch (cause) {
         throw platformError(`failed to stat ${path}`, cause);

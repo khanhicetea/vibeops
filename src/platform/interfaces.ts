@@ -51,7 +51,13 @@ export interface FileSystem {
   readDir(path: string): Promise<string[]>;
   stat(
     path: string,
-  ): Promise<{ isFile: boolean; isDirectory: boolean; mode: number; size: number }>;
+  ): Promise<{
+    isFile: boolean;
+    isDirectory: boolean;
+    mode: number;
+    size: number;
+    modifiedAt: Date | null;
+  }>;
   /**
    * lstat does not follow symlinks. Use this when walking trees so repair/check
    * never chases symlink targets outside the app home.
