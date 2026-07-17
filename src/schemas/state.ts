@@ -41,6 +41,7 @@ import {
 } from "../domain/types.ts";
 import { STATE_SCHEMA_VERSION } from "../version.ts";
 import { stateError, validationError } from "../domain/errors.ts";
+import { migrateStateDocument } from "./migrations.ts";
 import {
   absolutePathSchema,
   appSlugSchema,
@@ -364,9 +365,17 @@ export function parseDesiredState(value: unknown): ParseResult<DesiredState> {
   if (schemaVersion < 1) {
     return err(`unsupported schemaVersion ${schemaVersion}`);
   }
-  // Migrations for older versions would run here. v1 is current.
 
-  const parsed = fromZod(desiredStateRawSchema.safeParse(value));
+  // Deterministic migration chain (pure; persistence/backup is the caller's job).
+  let migratedValue: unknown = value;
+  try {
+    const migrated = migrateStateDocument(value);
+    migratedValue = migrated.value;
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+
+  const parsed = fromZod(desiredStateRawSchema.safeParse(migratedValue));
   if (!parsed.ok) return parsed;
   const raw = parsed.value;
 

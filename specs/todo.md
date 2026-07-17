@@ -1,6 +1,6 @@
 # Bento remaining work (agent todo)
 
-Status snapshot: **~92% capabilities coded · ~78% acceptance proven · ~82% definition of done** (Phase A+B+C+D complete)
+Status snapshot: **~96% capabilities coded · ~85% acceptance proven · ~88% definition of done** (Phase A+B+C+D+E complete)
 
 Read first (in order):
 
@@ -176,41 +176,41 @@ Code exists in `RenderService`; close proof and edge gaps.
 
 ### E1. TLS real-world behavior  **P1** · F-12
 
-- [ ] Boot cert generation path solid for first start (entrypoint + materialize).
-- [ ] ACME mode: generated nginx markers/snippets sufficient for challenge; document operator DNS requirements.
-- [ ] External mode: cert/key path validation; no world-readable keys.
-- [ ] HTTPS redirect only when mode ≠ boot (template already; add contract test on generated server block).
+- [x] Boot cert generation path solid for first start (entrypoint + materialize).
+- [x] ACME mode: generated nginx markers/snippets sufficient for challenge; document operator DNS requirements.
+- [x] External mode: cert/key path validation; no world-readable keys.
+- [x] HTTPS redirect only when mode ≠ boot (template already; add contract test on generated server block).
 
 ### E2. PHP routing proof  **P1** · F-04
 
-- [ ] Fixture-level assert: front-controller vhost rejects direct `/foo.php` execution patterns; legacy allows existing scripts.
+- [x] Fixture-level assert: front-controller vhost rejects direct `/foo.php` execution patterns; legacy allows existing scripts.
 - [ ] Optional integration later with real nginx container.
 
 ### E3. Deploy HTTP surface completeness  **P1** · F-17–F-19
 
-- [ ] Confirm generated `/_bento/deploy` and `/_bento/clean-opcache` locations match helpers under `templates/helpers/`.
-- [ ] Disabled deploy ⇒ route absent or 404 in generated config (test).
-- [ ] FIFO 429 / invalid 401 / oversized 413 behavior covered in PHP helper tests or documented harness.
-- [ ] Drain default argv `sh /home/<app>/.bento/deploy.sh`; exit 99 skipped; timeout + grace interrupt.
-- [ ] History/logs under `/home/<app>/logs/deploy-<id>.log` with retention prune.
+- [x] Confirm generated `/_bento/deploy` and `/_bento/clean-opcache` locations match helpers under `templates/helpers/`.
+- [x] Disabled deploy ⇒ route absent or 404 in generated config (test).
+- [x] FIFO 429 / invalid 401 / oversized 413 behavior covered in PHP helper tests or documented harness.
+- [x] Drain default argv `sh /home/<app>/.bento/deploy.sh`; exit 99 skipped; timeout + grace interrupt.
+- [x] History/logs under `/home/<app>/logs/deploy-<id>.log` with retention prune.
 
 ### E4. Permissions workflows  **P1** · product §6.9
 
-- [ ] Check / dry-run / shallow repair / explicit recursive repair all CLI-complete and documented.
-- [ ] Do not follow symlink targets (prove with test fixture).
-- [ ] Startup must not recursively chown large trees (guard/assert).
+- [x] Check / dry-run / shallow repair / explicit recursive repair all CLI-complete and documented.
+- [x] Do not follow symlink targets (prove with test fixture).
+- [x] Startup must not recursively chown large trees (guard/assert).
 
 ### E5. Status completeness  **P1** · F-27
 
-- [ ] Status covers: running roles, apps, runtimes, FPM profiles, entrypoint modes, domains, TLS, proxies, DB health, capacity warnings.
-- [ ] Redact secrets in human and `--json` output.
-- [ ] Stopped services: config ready message, not fake reload success.
+- [x] Status covers: running roles, apps, runtimes, FPM profiles, entrypoint modes, domains, TLS, proxies, DB health, capacity warnings.
+- [x] Redact secrets in human and `--json` output.
+- [x] Stopped services: config ready message, not fake reload success.
 
 ### E6. Schema migrations framework  **P2** · F-31
 
-- [ ] Keep rejecting future `schemaVersion` without write.
-- [ ] When schema bumps: typed `migrateV1toV2` chain, atomic save, backup before migrate.
-- [ ] No silent rewrite on no-op read (key order / defaults).
+- [x] Keep rejecting future `schemaVersion` without write.
+- [x] When schema bumps: typed `migrateV1toV2` chain, atomic save, backup before migrate.
+- [x] No silent rewrite on no-op read (key order / defaults).
 
 ### E7. Interactive wizard gaps  **P1**
 
@@ -219,9 +219,9 @@ Code exists in `RenderService`; close proof and edge gaps.
 
 ### E8. Overlay / Compose inspect  **P1** · F-25 · architecture §11
 
-- [ ] Deterministic overlay order (lexicographic) — exists; add test with multiple overlay files.
-- [ ] Command or status note showing merged Compose file list.
-- [ ] Refuse volume-destructive down (exists — keep green).
+- [x] Deterministic overlay order (lexicographic) — exists; add test with multiple overlay files.
+- [x] Command or status note showing merged Compose file list.
+- [x] Refuse volume-destructive down (exists — keep green).
 
 ---
 
@@ -311,8 +311,8 @@ Do in this order unless blocked:
 2. ~~**Phase B**~~ done  
 3. ~~**Phase C**~~ done  
 4. ~~**Phase D**~~ done  
-5. **Phase F** integration + system scenarios  
-6. **Phase E** residual polish (TLS/deploy/permissions/status)  
+5. ~~**Phase E**~~ done  
+6. **Phase F** integration + system scenarios + CI gates  
 
 ---
 
@@ -329,6 +329,8 @@ Do in this order unless blocked:
 | MySQL | `src/services/mysql.ts` |
 | Redis | `src/services/redis.ts` |
 | Deploy | `src/services/deploy.ts`, `templates/helpers/*` |
+| TLS | `src/services/tls.ts`, nginx vhost templates, `certs/` |
+| Schema migrations | `src/schemas/migrations.ts`, `state_store.ts` |
 | Cron/worker | `src/services/cron.ts`, `worker.ts` |
 | Access logs | `src/services/access_log.ts` |
 | Customization | `src/services/customization.ts` |
@@ -350,5 +352,6 @@ Do in this order unless blocked:
 | 2026-07-17 | phase B | Finished operator commands B1–B6: mysql shell/size/processlist (stdin-staged cnf, no host argv secrets); worker start/stop/restart/inspect (scoped supervisorctl); access logs enable/disable/rotate/report (nginx-only + reopen + GoAccess one-shot); template select/return/drift (provenance + preserve custom source); host maintenance run + crontab merge; uniform `--no-apply` + `apply --preview`. New modules `access_log.ts`, `customization.ts`, `maintenance.ts`; tests in `phase_b_test.ts` + cli smoke. 78 tests green. Dropped global `--root` alias for `--stack` so `mysql shell --root` works. Residual: interactive shell needs live docker; host cron register needs real crontab perms; GoAccess report needs image pull. |
 | 2026-07-17 | phase C | Closed R-01–R-10 proof + C1 compose transactional safety. Added `candidateFactory`/`afterPromoteFile` test hooks; compose `config -q` validator (soft-skip when Docker down, fail-closed on real errors); fixed memory-lock TOCTOU so concurrent exclusive acquirers serialize. New `tests/unit/phase_c_test.ts` (17 cases). 95 unit/contract tests green. Residual: integration suite still empty; file-lock under real multi-process stress not in CI. |
 | 2026-07-17 | phase D | Distribution parity F-28/F-29/F-30. Digest-addressed asset cache (`.asset-cache/<digest>/` → publish `docker/`+`helpers/`); asset resolver notes for compile `--include=templates`; version banner kept accurate; `deno task test:parity` + `smoke:compiled`; contract suite `tests/contract/parity_test.ts` (source smoke always; binary smoke/parity when `BENTO_BIN`/`dist/bento`). README CI/release notes. Residual: cross-arch binary execution still release-host only (compile:amd64/arm64 produce artifacts). |
+| 2026-07-17 | phase E | Closed thin product edges E1–E8 (except optional live nginx integration). TLS: ACME challenge locations + per-site ssl snippets, external path/mode validation, boot redirect-off proof, DNS/certbot docs in README. PHP routing fixture for front-controller vs legacy. Deploy routes match helpers; disabled absent; interrupt reclaim + log prune. Permissions lstat walk never follows symlinks; check/dry-run/shallow/recursive documented. Status: roles, DB health soft-probe, compose files, config-ready notes, secret-redacted JSON. Schema migration chain + `loadAndMigrate` backup; no-op load does not rewrite. Compose `files` command + lexicographic overlay test. Module `tls.ts`, `schemas/migrations.ts`; tests `phase_e_test.ts` (11). 111 tests green. Residual: Phase F integration suite + system scenarios still open. |
 
 When you complete a slice, append a row and check boxes above.

@@ -4,8 +4,18 @@ server {
   listen [::]:80;
   server_name {{serverNames}};
 
+  {{#acmeChallenge}}
+  location ^~ /.well-known/acme-challenge/ {
+    root {{acmeChallengeRoot}};
+    default_type "text/plain";
+    allow all;
+  }
+  {{/acmeChallenge}}
+
   {{#redirectHttps}}
-  return 301 https://$host$request_uri;
+  location / {
+    return 301 https://$host$request_uri;
+  }
   {{/redirectHttps}}
   {{^redirectHttps}}
   root {{docRoot}};
@@ -63,7 +73,7 @@ server {
   http2 on;
   server_name {{serverNames}};
 
-  include /etc/nginx/snippets/boot-ssl.conf;
+  include {{sslInclude}};
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
 
   root {{docRoot}};
@@ -78,6 +88,13 @@ server {
     include fastcgi_params;
     fastcgi_param SCRIPT_FILENAME /opt/bento/helpers/deploy-webhook.php;
     fastcgi_param BENTO_DEPLOY_SECRET "{{deploySecret}}";
+    fastcgi_param BENTO_APP "{{slug}}";
+    fastcgi_pass unix:{{socketPath}};
+  }
+  location = /_bento/clean-opcache {
+    internal;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME /opt/bento/helpers/clean-opcache.php;
     fastcgi_param BENTO_APP "{{slug}}";
     fastcgi_pass unix:{{socketPath}};
   }

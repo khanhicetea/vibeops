@@ -127,6 +127,29 @@ export function createFileSystem(): FileSystem {
       }
     },
 
+    async lstat(
+      path: string,
+    ): Promise<{
+      isFile: boolean;
+      isDirectory: boolean;
+      isSymlink: boolean;
+      mode: number;
+      size: number;
+    }> {
+      try {
+        const s = await Deno.lstat(path);
+        return {
+          isFile: s.isFile,
+          isDirectory: s.isDirectory,
+          isSymlink: s.isSymlink,
+          mode: s.mode ?? 0,
+          size: s.size,
+        };
+      } catch (cause) {
+        throw platformError(`failed to lstat ${path}`, cause);
+      }
+    },
+
     async atomicWriteText(path: string, content: string, mode?: FileMode): Promise<void> {
       await this.atomicWriteBytes(path, encoder.encode(content), mode);
     },

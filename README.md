@@ -103,12 +103,30 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | PHP | `php add\|remove\|list` |
 | MySQL | `mysql add\|list\|db\|password` (version removal blocked) |
 | Proxy | `proxy create\|list` |
-| TLS | `tls set --app\|--proxy --mode boot\|acme\|external` |
+| TLS | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below) |
 | Background | `cron …`, `worker …` |
 | Deploy | `deploy enable\|disable\|rotate\|status\|drain\|instructions` |
 | Exec | `exec <app> -- <cmd>` |
-| Compose | `compose -- <args>` (refuses `down -v`) |
-| Safety | `permissions check\|repair`, `backup`, `restore` |
+| Compose | `compose files`, `compose -- <args>` (refuses `down -v`) |
+| Safety | `permissions check\|repair [--shallow\|--recursive] [--dry-run]`, `backup`, `restore` |
+
+### TLS modes (F-12)
+
+| Mode | Behavior |
+|------|----------|
+| `boot` | Self-signed starter cert under `certs/boot.{crt,key}` (created on materialize / nginx entrypoint). **No** HTTP→HTTPS redirect. |
+| `acme` | Real certs expected at `certs/acme/<domain>/{fullchain,privkey}.pem`. HTTP-01 webroot is `certs/acme-www` (container `/var/www/acme`). Generated vhosts expose `/.well-known/acme-challenge/` and enable HTTPS redirect. **DNS A/AAAA for the site must point at this host before issuance.** Example: `certbot certonly --webroot -w ./certs/acme-www -d example.com`. |
+| `external` | Operator-managed cert+key under stack `certs/` (paths validated; private key must not be world-readable, mode `0600`). HTTPS redirect on. |
+
+TLS changes reload **Nginx only** (PHP/runners stay up).
+
+### Permissions (product §6.9)
+
+- `permissions check <app>` — policy issues without changes
+- `permissions repair <app> --dry-run` — print planned fixes
+- `permissions repair <app>` / `--shallow` — fix core dirs only (default repair path)
+- `permissions repair <app> --recursive` — bounded walk; **never follows symlink targets**
+- App create may apply recursive policy while the home tree is still small; routine startup/apply paths use shallow repairs only.
 
 Global flags: `--stack PATH` (or `BENTO_STACK_ROOT`), `--json`. Command parsing and help use **yargs**; table layout uses **cliui**; colorized operator output uses **picocolors**. Desired-state and CLI input validation use **zod**; cron schedules use **cron-parser**; PHP/MySQL version ordering uses **semver**; config templates use **mustache**. Standard library helpers come from official `@std/*` packages (path, yaml, encoding, assert).
 

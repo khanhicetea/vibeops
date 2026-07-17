@@ -52,6 +52,19 @@ export interface FileSystem {
   stat(
     path: string,
   ): Promise<{ isFile: boolean; isDirectory: boolean; mode: number; size: number }>;
+  /**
+   * lstat does not follow symlinks. Use this when walking trees so repair/check
+   * never chases symlink targets outside the app home.
+   */
+  lstat(
+    path: string,
+  ): Promise<{
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink: boolean;
+    mode: number;
+    size: number;
+  }>;
   /** Atomic write via temp file + rename on same filesystem. */
   atomicWriteText(path: string, content: string, mode?: FileMode): Promise<void>;
   atomicWriteBytes(path: string, content: Uint8Array, mode?: FileMode): Promise<void>;

@@ -65,9 +65,10 @@ import {
   type TemplateKind,
 } from "../services/customization.ts";
 import { registerHostMaintenance, runStackMaintenance } from "../services/maintenance.ts";
-import { buildStatus, formatStatus } from "../services/status.ts";
+import { buildStatus, formatStatus, statusToJson } from "../services/status.ts";
 import { checkPermissions, formatPermReport, repairPermissions } from "../services/permissions.ts";
-import { assertSafeComposeArgs, composeArgs } from "../services/compose.ts";
+import { assertSafeComposeArgs, composeArgs, resolveComposeFiles } from "../services/compose.ts";
+import { ensureAcmeWebroot, tlsOperatorDocs, validateExternalTlsPaths } from "../services/tls.ts";
 import { printTable, redact } from "../ui/output.ts";
 import type { TlsMode } from "../domain/state.ts";
 import { runWizard } from "./wizard.ts";
@@ -698,11 +699,18 @@ function buildParser(state: RunState) {
       "compose",
       "Safe docker compose wrapper (args after --)",
       (y: YargsBuilder) =>
-        y.option("print", {
-          type: "boolean",
-          default: false,
-          describe: "Print full docker compose argv",
-        }),
+        y
+          .command(
+            "files",
+            "List merged Compose files in deterministic order",
+            (y2: YargsBuilder) => y2,
+            bind(state, cmdComposeFiles),
+          )
+          .option("print", {
+            type: "boolean",
+            default: false,
+            describe: "Print full docker compose argv",
+          }),
       bind(state, cmdCompose),
     )
     .command("permissions", "Filesystem permission check/repair", (y: YargsBuilder) =>
@@ -1060,7 +1068,7 @@ async function cmdApply(argv: AnyArgv, ctx: CliContext): Promise<number> {
 async function cmdStatus(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const report = await buildStatus(ctx.platform, state);
-  if (ctx.json) ctx.log.out(JSON.stringify(report, null, 2));
+  if (ctx.json) ctx.log.out(statusToJson(report));
   else ctx.log.out(formatStatus(report));
   return 0;
 }
@@ -2016,14 +2024,27 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
   if (mode === "boot") tls = { kind: "boot" };
   else if (mode === "acme") {
     tls = { kind: "acme", ...(argv.email ? { email: String(argv.email) } : {}) };
+    await ensureAcmeWebroot(ctx.platform);
   } else if (mode === "external") {
     if (!argv.cert || !argv.key) {
       ctx.log.error("external TLS requires --cert and --key");
+      ctx.log.info(tlsOperatorDocs());
+      return 2;
+    }
+    try {
+      await validateExternalTlsPaths(
+        ctx.platform,
+        String(argv.cert),
+        String(argv.key),
+      );
+    } catch (e) {
+      ctx.log.error(e instanceof Error ? e.message : String(e));
       return 2;
     }
     tls = { kind: "external", certPath: String(argv.cert), keyPath: String(argv.key) };
   } else {
     ctx.log.error("mode must be boot|acme|external");
+    ctx.log.info(tlsOperatorDocs());
     return 2;
   }
 
@@ -2060,6 +2081,7 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
     }
     await ctx.store.save(next);
     if (!noApply) {
+      // TLS/domain-only: nginx reload; never touch PHP/runner (F-12 / architecture §7.4).
       await ctx.render.apply(next, {
         reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
         skipValidate: true,
@@ -2071,6 +2093,25 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
   ctx.log.info(
     noApply ? `tls mode set to ${mode} (state only; run bento apply)` : `tls mode set to ${mode}`,
   );
+  if (mode === "acme") {
+    ctx.log.info(
+      "ACME: point DNS A/AAAA at this host; place certs under certs/acme/<domain>/; HTTP-01 webroot is certs/acme-www.",
+    );
+  }
+  return 0;
+}
+
+async function cmdComposeFiles(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const state = await ctx.store.load();
+  const files = await resolveComposeFiles(ctx.platform, state);
+  if (ctx.json) {
+    ctx.log.out(JSON.stringify({ files }, null, 2));
+  } else {
+    ctx.log.out(
+      "Compose files (deterministic order):\n" + files.map((f) => `  - ${f}`).join("\n") +
+        "\n",
+    );
+  }
   return 0;
 }
 

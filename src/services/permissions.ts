@@ -264,13 +264,20 @@ export async function applyAppPermissionPolicy(
     }
   }
 
-  // Public tree group = bento-web so nginx can read; path still app-owned
+  // Public tree group = bento-web so nginx can read; path still app-owned.
+  // Recursive chown of the public tree is intentional and bounded; walk never follows symlinks.
   if (await platform.fs.exists(docRoot)) {
-    await chown(docRoot, `${uid}:${BENTO_WEB_GID}`, true);
-    // Ensure dirs 750 / files 640 under public tree (bounded)
+    // Only recursive-chown the public tree when operator requested recursive repair.
+    // Initial provision uses recursive=true while the tree is still small.
+    await chown(docRoot, `${uid}:${BENTO_WEB_GID}`, opts.recursive === true);
+    if (opts.recursive !== true) {
+      await chown(docRoot, `${uid}:${BENTO_WEB_GID}`, false);
+    }
+    // Ensure dirs 750 / files 640 under public tree (bounded; no symlink follow)
     await walkLimited(platform, docRoot, 5000, async (p) => {
       try {
-        const st = await platform.fs.stat(p);
+        const st = await platform.fs.lstat(p);
+        if (st.isSymlink) return; // never chmod/chown through a symlink
         if (st.isDirectory) await platform.fs.chmod(p, 0o750);
         else if (st.isFile) await platform.fs.chmod(p, 0o640);
       } catch {
@@ -339,6 +346,10 @@ export async function repairPermissions(
   return { report: after, actions };
 }
 
+/**
+ * Bounded depth-first walk that never follows symlink targets.
+ * Symlinks are visited (so broken links can be reported) but not descended into.
+ */
 async function walkLimited(
   platform: Platform,
   root: string,
@@ -361,10 +372,11 @@ async function walkLimited(
       count++;
       await visit(p);
       try {
-        const st = await platform.fs.stat(p);
-        if (st.isDirectory) stack.push(p);
+        // lstat: do not follow symlink targets (product §6.9 / E4).
+        const st = await platform.fs.lstat(p);
+        if (st.isDirectory && !st.isSymlink) stack.push(p);
       } catch {
-        // skip
+        // skip unreadable entries
       }
     }
   }

@@ -115,6 +115,8 @@ export async function materializeDockerAssets(
   }
 
   await ensureBootCert(platform);
+  // ACME HTTP-01 webroot (used when any site is in acme mode; safe empty dir otherwise).
+  await platform.fs.mkdirp(join(platform.paths.paths.certsDir, "acme-www"), 0o755);
 
   return {
     dockerRoot,

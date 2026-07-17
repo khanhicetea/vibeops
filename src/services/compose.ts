@@ -173,9 +173,11 @@ function renderBaseCompose(): string {
         volumes: [
           "./generated/nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
           "./generated/nginx/sites:/etc/nginx/sites:ro",
-          // Generated snippets fully replace image defaults (boot-ssl, app-common).
+          // Generated snippets fully replace image defaults (boot-ssl, app-common, per-site ssl).
           "./generated/nginx/snippets:/etc/nginx/snippets:ro",
           "./certs:/etc/nginx/certs",
+          // ACME HTTP-01 webroot (writable for token placement by certbot/lego on host).
+          "./certs/acme-www:/var/www/acme",
           "./homes:/home:ro",
           "./runtime/php-fpm:/run/php-fpm:ro",
           "./logs/nginx:/var/log/nginx",

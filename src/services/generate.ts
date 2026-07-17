@@ -11,6 +11,7 @@ import { type GeneratedFile, withManagedMarker } from "./render.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { assembleComposeDocuments } from "./compose.ts";
 import { loadMysqlRootPassword } from "./stack_env.ts";
+import { ACME_CHALLENGE_ROOT, resolveSslForSite } from "./tls.ts";
 
 export async function generateAll(
   platform: Platform,
@@ -94,10 +95,10 @@ index index.php index.html;
   });
 
   for (const app of Object.values(state.apps)) {
-    files.push(await generateAppVhost(platform, state, app));
+    files.push(...await generateAppVhost(platform, state, app));
   }
   for (const proxy of Object.values(state.proxies)) {
-    files.push(await generateProxyVhost(platform, proxy));
+    files.push(...await generateProxyVhost(platform, proxy));
   }
 
   return files;
@@ -107,7 +108,7 @@ async function generateAppVhost(
   platform: Platform,
   _state: DesiredState,
   app: AppState,
-): Promise<GeneratedFile> {
+): Promise<GeneratedFile[]> {
   let tpl: string;
   if (app.vhostTemplate.kind === "custom") {
     try {
@@ -126,7 +127,7 @@ async function generateAppVhost(
     ? `${codeRoot}/${app.documentRoot}`
     : codeRoot;
   const socketPath = `/run/php-fpm/${app.phpService}/${app.slug}.sock`;
-  const realTls = app.tls.kind !== "boot";
+  const ssl = resolveSslForSite(app.tls, app.slug, String(app.mainDomain));
   const content = renderTemplate(tpl, {
     slug: app.slug,
     serverNames,
@@ -138,8 +139,11 @@ async function generateAppVhost(
     accessLog: app.accessLog,
     accessLogPath: `/var/log/nginx/${app.slug}.access.log`,
     tlsKind: app.tls.kind,
-    realTls,
-    redirectHttps: realTls,
+    realTls: app.tls.kind !== "boot",
+    redirectHttps: ssl.redirectHttps,
+    acmeChallenge: ssl.acmeChallenge,
+    acmeChallengeRoot: ACME_CHALLENGE_ROOT,
+    sslInclude: ssl.includePath,
     deployEnabled: app.deploy.enabled,
     deploySecret: app.deploy.hmacSecret ?? "",
     uid: app.uid,
@@ -147,25 +151,34 @@ async function generateAppVhost(
     home: containerAppHome(app.slug),
   });
 
-  return {
+  const files: GeneratedFile[] = [{
     relPath: `nginx/sites/${app.slug}.conf`,
     content: withManagedMarker(content),
     mode: 0o644,
     managed: true,
-  };
+  }];
+  if (ssl.snippetRelPath && ssl.snippetContent) {
+    files.push({
+      relPath: ssl.snippetRelPath,
+      content: withManagedMarker(ssl.snippetContent),
+      mode: 0o644,
+      managed: true,
+    });
+  }
+  return files;
 }
 
 async function generateProxyVhost(
   platform: Platform,
   proxy: ProxySite,
-): Promise<GeneratedFile> {
+): Promise<GeneratedFile[]> {
   const tpl = await readOrDefault(
     platform,
     "nginx/proxy-vhost.conf.tpl",
     DEFAULT_PROXY_VHOST,
   );
   const serverNames = [proxy.mainDomain, ...proxy.aliases].join(" ");
-  const realTls = proxy.tls.kind !== "boot";
+  const ssl = resolveSslForSite(proxy.tls, `proxy-${proxy.name}`, String(proxy.mainDomain));
   const content = renderTemplate(tpl, {
     name: proxy.name,
     serverNames,
@@ -173,15 +186,27 @@ async function generateProxyVhost(
     accessLog: proxy.accessLog,
     accessLogPath: `/var/log/nginx/proxy-${proxy.name}.access.log`,
     tlsKind: proxy.tls.kind,
-    realTls,
-    redirectHttps: realTls,
+    realTls: proxy.tls.kind !== "boot",
+    redirectHttps: ssl.redirectHttps,
+    acmeChallenge: ssl.acmeChallenge,
+    acmeChallengeRoot: ACME_CHALLENGE_ROOT,
+    sslInclude: ssl.includePath,
   });
-  return {
+  const files: GeneratedFile[] = [{
     relPath: `nginx/sites/proxy-${proxy.name}.conf`,
     content: withManagedMarker(content),
     mode: 0o644,
     managed: true,
-  };
+  }];
+  if (ssl.snippetRelPath && ssl.snippetContent) {
+    files.push({
+      relPath: ssl.snippetRelPath,
+      content: withManagedMarker(ssl.snippetContent),
+      mode: 0o644,
+      managed: true,
+    });
+  }
+  return files;
 }
 
 async function generatePhpPools(
@@ -430,8 +455,18 @@ server {
   listen [::]:80;
   server_name {{serverNames}};
 
+  {{#acmeChallenge}}
+  location ^~ /.well-known/acme-challenge/ {
+    root {{acmeChallengeRoot}};
+    default_type "text/plain";
+    allow all;
+  }
+  {{/acmeChallenge}}
+
   {{#redirectHttps}}
-  return 301 https://$host$request_uri;
+  location / {
+    return 301 https://$host$request_uri;
+  }
   {{/redirectHttps}}
   {{^redirectHttps}}
   root {{docRoot}};
@@ -491,7 +526,7 @@ server {
   http2 on;
   server_name {{serverNames}};
 
-  include /etc/nginx/snippets/boot-ssl.conf;
+  include {{sslInclude}};
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
 
   root {{docRoot}};
@@ -506,6 +541,13 @@ server {
     include fastcgi_params;
     fastcgi_param SCRIPT_FILENAME /opt/bento/helpers/deploy-webhook.php;
     fastcgi_param BENTO_DEPLOY_SECRET "{{deploySecret}}";
+    fastcgi_param BENTO_APP "{{slug}}";
+    fastcgi_pass unix:{{socketPath}};
+  }
+  location = /_bento/clean-opcache {
+    internal;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME /opt/bento/helpers/clean-opcache.php;
     fastcgi_param BENTO_APP "{{slug}}";
     fastcgi_pass unix:{{socketPath}};
   }
@@ -541,8 +583,17 @@ server {
   listen 80;
   listen [::]:80;
   server_name {{serverNames}};
+  {{#acmeChallenge}}
+  location ^~ /.well-known/acme-challenge/ {
+    root {{acmeChallengeRoot}};
+    default_type "text/plain";
+    allow all;
+  }
+  {{/acmeChallenge}}
   {{#redirectHttps}}
-  return 301 https://$host$request_uri;
+  location / {
+    return 301 https://$host$request_uri;
+  }
   {{/redirectHttps}}
   {{^redirectHttps}}
   {{#accessLog}}
@@ -564,7 +615,7 @@ server {
   listen [::]:443 ssl;
   http2 on;
   server_name {{serverNames}};
-  include /etc/nginx/snippets/boot-ssl.conf;
+  include {{sslInclude}};
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;
   {{/accessLog}}
