@@ -614,7 +614,11 @@ export function buildMysqlShellPlan(
 
   if (identity.kind === "root") {
     const optionPath = "/etc/bento/mysql/root.cnf";
-    const openArgs = ["mysql", `--defaults-extra-file=${optionPath}`];
+    const openArgs = [
+      "mysql",
+      `--defaults-extra-file=${optionPath}`,
+      "--default-character-set=utf8mb4",
+    ];
     if (database) openArgs.push(database);
     return {
       service: identity.service,
@@ -651,7 +655,11 @@ export function buildMysqlShellPlan(
     `cat > ${shellQuote(optionPath)}`,
     `chmod 600 ${shellQuote(optionPath)}`,
   ].join("\n");
-  const openArgs = ["mysql", `--defaults-extra-file=${optionPath}`];
+  const openArgs = [
+    "mysql",
+    `--defaults-extra-file=${optionPath}`,
+    "--default-character-set=utf8mb4",
+  ];
   if (database) openArgs.push(database);
 
   return {

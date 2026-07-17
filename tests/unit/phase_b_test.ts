@@ -104,6 +104,7 @@ Deno.test("root mysql shell uses generated socket option file", async () => {
       plan.open.command.includes("--defaults-extra-file=/etc/bento/mysql/root.cnf"),
       true,
     );
+    assertEquals(plan.open.command.includes("--default-character-set=utf8mb4"), true);
   });
 });
 
@@ -122,6 +123,7 @@ Deno.test("mysql shell plan for app uses app credentials on stdin only", async (
     assertEquals(plan.service, app.mysqlService);
     assertEquals(plan.stage?.stdin.includes(app.mysqlPassword), true);
     assertEquals(plan.open.command.join(" ").includes(app.mysqlPassword), false);
+    assertEquals(plan.open.command.includes("--default-character-set=utf8mb4"), true);
   });
 });
 
