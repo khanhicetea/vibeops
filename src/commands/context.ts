@@ -38,12 +38,12 @@ export function createContext(flags: GlobalFlags): CliContext {
 }
 
 /** Build a CliContext from yargs-parsed global options. */
-export function contextFromArgv(argv: Record<string, unknown>): CliContext {
-  const stack = argv.stack ?? argv.root ?? defaultStackRoot();
-  const repoRoot = argv["repo-root"] ?? argv.repoRoot;
+export function contextFromArgv(
+  argv: { stack: string; json: boolean; repoRoot?: string },
+): CliContext {
   return createContext({
-    stackRoot: String(stack),
-    json: argv.json === true,
-    ...(typeof repoRoot === "string" && repoRoot.length > 0 ? { repoRoot } : {}),
+    stackRoot: argv.stack,
+    json: argv.json,
+    ...(argv.repoRoot ? { repoRoot: argv.repoRoot } : {}),
   });
 }

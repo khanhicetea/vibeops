@@ -67,7 +67,6 @@ import {
   formatDriftWarnings,
   returnToUpstreamTemplate,
   selectCustomTemplate,
-  type TemplateKind,
 } from "../services/customization.ts";
 import { registerHostMaintenance, runStackMaintenance } from "../services/maintenance.ts";
 import { buildStatus, formatStatus, statusToJson } from "../services/status.ts";
@@ -83,11 +82,12 @@ import {
 } from "../services/test_stack.ts";
 import { printTable, redact } from "../ui/output.ts";
 import type { TlsMode } from "../domain/state.ts";
+import type { ArgsWith, CliArgs } from "./args.ts";
 import { runWizard } from "./wizard.ts";
 
 type RunState = { code: number };
-// deno-lint-ignore no-explicit-any
-type YargsBuilder = Argv<any>;
+
+type YargsBuilder = Argv<CliArgs>;
 
 class EarlyExit extends Error {
   constructor(readonly code: number) {
@@ -96,13 +96,11 @@ class EarlyExit extends Error {
   }
 }
 
-type AnyArgv = Record<string, unknown> & { _: Array<string | number> };
-
-function wantsNoApply(argv: AnyArgv): boolean {
-  return argv["no-apply"] === true || argv.noApply === true;
+function wantsNoApply(argv: CliArgs): boolean {
+  return argv.noApply === true;
 }
 
-function noApplyOption(y: YargsBuilder): YargsBuilder {
+function noApplyOption<T>(y: Argv<T>) {
   return y.option("no-apply", {
     type: "boolean",
     default: false,
@@ -111,14 +109,14 @@ function noApplyOption(y: YargsBuilder): YargsBuilder {
 }
 
 /** Drop command-path tokens from argv._ to recover passthrough args (after --). */
-function trailing(argv: AnyArgv, drop: number): string[] {
+function trailing(argv: CliArgs, drop: number): string[] {
   return argv._.slice(drop).map(String);
 }
 
-function bind(
+function bind<A extends CliArgs>(
   state: RunState,
-  handler: (argv: AnyArgv, ctx: CliContext) => Promise<number>,
-): (argv: AnyArgv) => Promise<void> {
+  handler: (argv: A, ctx: CliContext) => Promise<number>,
+): (argv: A) => Promise<void> {
   return async (argv) => {
     const ctx = contextFromArgv(argv);
     try {
@@ -146,7 +144,7 @@ function printVersion(): void {
   console.log(`deno-target ${DENO_TARGET_VERSION}`);
 }
 
-function withGlobals<T>(y: Argv<T>): Argv<T> {
+function withGlobals<T>(y: Argv<T>) {
   return y
     .option("stack", {
       // Note: do not alias as --root; that flag is reserved for `mysql shell --root`.
@@ -168,13 +166,14 @@ function withGlobals<T>(y: Argv<T>): Argv<T> {
     })
     .parserConfiguration({
       "boolean-negation": false,
+      "camel-case-expansion": true,
+      "strip-dashed": true,
       "halt-at-non-option": false,
     });
 }
 
 function buildParser(state: RunState) {
-  // deno-lint-ignore no-explicit-any
-  let parser: Argv<any> = yargs()
+  let parser = yargs()
     .scriptName("bento")
     .usage(
       "bento — single-server PHP application operations\n\nUsage: $0 [options] <command> [args]\n\nTip: $0 tui opens the interactive wizard.",
@@ -187,12 +186,12 @@ function buildParser(state: RunState) {
     .recommendCommands()
     .wrap(Math.min(100, yargs().terminalWidth()))
     .epilogue("Environment:\n  BENTO_STACK_ROOT     Default stack root (mutable state)")
-    .fail((msg: string | undefined, err: Error | undefined) => {
+    .fail((msg: string | undefined, err: Error | undefined, failedYargs: Argv) => {
       if (err) throw err;
       if (msg) {
         console.error(`error: ${msg}`);
         console.error("");
-        parser.showHelp("error");
+        failedYargs.showHelp("error");
       }
       throw new EarlyExit(2);
     });
@@ -1126,12 +1125,12 @@ function stripGlobalTokens(args: string[]): string[] {
 
 // --- command handlers -------------------------------------------------------
 
-async function cmdTui(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdTui(_argv: CliArgs, ctx: CliContext): Promise<number> {
   return await runWizard(ctx);
 }
 
-async function cmdInit(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const force = argv.force === true;
+async function cmdInit(argv: ArgsWith<"force">, ctx: CliContext): Promise<number> {
+  const { force } = argv;
   const state = await ctx.store.init(force);
   ctx.log.info(`initialized state at ${ctx.platform.paths.paths.stateFile}`);
   ctx.log.info(
@@ -1140,7 +1139,7 @@ async function cmdInit(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdRender(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdRender(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const result = await ctx.render.apply(state, {
     renderOnly: true,
@@ -1155,10 +1154,11 @@ async function cmdRender(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdApply(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const renderOnly = argv["render-only"] === true || argv.renderOnly === true;
-  const skipValidate = argv["skip-validate"] === true || argv.skipValidate === true;
-  const preview = argv.preview === true;
+async function cmdApply(
+  argv: ArgsWith<"renderOnly" | "skipValidate" | "preview">,
+  ctx: CliContext,
+): Promise<number> {
+  const { renderOnly, skipValidate, preview } = argv;
   const state = await ctx.store.load();
 
   // Surface template drift on apply/preview (F-24).
@@ -1194,7 +1194,7 @@ async function cmdApply(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdStatus(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdStatus(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const report = await buildStatus(ctx.platform, state);
   if (ctx.json) ctx.log.out(statusToJson(report));
@@ -1202,31 +1202,22 @@ async function cmdStatus(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdTestStack(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const name = argv.name ? String(argv.name) : DEFAULT_TEST_STACK_NAME;
+async function cmdTestStack(
+  argv: ArgsWith<"name" | "keep" | "skipBuild" | "skipHttp" | "timeoutSec" | "scheduleWaitSec">,
+  ctx: CliContext,
+): Promise<number> {
+  const { name } = argv;
   // Only honor --stack when the operator actually passed it (yargs always fills the default).
   const explicitStack = Deno.args.some((a) => a === "--stack" || a.startsWith("--stack="));
   const opts = resolveTestStackOptions({
     name,
-    stack: explicitStack && argv.stack ? String(argv.stack) : undefined,
-    keep: argv.keep === true,
-    skipBuild: argv["skip-build"] === true || argv.skipBuild === true,
-    skipHttp: argv["skip-http"] === true || argv.skipHttp === true,
-    timeoutSec: argv["timeout-sec"] != null
-      ? Number(argv["timeout-sec"])
-      : argv.timeoutSec != null
-      ? Number(argv.timeoutSec)
-      : 180,
-    scheduleWaitSec: argv["schedule-wait-sec"] != null
-      ? Number(argv["schedule-wait-sec"])
-      : argv.scheduleWaitSec != null
-      ? Number(argv.scheduleWaitSec)
-      : DEFAULT_SCHEDULE_WAIT_SEC,
-    repoRoot: argv["repo-root"]
-      ? String(argv["repo-root"])
-      : argv.repoRoot
-      ? String(argv.repoRoot)
-      : undefined,
+    stack: explicitStack ? argv.stack : undefined,
+    keep: argv.keep,
+    skipBuild: argv.skipBuild,
+    skipHttp: argv.skipHttp,
+    timeoutSec: argv.timeoutSec,
+    scheduleWaitSec: argv.scheduleWaitSec,
+    repoRoot: argv.repoRoot,
     log: (level, msg) => {
       if (level === "error") ctx.log.error(msg);
       else if (level === "warn") ctx.log.warn(msg);
@@ -1245,7 +1236,7 @@ async function cmdTestStack(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
-async function cmdAppList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdAppList(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rows = Object.values(state.apps)
     .sort((a, b) => a.slug.localeCompare(b.slug))
@@ -1267,12 +1258,8 @@ async function cmdAppList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdAppShow(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.slug ?? "");
-  if (!slug) {
-    ctx.log.error("usage: bento app show <slug>");
-    return 2;
-  }
+async function cmdAppShow(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
+  const { slug } = argv;
   const state = await ctx.store.load();
   const app = state.apps[slug];
   if (!app) {
@@ -1296,36 +1283,32 @@ async function cmdAppShow(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdAppCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.slug ?? "");
-  const domain = argv.domain ? String(argv.domain) : "";
-  if (!slug || !domain) {
-    ctx.log.error(
-      "usage: bento app create <slug> --domain <domain> [--php 8.5] [--fpm small] [--docroot public] [--legacy] [--db] [--alias a,b]",
-    );
-    return 2;
-  }
-  const aliases = argv.alias ? String(argv.alias).split(",").filter(Boolean) : [];
+async function cmdAppCreate(
+  argv: ArgsWith<"slug" | "domain">,
+  ctx: CliContext,
+): Promise<number> {
+  const { slug, domain } = argv;
+  const aliases = argv.alias?.split(",").filter(Boolean) ?? [];
   const noApply = wantsNoApply(argv);
-  const skipValidate = argv["skip-validate"] === true || argv.skipValidate === true;
+  const skipValidate = argv.skipValidate === true;
   const explicitDb = argv.db === true;
   const result = await ctx.store.withExclusive(async (state) => {
     const provisioned = provisionApp(ctx.platform, state, {
       slug,
       domain,
       aliases,
-      documentRoot: argv.docroot ? String(argv.docroot) : undefined,
+      documentRoot: argv.docroot,
       entrypointMode: argv.legacy === true
         ? "legacy"
         : argv.front === true
         ? "front-controller"
         : undefined,
-      phpVersion: argv.php ? String(argv.php) : undefined,
-      fpmProfile: argv.fpm ? String(argv.fpm) : undefined,
-      mysqlVersion: argv.mysql ? String(argv.mysql) : undefined,
+      phpVersion: argv.php,
+      fpmProfile: argv.fpm,
+      mysqlVersion: argv.mysql,
       createDatabase: explicitDb,
-      databaseName: argv.database ? String(argv.database) : undefined,
-      accessLog: argv["access-log"] === true || argv.accessLog === true,
+      databaseName: argv.database,
+      accessLog: argv.accessLog === true,
     });
     // Live MySQL/Redis side effects before recording state (explicit --db fails closed).
     const plane = await applyAppDataPlane(ctx.platform, provisioned.app, {
@@ -1356,12 +1339,12 @@ async function cmdAppCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdAppDelete(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  deleteApp(await ctx.store.load(), String(argv.slug ?? ""));
+async function cmdAppDelete(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
+  deleteApp(await ctx.store.load(), argv.slug);
   return 10;
 }
 
-async function cmdPhpList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdPhpList(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rows = listPhpVersions(state).map((v) => [
     v.version,
@@ -1374,12 +1357,8 @@ async function cmdPhpList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdPhpAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const version = String(argv.version ?? "");
-  if (!version) {
-    ctx.log.error("usage: bento php add <version>");
-    return 2;
-  }
+async function cmdPhpAdd(argv: ArgsWith<"version">, ctx: CliContext): Promise<number> {
+  const { version } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const next = addPhpVersion(state, version);
@@ -1397,12 +1376,8 @@ async function cmdPhpAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdPhpRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const version = String(argv.version ?? "");
-  if (!version) {
-    ctx.log.error("usage: bento php remove <version>");
-    return 2;
-  }
+async function cmdPhpRemove(argv: ArgsWith<"version">, ctx: CliContext): Promise<number> {
+  const { version } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const next = removePhpVersion(state, version);
@@ -1418,7 +1393,7 @@ async function cmdPhpRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdMysqlList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdMysqlList(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rows = listMysqlVersions(state).map((v) => [
     v.version,
@@ -1430,12 +1405,8 @@ async function cmdMysqlList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdMysqlAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const version = String(argv.version ?? "");
-  if (!version) {
-    ctx.log.error("usage: bento mysql add <version>");
-    return 2;
-  }
+async function cmdMysqlAdd(argv: ArgsWith<"version">, ctx: CliContext): Promise<number> {
+  const { version } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const next = addMysqlVersion(state, version);
@@ -1451,18 +1422,16 @@ async function cmdMysqlAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdMysqlRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  removeMysqlVersion(await ctx.store.load(), String(argv.version ?? ""));
+async function cmdMysqlRemove(argv: ArgsWith<"version">, ctx: CliContext): Promise<number> {
+  removeMysqlVersion(await ctx.store.load(), argv.version);
   return 10;
 }
 
-async function cmdMysqlDb(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  const dbName = String(argv.database ?? "");
-  if (!slug || !dbName) {
-    ctx.log.error("usage: bento mysql db <app> <database>");
-    return 2;
-  }
+async function cmdMysqlDb(
+  argv: ArgsWith<"app" | "database">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug, database: dbName } = argv;
   await ctx.store.withExclusive(async (state) => {
     const rootPassword = await requireMysqlRootPassword(ctx.platform);
     // Fail before recording when MySQL is unavailable or grants fail.
@@ -1486,21 +1455,24 @@ async function cmdMysqlDb(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdMysqlShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const asRoot = argv.root === true;
-  const appSlug = argv.app ? String(argv.app) : "";
+async function cmdMysqlShell(
+  argv: ArgsWith<"root" | "print">,
+  ctx: CliContext,
+): Promise<number> {
+  const asRoot = argv.root;
+  const appSlug = argv.app ?? "";
   if (asRoot === Boolean(appSlug)) {
     ctx.log.error("usage: bento mysql shell --root [--service mysql84] | --app <slug>");
     return 2;
   }
   const state = await ctx.store.load();
-  const database = argv.database ? String(argv.database) : undefined;
-  const printOnly = argv.print === true;
+  const database = argv.database;
+  const printOnly = argv.print;
 
   let plan;
   if (asRoot) {
     const services = resolveMysqlServices(state, {
-      service: argv.service ? String(argv.service) : undefined,
+      service: argv.service,
     });
     const service = services[0];
     if (!service) {
@@ -1583,18 +1555,18 @@ async function cmdMysqlShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
   }
 }
 
-async function cmdMysqlSize(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdMysqlSize(argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rootPassword = await requireMysqlRootPassword(ctx.platform);
   const services = resolveMysqlServices(state, {
-    service: argv.service ? String(argv.service) : undefined,
-    app: argv.app ? String(argv.app) : undefined,
+    service: argv.service,
+    app: argv.app,
   });
   const allRows: Array<{ service: string; database: string; sizeMb: string; tables: string }> = [];
   for (const service of services) {
     let databases: string[] = [];
     if (argv.app) {
-      const app = state.apps[String(argv.app)];
+      const app = state.apps[argv.app];
       databases = app?.databases.map((d) => d.name) ?? [];
     }
     const { rows } = await queryDatabaseSizes(ctx.platform, service, rootPassword, databases);
@@ -1615,12 +1587,12 @@ async function cmdMysqlSize(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdMysqlProcesslist(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdMysqlProcesslist(argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rootPassword = await requireMysqlRootPassword(ctx.platform);
   const services = resolveMysqlServices(state, {
-    service: argv.service ? String(argv.service) : undefined,
-    app: argv.app ? String(argv.app) : undefined,
+    service: argv.service,
+    app: argv.app,
   });
   for (const service of services) {
     const { stdout } = await queryProcesslist(ctx.platform, service, rootPassword);
@@ -1630,7 +1602,7 @@ async function cmdMysqlProcesslist(argv: AnyArgv, ctx: CliContext): Promise<numb
   return 0;
 }
 
-async function cmdProxyList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdProxyList(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const rows = Object.values(state.proxies).map((p) => [
     p.name,
@@ -1642,21 +1614,18 @@ async function cmdProxyList(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdProxyCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const name = String(argv.name ?? "");
-  if (!name || !argv.domain || !argv.upstream) {
-    ctx.log.error(
-      "usage: bento proxy create <name> --domain <domain> --upstream http://127.0.0.1:3000",
-    );
-    return 2;
-  }
+async function cmdProxyCreate(
+  argv: ArgsWith<"name" | "domain" | "upstream">,
+  ctx: CliContext,
+): Promise<number> {
+  const { name, domain, upstream } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const result = createProxy(state, {
       name,
-      domain: String(argv.domain),
-      upstream: String(argv.upstream),
-      aliases: argv.alias ? String(argv.alias).split(",") : [],
+      domain,
+      upstream,
+      aliases: argv.alias?.split(",") ?? [],
     }, ctx.platform.clock.nowIso());
     await ctx.store.save(result.state);
     if (!noApply) {
@@ -1674,17 +1643,13 @@ async function cmdProxyCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdProxyDelete(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  deleteProxy(await ctx.store.load(), String(argv.name ?? ""));
+async function cmdProxyDelete(argv: ArgsWith<"name">, ctx: CliContext): Promise<number> {
+  deleteProxy(await ctx.store.load(), argv.name);
   return 10;
 }
 
-async function cmdDeployEnable(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) {
-    ctx.log.error("usage: bento deploy enable <app>");
-    return 2;
-  }
+async function cmdDeployEnable(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const { app: slug } = argv;
   const policy = argv.fifo === true ? "fifo" as const : "latest" as const;
   const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
@@ -1704,9 +1669,8 @@ async function cmdDeployEnable(argv: AnyArgv, ctx: CliContext): Promise<number> 
   return 0;
 }
 
-async function cmdDeployDisable(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) return 2;
+async function cmdDeployDisable(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const { app: slug } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = disableDeploy(state, slug, ctx.platform.clock.nowIso());
@@ -1724,9 +1688,8 @@ async function cmdDeployDisable(argv: AnyArgv, ctx: CliContext): Promise<number>
   return 0;
 }
 
-async function cmdDeployRotate(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) return 2;
+async function cmdDeployRotate(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const { app: slug } = argv;
   const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
     const r = rotateDeploySecret(state, slug, ctx.platform);
@@ -1745,9 +1708,8 @@ async function cmdDeployRotate(argv: AnyArgv, ctx: CliContext): Promise<number> 
   return 0;
 }
 
-async function cmdDeployStatus(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) return 2;
+async function cmdDeployStatus(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
   const app = state.apps[slug];
   if (!app) {
@@ -1770,9 +1732,8 @@ async function cmdDeployStatus(argv: AnyArgv, ctx: CliContext): Promise<number> 
   return 0;
 }
 
-async function cmdDeployDrain(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) return 2;
+async function cmdDeployDrain(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
   const app = state.apps[slug];
   if (!app) return 3;
@@ -1783,9 +1744,11 @@ async function cmdDeployDrain(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdDeployInstructions(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) return 2;
+async function cmdDeployInstructions(
+  argv: ArgsWith<"app">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
   const app = state.apps[slug];
   if (!app?.deploy.enabled) {
@@ -1798,9 +1761,9 @@ async function cmdDeployInstructions(argv: AnyArgv, ctx: CliContext): Promise<nu
   return 0;
 }
 
-async function cmdCronList(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdCronList(argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
-  const app = argv.app ? String(argv.app) : undefined;
+  const app = argv.app;
   const rows = listCronJobs(state, app).map((j) => [
     j.app,
     j.name,
@@ -1812,13 +1775,13 @@ async function cmdCronList(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const app = argv.app ? String(argv.app) : "";
-  const name = argv.name ? String(argv.name) : "";
-  const schedule = argv.schedule ? String(argv.schedule) : "";
-  const shellCommand = argv.cmd ? String(argv.cmd) : undefined;
+async function cmdCronAdd(
+  argv: ArgsWith<"app" | "name" | "schedule">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app, name, schedule, cmd: shellCommand } = argv;
   const cmd = shellCommand !== undefined ? [shellCommand] : trailing(argv, 2);
-  if (!app || !name || !schedule || cmd.length === 0) {
+  if (cmd.length === 0) {
     ctx.log.error(
       "usage: bento cron add --app <app> --name <name> --schedule '*/5 * * * *' -- <command...>",
     );
@@ -1832,9 +1795,9 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
       schedule,
       command: cmd,
       commandMode: shellCommand !== undefined ? "shell" : "argv",
-      timezone: argv.timezone ? String(argv.timezone) : undefined,
-      lock: argv.lock ? String(argv.lock) : undefined,
-      timeoutSec: argv.timeout != null ? Number(argv.timeout) : undefined,
+      timezone: argv.timezone,
+      lock: argv.lock,
+      timeoutSec: argv.timeout,
     }, ctx.platform);
     await ctx.store.save(r.state);
     if (!noApply) {
@@ -1850,10 +1813,11 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdCronRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const app = String(argv.app ?? "");
-  const name = String(argv.name ?? "");
-  if (!app || !name) return 2;
+async function cmdCronRemove(
+  argv: ArgsWith<"app" | "name">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app, name } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = removeCronJob(state, app, name, ctx.platform.clock.nowIso());
@@ -1871,9 +1835,9 @@ async function cmdCronRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdWorkerList(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdWorkerList(argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
-  const app = argv.app ? String(argv.app) : undefined;
+  const app = argv.app;
   const rows = listWorkers(state, app).map((w) => [
     w.app,
     w.name,
@@ -1884,11 +1848,13 @@ async function cmdWorkerList(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdWorkerAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const app = argv.app ? String(argv.app) : "";
-  const name = argv.name ? String(argv.name) : "";
-  const cmd = argv.cmd ? String(argv.cmd).split(/\s+/).filter(Boolean) : trailing(argv, 2);
-  if (!app || !name || cmd.length === 0) {
+async function cmdWorkerAdd(
+  argv: ArgsWith<"app" | "name">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app, name } = argv;
+  const cmd = argv.cmd?.split(/\s+/).filter(Boolean) ?? trailing(argv, 2);
+  if (cmd.length === 0) {
     ctx.log.error(
       "usage: bento worker add --app <app> --name <name> -- <command...>",
     );
@@ -1915,10 +1881,11 @@ async function cmdWorkerAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdWorkerRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const app = String(argv.app ?? "");
-  const name = String(argv.name ?? "");
-  if (!app || !name) return 2;
+async function cmdWorkerRemove(
+  argv: ArgsWith<"app" | "name">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app, name } = argv;
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = removeWorker(state, app, name, ctx.platform.clock.nowIso());
@@ -1937,16 +1904,11 @@ async function cmdWorkerRemove(argv: AnyArgv, ctx: CliContext): Promise<number> 
 }
 
 async function cmdWorkerControl(
-  argv: AnyArgv,
+  argv: ArgsWith<"app" | "name">,
   ctx: CliContext,
   action: WorkerControlAction,
 ): Promise<number> {
-  const app = String(argv.app ?? "");
-  const name = String(argv.name ?? "");
-  if (!app || !name) {
-    ctx.log.error(`usage: bento worker ${action} <app> <name>`);
-    return 2;
-  }
+  const { app, name } = argv;
   const state = await ctx.store.load();
   const plan = buildWorkerControlPlan(state, app, name, action);
   const result = await controlWorker(ctx.platform, plan);
@@ -1960,22 +1922,20 @@ async function cmdWorkerControl(
   return result.code === 0 ? 0 : 8;
 }
 
-async function cmdWorkerStart(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdWorkerStart(argv: ArgsWith<"app" | "name">, ctx: CliContext): Promise<number> {
   return await cmdWorkerControl(argv, ctx, "start");
 }
-async function cmdWorkerStop(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdWorkerStop(argv: ArgsWith<"app" | "name">, ctx: CliContext): Promise<number> {
   return await cmdWorkerControl(argv, ctx, "stop");
 }
-async function cmdWorkerRestart(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdWorkerRestart(argv: ArgsWith<"app" | "name">, ctx: CliContext): Promise<number> {
   return await cmdWorkerControl(argv, ctx, "restart");
 }
-async function cmdWorkerInspect(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const app = String(argv.app ?? "");
-  const name = String(argv.name ?? "");
-  if (!app || !name) {
-    ctx.log.error("usage: bento worker inspect <app> <name>");
-    return 2;
-  }
+async function cmdWorkerInspect(
+  argv: ArgsWith<"app" | "name">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app, name } = argv;
   const state = await ctx.store.load();
   const result = await inspectWorker(ctx.platform, state, app, name);
   if (ctx.json) {
@@ -2007,28 +1967,26 @@ async function cmdWorkerInspect(argv: AnyArgv, ctx: CliContext): Promise<number>
   return result.code === 0 ? 0 : 8;
 }
 
-async function cmdAppShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdAppShell(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
   // Interactive shell alias under `app shell` (no trailing command).
   return await runCliExec(ctx, {
-    slug: String(argv.slug ?? ""),
+    slug: argv.slug,
     argv: [],
-    workdir: argv.workdir ? String(argv.workdir) : undefined,
-    phpVersionOverride: argv.php ? String(argv.php) : undefined,
+    workdir: argv.workdir,
+    phpVersionOverride: argv.php,
     printOnly: argv.print === true,
-    usage: "usage: bento app shell <slug> [--workdir PATH] [--php VERSION] [--print]",
   });
 }
 
-async function cmdExec(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
+async function cmdExec(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const slug = argv.app;
   const cmd = trailing(argv, 1);
   return await runCliExec(ctx, {
     slug,
     argv: cmd,
-    workdir: argv.workdir ? String(argv.workdir) : undefined,
-    phpVersionOverride: argv.php ? String(argv.php) : undefined,
+    workdir: argv.workdir,
+    phpVersionOverride: argv.php,
     printOnly: argv.print === true,
-    usage: "usage: bento exec <app> [--workdir PATH] [--php VERSION] [--print] [-- <command...>]",
   });
 }
 
@@ -2044,13 +2002,8 @@ async function runCliExec(
     workdir?: string;
     phpVersionOverride?: string;
     printOnly: boolean;
-    usage: string;
   },
 ): Promise<number> {
-  if (!opts.slug) {
-    ctx.log.error(opts.usage);
-    return 2;
-  }
   const state = await ctx.store.load();
   let plan;
   try {
@@ -2107,7 +2060,7 @@ async function runCliExec(
   return status.code;
 }
 
-async function cmdCompose(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdCompose(argv: CliArgs, ctx: CliContext): Promise<number> {
   const command = trailing(argv, 1).filter((a) => a !== "--print");
   const printOnly = argv.print === true || trailing(argv, 1).includes("--print");
   assertSafeComposeArgs(command);
@@ -2141,12 +2094,11 @@ async function cmdCompose(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return status.code;
 }
 
-async function cmdPermissionsCheck(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) {
-    ctx.log.error("usage: bento permissions check|repair <app> [--recursive] [--dry-run]");
-    return 2;
-  }
+async function cmdPermissionsCheck(
+  argv: ArgsWith<"app">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
   const report = await checkPermissions(ctx.platform, state, slug, {
     recursive: argv.recursive === true,
@@ -2155,16 +2107,15 @@ async function cmdPermissionsCheck(argv: AnyArgv, ctx: CliContext): Promise<numb
   return report.issues.length ? 1 : 0;
 }
 
-async function cmdPermissionsRepair(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = String(argv.app ?? "");
-  if (!slug) {
-    ctx.log.error("usage: bento permissions check|repair <app> [--recursive] [--dry-run]");
-    return 2;
-  }
+async function cmdPermissionsRepair(
+  argv: ArgsWith<"app">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
   const recursive = argv.recursive === true;
   const result = await repairPermissions(ctx.platform, state, slug, {
-    dryRun: argv["dry-run"] === true || argv.dryRun === true,
+    dryRun: argv.dryRun === true,
     recursive,
     shallow: argv.shallow === true || !recursive,
   });
@@ -2173,7 +2124,7 @@ async function cmdPermissionsRepair(argv: AnyArgv, ctx: CliContext): Promise<num
   return 0;
 }
 
-async function cmdBackup(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdBackup(argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const scope = argv.all === true
     ? "all" as const
@@ -2187,8 +2138,8 @@ async function cmdBackup(argv: AnyArgv, ctx: CliContext): Promise<number> {
   try {
     const artifacts = await runBackup(ctx.platform, state, {
       scope,
-      slug: argv.app ? String(argv.app) : undefined,
-      database: argv.database ? String(argv.database) : undefined,
+      slug: argv.app,
+      database: argv.database,
       compress: argv.gzip === true ? "gzip" : argv.none === true ? "none" : "zstd",
     });
     for (const a of artifacts) {
@@ -2201,17 +2152,12 @@ async function cmdBackup(argv: AnyArgv, ctx: CliContext): Promise<number> {
   }
 }
 
-async function cmdRestore(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const file = argv.file ? String(argv.file) : "";
-  const app = argv.app ? String(argv.app) : "";
-  const target = argv.target ? String(argv.target) : argv.database ? String(argv.database) : "";
-  if (!file || !app || !target) {
-    ctx.log.error(
-      "usage: bento restore --file <path> --app <app> --target <db> [--replace <exact-name>]",
-    );
-    return 2;
-  }
-  if (argv.replace && String(argv.replace) !== target) {
+async function cmdRestore(
+  argv: ArgsWith<"file" | "app" | "target">,
+  ctx: CliContext,
+): Promise<number> {
+  const { file, app, target } = argv;
+  if (argv.replace && argv.replace !== target) {
     ctx.log.error("replace confirmation must exactly match target database name");
     return 10;
   }
@@ -2223,18 +2169,18 @@ async function cmdRestore(argv: AnyArgv, ctx: CliContext): Promise<number> {
     file,
     slug: app,
     targetDatabase: target,
-    replaceOriginal: argv.replace ? String(argv.replace) : undefined,
+    replaceOriginal: argv.replace,
   });
   ctx.log.info(`restore completed into ${target}`);
   return 0;
 }
 
-async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const mode = String(argv.mode ?? "");
+async function cmdTlsSet(argv: ArgsWith<"mode">, ctx: CliContext): Promise<number> {
+  const { mode } = argv;
   let tls: TlsMode;
   if (mode === "boot") tls = { kind: "boot" };
   else if (mode === "acme") {
-    tls = { kind: "acme", ...(argv.email ? { email: String(argv.email) } : {}) };
+    tls = { kind: "acme", ...(argv.email ? { email: argv.email } : {}) };
     await ensureAcmeWebroot(ctx.platform);
   } else if (mode === "external") {
     if (!argv.cert || !argv.key) {
@@ -2245,18 +2191,14 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
     try {
       await validateExternalTlsPaths(
         ctx.platform,
-        String(argv.cert),
-        String(argv.key),
+        argv.cert,
+        argv.key,
       );
     } catch (e) {
       ctx.log.error(e instanceof Error ? e.message : String(e));
       return 2;
     }
-    tls = { kind: "external", certPath: String(argv.cert), keyPath: String(argv.key) };
-  } else {
-    ctx.log.error("mode must be boot|acme|external");
-    ctx.log.info(tlsOperatorDocs());
-    return 2;
+    tls = { kind: "external", certPath: argv.cert, keyPath: argv.key };
   }
 
   const noApply = wantsNoApply(argv);
@@ -2264,7 +2206,7 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
     const now = ctx.platform.clock.nowIso();
     let next = state;
     if (argv.app) {
-      const slug = String(argv.app);
+      const slug = argv.app;
       const app = state.apps[slug];
       if (!app) throw new Error(`app not found: ${slug}`);
       next = {
@@ -2276,7 +2218,7 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
         updatedAt: now,
       };
     } else if (argv.proxy) {
-      const name = String(argv.proxy);
+      const name = argv.proxy;
       const proxy = state.proxies[name];
       if (!proxy) throw new Error(`proxy not found: ${name}`);
       next = {
@@ -2312,7 +2254,7 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
   return 0;
 }
 
-async function cmdComposeFiles(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdComposeFiles(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const files = await resolveComposeFiles(ctx.platform, state);
   if (ctx.json) {
@@ -2328,24 +2270,20 @@ async function cmdComposeFiles(_argv: AnyArgv, ctx: CliContext): Promise<number>
 
 // --- access logs (F-23) ------------------------------------------------------
 
-async function cmdLogsAccessEnable(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdLogsAccessEnable(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
   return await mutateAccessLog(argv, ctx, true);
 }
 
-async function cmdLogsAccessDisable(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdLogsAccessDisable(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
   return await mutateAccessLog(argv, ctx, false);
 }
 
 async function mutateAccessLog(
-  argv: AnyArgv,
+  argv: ArgsWith<"app">,
   ctx: CliContext,
   enabled: boolean,
 ): Promise<number> {
-  const slug = argv.app ? String(argv.app) : "";
-  if (!slug) {
-    ctx.log.error(`usage: bento logs access ${enabled ? "enable" : "disable"} --app <slug>`);
-    return 2;
-  }
+  const { app: slug } = argv;
   const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
     const mutation = setAppAccessLog(
@@ -2376,12 +2314,11 @@ async function mutateAccessLog(
   return 0;
 }
 
-async function cmdLogsAccessRotate(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = argv.app ? String(argv.app) : "";
-  if (!slug) {
-    ctx.log.error("usage: bento logs access rotate --app <slug>");
-    return 2;
-  }
+async function cmdLogsAccessRotate(
+  argv: ArgsWith<"app">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
   const result = await rotateAccessLog(ctx.platform, state, slug);
   // Assert reopen path (not nginx -s reload).
@@ -2400,16 +2337,15 @@ async function cmdLogsAccessRotate(argv: AnyArgv, ctx: CliContext): Promise<numb
   return 0;
 }
 
-async function cmdLogsAccessReport(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = argv.app ? String(argv.app) : "";
-  if (!slug) {
-    ctx.log.error("usage: bento logs access report --app <slug> [--dry-run]");
-    return 2;
-  }
+async function cmdLogsAccessReport(
+  argv: ArgsWith<"app">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug } = argv;
   const state = await ctx.store.load();
-  const dryRun = argv["dry-run"] === true || argv.dryRun === true;
+  const dryRun = argv.dryRun === true;
   const result = await generateAccessReport(ctx.platform, state, slug, {
-    output: argv.output ? String(argv.output) : undefined,
+    output: argv.output,
     dryRun,
   });
   if (dryRun) {
@@ -2423,23 +2359,18 @@ async function cmdLogsAccessReport(argv: AnyArgv, ctx: CliContext): Promise<numb
 
 // --- templates (F-24) --------------------------------------------------------
 
-async function cmdTemplateSelect(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = argv.app ? String(argv.app) : "";
-  const kind = String(argv.kind ?? "") as TemplateKind;
-  const source = argv.source ? String(argv.source) : "";
-  if (!slug || (kind !== "vhost" && kind !== "pool") || !source) {
-    ctx.log.error(
-      "usage: bento template select --app <slug> --kind vhost|pool --source <path>",
-    );
-    return 2;
-  }
+async function cmdTemplateSelect(
+  argv: ArgsWith<"app" | "kind" | "source">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug, kind, source } = argv;
   const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
     const selected = await selectCustomTemplate(ctx.platform, state, {
       slug,
       kind,
       sourcePath: source,
-      copy: !(argv["no-copy"] === true || argv.noCopy === true),
+      copy: argv.noCopy !== true,
     });
     await ctx.store.save(selected.state);
     if (!noApply) {
@@ -2457,13 +2388,11 @@ async function cmdTemplateSelect(argv: AnyArgv, ctx: CliContext): Promise<number
   return 0;
 }
 
-async function cmdTemplateReturn(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const slug = argv.app ? String(argv.app) : "";
-  const kind = String(argv.kind ?? "") as TemplateKind;
-  if (!slug || (kind !== "vhost" && kind !== "pool")) {
-    ctx.log.error("usage: bento template return --app <slug> --kind vhost|pool");
-    return 2;
-  }
+async function cmdTemplateReturn(
+  argv: ArgsWith<"app" | "kind">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app: slug, kind } = argv;
   const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
     const returned = returnToUpstreamTemplate(
@@ -2492,12 +2421,12 @@ async function cmdTemplateReturn(argv: AnyArgv, ctx: CliContext): Promise<number
   return 0;
 }
 
-async function cmdTemplateDrift(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdTemplateDrift(argv: CliArgs, ctx: CliContext): Promise<number> {
   const state = await ctx.store.load();
   const drifts = await detectTemplateDrift(
     ctx.platform,
     state,
-    argv.app ? String(argv.app) : undefined,
+    argv.app,
   );
   if (ctx.json) {
     ctx.log.out(JSON.stringify(drifts, null, 2));
@@ -2518,12 +2447,8 @@ async function cmdTemplateDrift(argv: AnyArgv, ctx: CliContext): Promise<number>
 
 // --- maintenance (product §6.10) ---------------------------------------------
 
-async function cmdMaintenanceRun(argv: AnyArgv, ctx: CliContext): Promise<number> {
-  const retainDays = argv["retain-days"] != null
-    ? Number(argv["retain-days"])
-    : argv.retainDays != null
-    ? Number(argv.retainDays)
-    : 14;
+async function cmdMaintenanceRun(argv: ArgsWith<"retainDays">, ctx: CliContext): Promise<number> {
+  const { retainDays } = argv;
   const result = await runStackMaintenance(ctx.platform, { retainDays });
   for (const n of result.notes) ctx.log.info(n);
   if (ctx.json) {
@@ -2535,11 +2460,11 @@ async function cmdMaintenanceRun(argv: AnyArgv, ctx: CliContext): Promise<number
   return 0;
 }
 
-async function cmdMaintenanceRegister(argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdMaintenanceRegister(argv: CliArgs, ctx: CliContext): Promise<number> {
   const result = await registerHostMaintenance(ctx.platform, {
     action: "install",
-    schedule: argv.schedule ? String(argv.schedule) : undefined,
-    bentoBin: argv.bin ? String(argv.bin) : undefined,
+    schedule: argv.schedule,
+    bentoBin: argv.bin,
     stackRoot: ctx.stackRoot,
   });
   ctx.log.info(
@@ -2550,7 +2475,7 @@ async function cmdMaintenanceRegister(argv: AnyArgv, ctx: CliContext): Promise<n
   return 0;
 }
 
-async function cmdMaintenanceUnregister(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+async function cmdMaintenanceUnregister(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const result = await registerHostMaintenance(ctx.platform, {
     action: "remove",
     stackRoot: ctx.stackRoot,
