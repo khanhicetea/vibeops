@@ -1,11 +1,51 @@
 {
   "version": "5",
   "specifiers": {
+    "npm:@jsr/std__assert@1": "1.0.19",
+    "npm:@jsr/std__encoding@1": "1.0.11",
+    "npm:@jsr/std__path@1": "1.1.6",
+    "npm:@jsr/std__yaml@1": "1.1.2",
     "npm:cliui@9": "9.0.1",
+    "npm:cron-parser@5": "5.6.2",
+    "npm:cron-parser@5.6.2": "5.6.2",
+    "npm:mustache@4": "4.2.0",
+    "npm:mustache@4.2.0": "4.2.0",
+    "npm:picocolors@1": "1.1.1",
+    "npm:picocolors@1.1.1": "1.1.1",
+    "npm:semver@7": "7.7.2",
+    "npm:semver@7.7.2": "7.7.2",
     "npm:yargs@*": "18.0.0",
-    "npm:yargs@18": "18.0.0"
+    "npm:yargs@18": "18.0.0",
+    "npm:zod@3": "3.25.76",
+    "npm:zod@3.25.76": "3.25.76"
   },
   "npm": {
+    "@jsr/std__assert@1.0.19": {
+      "integrity": "sha512-pEj6RPkGbqlgRmyKwATp4cUs6+ijxtdrv3bq8v1d2I2CEcMEyPaO8cVKro61wGRDH4cNg8Zx6haztvK/9m7gkA==",
+      "dependencies": [
+        "@jsr/std__internal"
+      ],
+      "tarball": "https://npm.jsr.io/~/11/@jsr/std__assert/1.0.19.tgz"
+    },
+    "@jsr/std__encoding@1.0.11": {
+      "integrity": "sha512-4SmW8WXf4x4FjkxVpxbir06QYwxw/h/2+RU5A66iKXbJC9WAYCICZkH01mcOGj8FgSitF/lSTlT585RZfo8Ukg==",
+      "tarball": "https://npm.jsr.io/~/11/@jsr/std__encoding/1.0.11.tgz"
+    },
+    "@jsr/std__internal@1.0.14": {
+      "integrity": "sha512-JT8b/t40WcR9q0GDwRZUooY7aXeXnFal8iidE/5TckdAFtvpVAsaJ71/Xgf1SfoChs41s6CZkuCYM8toaNgdvA==",
+      "tarball": "https://npm.jsr.io/~/11/@jsr/std__internal/1.0.14.tgz"
+    },
+    "@jsr/std__path@1.1.6": {
+      "integrity": "sha512-H1Cmg6z8jFyIsQbVV+vZB4eOx4k6Qg8lyUM6l7nZysj5MZumg89kb0M1bsPBTGQis3fw6mJFkJELo5+AK6oCFA==",
+      "dependencies": [
+        "@jsr/std__internal"
+      ],
+      "tarball": "https://npm.jsr.io/~/11/@jsr/std__path/1.1.6.tgz"
+    },
+    "@jsr/std__yaml@1.1.2": {
+      "integrity": "sha512-R2U09+AG6VgFet8qmVhkFw1eKQKeG54RAejd64G5F0XrzMFmHp6KOMnabOdSowd7kj28wFt/x4XT2ARGZEEeVw==",
+      "tarball": "https://npm.jsr.io/~/11/@jsr/std__yaml/1.1.2.tgz"
+    },
     "ansi-regex@6.2.2": {
       "integrity": "sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg=="
     },
@@ -20,6 +60,12 @@
         "wrap-ansi"
       ]
     },
+    "cron-parser@5.6.2": {
+      "integrity": "sha512-yJ/G1LVir6CnlkLI40CsampPLKl1SprGGlUagWtGJxewytRVYezv5xVyzzbT+Pvzx+VIRvZVF7/a0eEMTxdnTA==",
+      "dependencies": [
+        "luxon"
+      ]
+    },
     "emoji-regex@10.6.0": {
       "integrity": "sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A=="
     },
@@ -31,6 +77,20 @@
     },
     "get-east-asian-width@1.6.0": {
       "integrity": "sha512-QRbvDIbx6YklUe6RxeTeleMR0yv3cYH6PsPZHcnVn7xv7zO1BHN8r0XETu8n6Ye3Q+ahtSarc3WgtNWmehIBfA=="
+    },
+    "luxon@3.7.2": {
+      "integrity": "sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew=="
+    },
+    "mustache@4.2.0": {
+      "integrity": "sha512-71ippSywq5Yb7/tVYyGbkBggbU8H3u5Rz56fH60jGFgr8uHwxs+aSKeqmluIVzM0m0kB7xQjKS6qPfd0b2ZoqQ==",
+      "bin": true
+    },
+    "picocolors@1.1.1": {
+      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
+    },
+    "semver@7.7.2": {
+      "integrity": "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA==",
+      "bin": true
     },
     "string-width@7.2.0": {
       "integrity": "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ==",
@@ -70,12 +130,24 @@
         "y18n",
         "yargs-parser"
       ]
+    },
+    "zod@3.25.76": {
+      "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="
     }
   },
   "workspace": {
     "dependencies": [
+      "npm:@jsr/std__assert@1",
+      "npm:@jsr/std__encoding@1",
+      "npm:@jsr/std__path@1",
+      "npm:@jsr/std__yaml@1",
       "npm:cliui@9",
-      "npm:yargs@18"
+      "npm:cron-parser@5",
+      "npm:mustache@4",
+      "npm:picocolors@1",
+      "npm:semver@7",
+      "npm:yargs@18",
+      "npm:zod@3"
     ]
   }
 }

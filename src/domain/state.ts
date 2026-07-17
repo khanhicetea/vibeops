@@ -216,7 +216,7 @@ export function createEmptyState(now: string = new Date().toISOString()): Desire
         version: mysql,
         service: mysqlServiceName(mysql),
         image: mysqlImage(mysql),
-        volume: `bento-${mysqlServiceName(mysql)}-data`,
+        volume: `${mysqlServiceName(mysql)}-data`,
       },
     ],
     apps: {},

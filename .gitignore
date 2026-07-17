@@ -1,4 +1,5 @@
 .bento-stack/
+bento/
 dist/
 *.partial
 .DS_Store

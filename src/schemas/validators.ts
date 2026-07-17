@@ -1,9 +1,13 @@
 /**
- * Lightweight runtime validation primitives.
+ * Runtime validation primitives backed by Zod.
  * External data enters as unknown and becomes domain types only after validation.
  */
 
+import { z } from "zod";
+import semver from "semver";
+import { CronExpressionParser } from "cron-parser";
 import { validationError } from "../domain/errors.ts";
+import { FPM_PROFILES } from "../domain/types.ts";
 
 export type ParseResult<T> =
   | { ok: true; value: T }
@@ -26,200 +30,231 @@ export function unwrap<T>(result: ParseResult<T>, context = "value"): T {
   return result.value;
 }
 
-export function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function asString(value: unknown, field: string): ParseResult<string> {
-  if (typeof value !== "string") return err(`${field} must be a string`);
-  return ok(value);
-}
-
-export function asNonEmptyString(
-  value: unknown,
-  field: string,
-): ParseResult<string> {
-  const s = asString(value, field);
-  if (!s.ok) return s;
-  if (s.value.trim() === "") return err(`${field} must not be empty`);
-  return ok(s.value);
-}
-
-export function asNumber(value: unknown, field: string): ParseResult<number> {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return err(`${field} must be a finite number`);
-  }
-  return ok(value);
-}
-
-export function asInteger(value: unknown, field: string): ParseResult<number> {
-  const n = asNumber(value, field);
-  if (!n.ok) return n;
-  if (!Number.isInteger(n.value)) return err(`${field} must be an integer`);
-  return ok(n.value);
-}
-
-export function asBoolean(value: unknown, field: string): ParseResult<boolean> {
-  if (typeof value !== "boolean") return err(`${field} must be a boolean`);
-  return ok(value);
-}
-
-export function asArray(value: unknown, field: string): ParseResult<unknown[]> {
-  if (!Array.isArray(value)) return err(`${field} must be an array`);
-  return ok(value);
-}
-
-export function asOptional<T>(
-  value: unknown,
-  parse: (v: unknown) => ParseResult<T>,
-): ParseResult<T | undefined> {
-  if (value === undefined || value === null) return ok(undefined);
-  return parse(value);
-}
-
-export function oneOf<T extends string>(
-  value: unknown,
-  field: string,
-  options: readonly T[],
+/** Map a Zod safeParse result into the project ParseResult shape. */
+export function fromZod<T>(
+  result: z.SafeParseReturnType<unknown, T>,
+  field?: string,
 ): ParseResult<T> {
-  const s = asString(value, field);
-  if (!s.ok) return s;
-  if (!(options as readonly string[]).includes(s.value)) {
-    return err(`${field} must be one of: ${options.join(", ")}`);
-  }
-  return ok(s.value as T);
+  if (result.success) return ok(result.data);
+  return err(
+    result.error.issues.map((issue) => {
+      const path = [field, ...issue.path.map(String)].filter(Boolean).join(".");
+      return path ? `${path}: ${issue.message}` : issue.message;
+    }),
+  );
 }
+
+export function parseWith<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  field?: string,
+): ParseResult<T> {
+  return fromZod(schema.safeParse(value), field);
+}
+
+// --- Shared field schemas -------------------------------------------------
+
+export const nonEmptyStringSchema = z.string().min(1, "must not be empty");
 
 /** App slug: lowercase alphanumeric + hyphens, 2-32 chars, starts with letter. */
-export function parseAppSlug(value: unknown, field = "slug"): ParseResult<string> {
-  const s = asNonEmptyString(value, field);
-  if (!s.ok) return s;
-  if (!/^[a-z][a-z0-9-]{1,31}$/.test(s.value)) {
-    return err(
-      `${field} must be 2-32 chars, start with a letter, and contain only lowercase letters, digits, and hyphens`,
-    );
-  }
-  return ok(s.value);
-}
+export const appSlugSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .regex(
+    /^[a-z][a-z0-9-]{1,31}$/,
+    "must be 2-32 chars, start with a letter, and contain only lowercase letters, digits, and hyphens",
+  );
 
 /** Domain name validation (basic DNS label rules). */
+export const domainNameSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .transform((s) => s.toLowerCase())
+  .superRefine((domain, ctx) => {
+    if (domain.length > 253) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "is too long" });
+      return;
+    }
+    if (
+      !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$|^localhost$|^[a-z0-9-]+$/
+        .test(domain)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "is not a valid domain name",
+      });
+    }
+  });
+
+/** PHP version like 8.3, 8.4, 8.5 — major.minor only, validated via semver coerce. */
+export const phpVersionSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .refine(
+    (v) => /^\d+\.\d+$/.test(v) && semver.coerce(v) !== null,
+    "must look like major.minor (e.g. 8.5)",
+  );
+
+/** MySQL version like 8.0, 8.4, 5.7 */
+export const mysqlVersionSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .refine(
+    (v) => /^\d+\.\d+$/.test(v) && semver.coerce(v) !== null,
+    "must look like major.minor (e.g. 8.4)",
+  );
+
+/** Safe relative path under app home (no traversal). */
+export const safeRelativePathSchema = z.string().superRefine((value, ctx) => {
+  const p = value.replace(/\\/g, "/");
+  if (p.startsWith("/") || p.includes("..") || p.includes("\0")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "must be a relative path without '..' or absolute roots",
+    });
+  }
+});
+
+/** Cron expression (5-field) validated by cron-parser; shell metacharacters rejected. */
+export const cronScheduleSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .transform((s) => s.trim())
+  .superRefine((value, ctx) => {
+    if (/[;|&`$(){}<>]/.test(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "contains unsafe characters",
+      });
+      return;
+    }
+    const parts = value.split(/\s+/);
+    if (parts.length !== 5) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "must be a 5-field cron expression",
+      });
+      return;
+    }
+    try {
+      CronExpressionParser.parse(value);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "is not a valid cron expression",
+      });
+    }
+  });
+
+export const isoDateSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .refine((v) => !Number.isNaN(Date.parse(v)), "must be an ISO-8601 timestamp");
+
+export const stringArraySchema = z.array(nonEmptyStringSchema);
+
+export const positiveIntSchema = z
+  .number()
+  .int("must be an integer")
+  .positive("must be positive");
+
+export const uidGidSchema = z
+  .number()
+  .int("must be an integer")
+  .min(1000, "must be between 1000 and 65533")
+  .max(65533, "must be between 1000 and 65533");
+
+export const fpmProfileSchema = nonEmptyStringSchema.refine(
+  (v) => v in FPM_PROFILES,
+  {
+    message: `must be one of: ${Object.keys(FPM_PROFILES).join(", ")}`,
+  },
+);
+
+export const absolutePathSchema = nonEmptyStringSchema.refine(
+  (v) => v.startsWith("/"),
+  "must be absolute",
+);
+
+// --- Parse helpers (ParseResult API) ---------------------------------------
+
+export function parseAppSlug(
+  value: unknown,
+  field = "slug",
+): ParseResult<string> {
+  return parseWith(appSlugSchema, value, field);
+}
+
 export function parseDomainName(
   value: unknown,
   field = "domain",
 ): ParseResult<string> {
-  const s = asNonEmptyString(value, field);
-  if (!s.ok) return s;
-  const domain = s.value.toLowerCase();
-  if (domain.length > 253) return err(`${field} is too long`);
-  if (
-    !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$|^localhost$|^[a-z0-9-]+$/.test(
-      domain,
-    )
-  ) {
-    return err(`${field} is not a valid domain name`);
-  }
-  return ok(domain);
+  return parseWith(domainNameSchema, value, field);
 }
 
-/** PHP version like 8.3, 8.4, 8.5 */
 export function parsePhpVersion(
   value: unknown,
   field = "phpVersion",
 ): ParseResult<string> {
-  const s = asNonEmptyString(value, field);
-  if (!s.ok) return s;
-  if (!/^\d+\.\d+$/.test(s.value)) {
-    return err(`${field} must look like major.minor (e.g. 8.5)`);
-  }
-  return ok(s.value);
+  return parseWith(phpVersionSchema, value, field);
 }
 
-/** MySQL version like 8.0, 8.4, 5.7 */
 export function parseMysqlVersion(
   value: unknown,
   field = "mysqlVersion",
 ): ParseResult<string> {
-  const s = asNonEmptyString(value, field);
-  if (!s.ok) return s;
-  if (!/^\d+\.\d+$/.test(s.value)) {
-    return err(`${field} must look like major.minor (e.g. 8.4)`);
-  }
-  return ok(s.value);
+  return parseWith(mysqlVersionSchema, value, field);
 }
 
-/** Safe relative path under app home (no traversal). */
 export function parseSafeRelativePath(
   value: unknown,
   field = "path",
 ): ParseResult<string> {
-  const s = asString(value, field);
-  if (!s.ok) return s;
-  const p = s.value.replace(/\\/g, "/");
-  if (p.startsWith("/") || p.includes("..") || p.includes("\0")) {
-    return err(`${field} must be a relative path without '..' or absolute roots`);
-  }
-  return ok(p);
+  return parseWith(safeRelativePathSchema, value, field);
 }
 
-/** Cron expression (5-field). */
 export function parseCronSchedule(
   value: unknown,
   field = "schedule",
 ): ParseResult<string> {
-  const s = asNonEmptyString(value, field);
-  if (!s.ok) return s;
-  const parts = s.value.trim().split(/\s+/);
-  if (parts.length !== 5) {
-    return err(`${field} must be a 5-field cron expression`);
-  }
-  // Reject shell metacharacters
-  if (/[;|&`$(){}<>]/.test(s.value)) {
-    return err(`${field} contains unsafe characters`);
-  }
-  return ok(s.value.trim());
+  return parseWith(cronScheduleSchema, value, field);
 }
 
 export function parseIsoDate(
   value: unknown,
   field = "timestamp",
 ): ParseResult<string> {
-  const s = asNonEmptyString(value, field);
-  if (!s.ok) return s;
-  const d = Date.parse(s.value);
-  if (Number.isNaN(d)) return err(`${field} must be an ISO-8601 timestamp`);
-  return ok(s.value);
+  return parseWith(isoDateSchema, value, field);
 }
 
 export function parseStringArray(
   value: unknown,
   field: string,
 ): ParseResult<string[]> {
-  const arr = asArray(value, field);
-  if (!arr.ok) return arr;
-  const out: string[] = [];
-  for (let i = 0; i < arr.value.length; i++) {
-    const item = asNonEmptyString(arr.value[i], `${field}[${i}]`);
-    if (!item.ok) return item;
-    out.push(item.value);
-  }
-  return ok(out);
+  return parseWith(stringArraySchema, value, field);
 }
 
 export function parsePositiveInt(
   value: unknown,
   field: string,
 ): ParseResult<number> {
-  const n = asInteger(value, field);
-  if (!n.ok) return n;
-  if (n.value <= 0) return err(`${field} must be positive`);
-  return ok(n.value);
+  return parseWith(positiveIntSchema, value, field);
 }
 
-export function parseUidGid(value: unknown, field: string): ParseResult<number> {
-  const n = asInteger(value, field);
-  if (!n.ok) return n;
-  if (n.value < 1000 || n.value > 65533) {
-    return err(`${field} must be between 1000 and 65533`);
-  }
-  return ok(n.value);
+export function parseUidGid(
+  value: unknown,
+  field: string,
+): ParseResult<number> {
+  return parseWith(uidGidSchema, value, field);
+}
+
+/**
+ * Compare major.minor product versions (PHP/MySQL) using semver.
+ * Values like "8.4" are coerced to 8.4.0 for ordering.
+ */
+export function compareMajorMinor(a: string, b: string): number {
+  const ca = semver.coerce(a);
+  const cb = semver.coerce(b);
+  if (ca && cb) return semver.compare(ca, cb);
+  return a.localeCompare(b);
 }

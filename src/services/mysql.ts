@@ -8,7 +8,7 @@ import type { AppState, DesiredState, ManagedMysqlVersion } from "../domain/stat
 import { mysqlImage, mysqlServiceName } from "../domain/state.ts";
 import { asDatabaseName, asMysqlService, asMysqlVersion } from "../domain/types.ts";
 import { conflictError, notFoundError, safetyError, validationError } from "../domain/errors.ts";
-import { parseMysqlVersion, unwrap } from "../schemas/validators.ts";
+import { compareMajorMinor, parseMysqlVersion, unwrap } from "../schemas/validators.ts";
 import type { Platform, RunResult } from "../platform/mod.ts";
 import { mysqlIdent, mysqlLikeEscape } from "./template.ts";
 
@@ -25,12 +25,12 @@ export function addMysqlVersion(
     version,
     service,
     image: mysqlImage(version),
-    volume: `bento-${service}-data`,
+    volume: `${service}-data`,
   };
   return {
     ...state,
     mysqlVersions: [...state.mysqlVersions, managed].sort((a, b) =>
-      a.version.localeCompare(b.version)
+      compareMajorMinor(a.version, b.version)
     ),
     updatedAt: new Date().toISOString(),
   };
@@ -392,7 +392,7 @@ function shellQuote(s: string): string {
 }
 
 export function listMysqlVersions(state: DesiredState): ManagedMysqlVersion[] {
-  return [...state.mysqlVersions].sort((a, b) => a.version.localeCompare(b.version));
+  return [...state.mysqlVersions].sort((a, b) => compareMajorMinor(a.version, b.version));
 }
 
 // silence unused

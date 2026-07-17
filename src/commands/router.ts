@@ -8,11 +8,7 @@ import type { Argv } from "yargs";
 import { isBentoError } from "../domain/errors.ts";
 import { BENTO_VERSION, DENO_TARGET_VERSION, versionBanner } from "../version.ts";
 import { describeReloadPlan } from "../domain/reload.ts";
-import {
-  type CliContext,
-  contextFromArgv,
-  defaultStackRoot,
-} from "./context.ts";
+import { type CliContext, contextFromArgv, defaultStackRoot } from "./context.ts";
 import { capacityWarnings, materializeAppHome, provisionApp } from "../services/app.ts";
 import { addPhpVersion, buildCliExec, listPhpVersions, removePhpVersion } from "../services/php.ts";
 import {
@@ -120,7 +116,9 @@ function buildParser(state: RunState) {
   // deno-lint-ignore no-explicit-any
   let parser: Argv<any> = yargs()
     .scriptName("bento")
-    .usage("bento — single-server PHP application operations\n\nUsage: $0 [options] <command> [args]")
+    .usage(
+      "bento — single-server PHP application operations\n\nUsage: $0 [options] <command> [args]",
+    )
     .strict()
     .help()
     .alias("h", "help")
@@ -1092,9 +1090,7 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const app = argv.app ? String(argv.app) : "";
   const name = argv.name ? String(argv.name) : "";
   const schedule = argv.schedule ? String(argv.schedule) : "";
-  const cmd = argv.cmd
-    ? String(argv.cmd).split(/\s+/).filter(Boolean)
-    : trailing(argv, 2);
+  const cmd = argv.cmd ? String(argv.cmd).split(/\s+/).filter(Boolean) : trailing(argv, 2);
   if (!app || !name || !schedule || cmd.length === 0) {
     ctx.log.error(
       "usage: bento cron add --app <app> --name <name> --schedule '*/5 * * * *' -- <command...>",
@@ -1157,9 +1153,7 @@ async function cmdWorkerList(argv: AnyArgv, ctx: CliContext): Promise<number> {
 async function cmdWorkerAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const app = argv.app ? String(argv.app) : "";
   const name = argv.name ? String(argv.name) : "";
-  const cmd = argv.cmd
-    ? String(argv.cmd).split(/\s+/).filter(Boolean)
-    : trailing(argv, 2);
+  const cmd = argv.cmd ? String(argv.cmd).split(/\s+/).filter(Boolean) : trailing(argv, 2);
   if (!app || !name || cmd.length === 0) {
     ctx.log.error(
       "usage: bento worker add --app <app> --name <name> -- <command...>",
@@ -1336,11 +1330,7 @@ async function cmdBackup(argv: AnyArgv, ctx: CliContext): Promise<number> {
 async function cmdRestore(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const file = argv.file ? String(argv.file) : "";
   const app = argv.app ? String(argv.app) : "";
-  const target = argv.target
-    ? String(argv.target)
-    : argv.database
-    ? String(argv.database)
-    : "";
+  const target = argv.target ? String(argv.target) : argv.database ? String(argv.database) : "";
   if (!file || !app || !target) {
     ctx.log.error(
       "usage: bento restore --file <path> --app <app> --target <db> [--replace <exact-name>]",

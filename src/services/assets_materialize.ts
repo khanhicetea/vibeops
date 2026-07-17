@@ -93,11 +93,15 @@ export async function materializeDockerAssets(
   await platform.fs.atomicWriteText(
     join(dockerRoot, ".materialized.json"),
     `${
-      JSON.stringify({
-        digest,
-        phpVersions,
-        at: platform.clock.nowIso(),
-      }, null, 2)
+      JSON.stringify(
+        {
+          digest,
+          phpVersions,
+          at: platform.clock.nowIso(),
+        },
+        null,
+        2,
+      )
     }\n`,
   );
 

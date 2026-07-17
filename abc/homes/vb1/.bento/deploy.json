@@ -1,9 +1,0 @@
-{
-  "timeoutSec": 900,
-  "workdir": "/home/vb1",
-  "argv": [
-    "sh",
-    "/home/vb1/.bento/deploy.sh"
-  ],
-  "queuePolicy": "latest"
-}

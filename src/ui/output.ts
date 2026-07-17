@@ -1,6 +1,7 @@
 /** Operator-facing output helpers (no secrets). */
 
 import cliui from "cliui";
+import pc from "picocolors";
 
 export type Logger = {
   info: (msg: string) => void;
@@ -13,15 +14,15 @@ export function createLogger(opts?: { json?: boolean }): Logger {
   return {
     info(msg: string) {
       if (opts?.json) console.error(JSON.stringify({ level: "info", msg }));
-      else console.error(msg);
+      else console.error(pc.dim(msg));
     },
     warn(msg: string) {
       if (opts?.json) console.error(JSON.stringify({ level: "warn", msg }));
-      else console.error(`warning: ${msg}`);
+      else console.error(pc.yellow(`warning: ${msg}`));
     },
     error(msg: string) {
       if (opts?.json) console.error(JSON.stringify({ level: "error", msg }));
-      else console.error(`error: ${msg}`);
+      else console.error(pc.red(`error: ${msg}`));
     },
     out(msg: string) {
       console.log(msg);
@@ -38,15 +39,15 @@ export function printTable(headers: string[], rows: string[][]): string {
   const totalWidth = widths.reduce((sum, w) => sum + w + colGap, 0);
   const ui = cliui({ width: Math.max(totalWidth, 40), wrap: false });
 
-  const cells = (cols: string[]) =>
+  const cells = (cols: string[], paint?: (s: string) => string) =>
     cols.map((c, i) => ({
-      text: c,
+      text: paint ? paint(c) : c,
       width: widths[i]! + colGap,
       padding: [0, 0, 0, 0] as [number, number, number, number],
     }));
 
-  ui.div(...cells(headers));
-  ui.div(...cells(widths.map((w) => "-".repeat(w))));
+  ui.div(...cells(headers, (h) => pc.bold(pc.cyan(h))));
+  ui.div(...cells(widths.map((w) => pc.dim("-".repeat(w)))));
   for (const row of rows) {
     ui.div(...cells(headers.map((_, i) => row[i] ?? "")));
   }
@@ -62,7 +63,7 @@ export function printColumns(
   const ui = cliui({ width: opts?.width ?? 100, wrap: true });
   for (const [left, right] of pairs) {
     ui.div(
-      { text: left, width: leftWidth, padding: [0, 2, 0, 0] },
+      { text: pc.bold(left), width: leftWidth, padding: [0, 2, 0, 0] },
       { text: right },
     );
   }

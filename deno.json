@@ -15,13 +15,18 @@
     "compile:arm64": "deno compile --target=aarch64-unknown-linux-gnu --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys --include=templates --output=dist/bento-linux-arm64 src/main.ts"
   },
   "imports": {
-    "@std/assert": "./tests/vendor/assert.ts",
-    "@std/path": "./src/vendor/path.ts",
-    "@std/yaml": "./src/vendor/yaml.ts",
-    "@std/encoding/hex": "./src/vendor/encoding_hex.ts",
-    "@std/encoding": "./src/vendor/encoding_hex.ts",
+    "@std/assert": "npm:@jsr/std__assert@1",
+    "@std/path": "npm:@jsr/std__path@1",
+    "@std/yaml": "npm:@jsr/std__yaml@1",
+    "@std/encoding/hex": "npm:@jsr/std__encoding@1/hex",
+    "@std/encoding": "npm:@jsr/std__encoding@1",
     "yargs": "npm:yargs@18",
-    "cliui": "npm:cliui@9"
+    "cliui": "npm:cliui@9",
+    "zod": "npm:zod@3",
+    "semver": "npm:semver@7",
+    "cron-parser": "npm:cron-parser@5",
+    "picocolors": "npm:picocolors@1",
+    "mustache": "npm:mustache@4"
   },
   "compilerOptions": {
     "strict": true,
@@ -52,5 +57,5 @@
   "test": {
     "include": ["tests/"]
   },
-  "exclude": ["dist/", ".bento-stack/", "specs/"]
+  "exclude": ["dist/", ".bento-stack/", "bento/", "specs/"]
 }

@@ -21,7 +21,7 @@ export type GlobalFlags = {
 
 export function defaultStackRoot(): string {
   return Deno.env.get("BENTO_STACK_ROOT") ?? Deno.env.get("BENTO_ROOT") ??
-    "./.bento-stack";
+    "./bento";
 }
 
 export function createContext(flags: GlobalFlags): CliContext {
@@ -44,8 +44,6 @@ export function contextFromArgv(argv: Record<string, unknown>): CliContext {
   return createContext({
     stackRoot: String(stack),
     json: argv.json === true,
-    ...(typeof repoRoot === "string" && repoRoot.length > 0
-      ? { repoRoot }
-      : {}),
+    ...(typeof repoRoot === "string" && repoRoot.length > 0 ? { repoRoot } : {}),
   });
 }

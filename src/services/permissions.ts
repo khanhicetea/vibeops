@@ -84,7 +84,9 @@ export async function checkPermissions(
       if (expect.worldTraverse && (mode & 0o001) === 0) {
         issues.push({
           path,
-          issue: `mode ${mode.toString(8)} is not world-traversable (nginx cannot reach public tree)`,
+          issue: `mode ${
+            mode.toString(8)
+          } is not world-traversable (nginx cannot reach public tree)`,
           fix: `chmod 751 ${path}`,
         });
       }
@@ -162,9 +164,7 @@ export async function applyAppPermissionPolicy(
   const actions: string[] = [];
   const uid = Number(app.uid);
   const gid = Number(app.gid);
-  const docRel = app.documentRoot && app.documentRoot !== "."
-    ? app.documentRoot
-    : "";
+  const docRel = app.documentRoot && app.documentRoot !== "." ? app.documentRoot : "";
   const docRoot = docRel ? join(home, "code", docRel) : join(home, "code");
 
   const ensureDir = async (path: string, mode: number) => {

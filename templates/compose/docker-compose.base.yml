@@ -14,6 +14,6 @@ services:
     restart: unless-stopped
     networks: [private]
     volumes:
-      - bento-redis-data:/data
+      - redis-data:/data
 volumes:
-  bento-redis-data: null
+  redis-data: null

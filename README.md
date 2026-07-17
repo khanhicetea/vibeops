@@ -94,7 +94,7 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | Compose | `compose -- <args>` (refuses `down -v`) |
 | Safety | `permissions check\|repair`, `backup`, `restore` |
 
-Global flags: `--stack PATH` (or `BENTO_STACK_ROOT`), `--json`. Command parsing and help use **yargs**; table layout uses **cliui**.
+Global flags: `--stack PATH` (or `BENTO_STACK_ROOT`), `--json`. Command parsing and help use **yargs**; table layout uses **cliui**; colorized operator output uses **picocolors**. Desired-state and CLI input validation use **zod**; cron schedules use **cron-parser**; PHP/MySQL version ordering uses **semver**; config templates use **mustache**. Standard library helpers come from official `@std/*` packages (path, yaml, encoding, assert).
 
 ## Specs and acceptance
 

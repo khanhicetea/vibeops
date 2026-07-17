@@ -192,12 +192,12 @@ function renderBaseCompose(): string {
           "--protected-mode",
           "yes",
         ],
-        volumes: ["bento-redis-data:/data"],
+        volumes: ["redis-data:/data"],
         // no public ports
       },
     },
     volumes: {
-      "bento-redis-data": null,
+      "redis-data": null,
     },
   };
   return stringifyYaml(doc);

@@ -6,7 +6,7 @@ import type { DesiredState, ManagedPhpVersion } from "../domain/state.ts";
 import { phpImage, phpServiceName } from "../domain/state.ts";
 import { asPhpVersion, PHP_GLOBAL_PROCESS_CAP } from "../domain/types.ts";
 import { conflictError, notFoundError, safetyError, validationError } from "../domain/errors.ts";
-import { parsePhpVersion, unwrap } from "../schemas/validators.ts";
+import { compareMajorMinor, parsePhpVersion, unwrap } from "../schemas/validators.ts";
 import type { Platform } from "../platform/mod.ts";
 
 export function addPhpVersion(
@@ -26,7 +26,9 @@ export function addPhpVersion(
   };
   return {
     ...state,
-    phpVersions: [...state.phpVersions, managed].sort((a, b) => a.version.localeCompare(b.version)),
+    phpVersions: [...state.phpVersions, managed].sort((a, b) =>
+      compareMajorMinor(a.version, b.version)
+    ),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -63,7 +65,7 @@ export function removePhpVersion(
 }
 
 export function listPhpVersions(state: DesiredState): ManagedPhpVersion[] {
-  return [...state.phpVersions].sort((a, b) => a.version.localeCompare(b.version));
+  return [...state.phpVersions].sort((a, b) => compareMajorMinor(a.version, b.version));
 }
 
 /** Ephemeral CLI execution plan (caller runs via docker compose run). */

@@ -1,5 +1,0 @@
-# bento-managed: true
-generated/compose/docker-compose.base.yml
-generated/compose/docker-compose.php-php85.yml
-generated/compose/docker-compose.mysql84.yml
-overlays/*.yml
