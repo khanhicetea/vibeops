@@ -37,6 +37,7 @@ deno task lint
 deno task check
 deno task test
 deno task test:integration   # soft-skips Docker-only steps when daemon is down
+deno task test:stack         # real Docker stack harness (default name: testbento)
 
 # initialize a stack root and render
 deno task run --stack ./my-stack init
@@ -118,6 +119,7 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 |------|----------|
 | Interactive | `tui` (wizard: menus, tables, alerts for common ops) |
 | Bootstrap | `init`, `render`, `apply`, `status` |
+| Live proof | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron `* * * * *` + worker (61s wait), permissions repair, HTTP boot TLS; ACME skipped |
 | Apps | `app create\|list\|show\|update` (delete/remove blocked) |
 | PHP | `php add\|remove\|list` |
 | MySQL | `mysql add\|list\|db\|password` (version removal blocked) |

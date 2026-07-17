@@ -1,5 +1,6 @@
 .bento-stack/
 bento/
+testbento/
 dist/
 *.partial
 .DS_Store

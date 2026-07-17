@@ -265,6 +265,12 @@ Deno.test("app apply emits INI-safe pool marker, include file, and code/ docroot
       phpCompose.includes("zz-bento-pools.conf:/usr/local/etc/php-fpm.d/zz-bento-pools.conf:ro"),
       true,
     );
+    assertEquals(
+      phpCompose.includes(
+        "entrypoint.sh:/usr/local/bin/bento-php-entrypoint:ro",
+      ),
+      true,
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }

@@ -156,10 +156,15 @@ export async function composeArgs(
 }
 
 function renderBaseCompose(): string {
+  // Project name + private network are scoped via COMPOSE_PROJECT_NAME (stack .env)
+  // so a disposable test stack (e.g. testbento) does not collide with production.
   const doc = {
-    name: "bento",
+    name: "${COMPOSE_PROJECT_NAME:-bento}",
     networks: {
-      private: { driver: "bridge", name: "bento_private" },
+      private: {
+        driver: "bridge",
+        name: "${COMPOSE_PROJECT_NAME:-bento}_private",
+      },
     },
     services: {
       nginx: {
@@ -187,12 +192,13 @@ function renderBaseCompose(): string {
         image: "redis:7-alpine",
         restart: "unless-stopped",
         networks: ["private"],
+        env_file: [".env"],
+        // Private network only (no published ports). When REDIS_PASSWORD is set, require it;
+        // otherwise disable protected-mode so sibling containers can connect.
         command: [
-          "redis-server",
-          "--appendonly",
-          "yes",
-          "--protected-mode",
-          "yes",
+          "sh",
+          "-c",
+          'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"; else exec redis-server --appendonly yes --protected-mode no; fi',
         ],
         volumes: ["redis-data:/data"],
         // no public ports
@@ -226,6 +232,8 @@ function renderPhpFragment(service: string, image: string, version: string): str
           // Pools directory is not matched by php-fpm.d/*.conf; include file below pulls it in.
           `./generated/php/${service}/pools:/usr/local/etc/php-fpm.d/bento:ro`,
           `./generated/php/${service}/zz-bento-pools.conf:/usr/local/etc/php-fpm.d/zz-bento-pools.conf:ro`,
+          // Bind host entrypoint so entrypoint fixes apply without image rebuild.
+          "./docker/php/entrypoint.sh:/usr/local/bin/bento-php-entrypoint:ro",
           `./runtime/php-fpm/${service}:/run/php-fpm`,
           "./helpers:/opt/bento/helpers:ro",
         ],

@@ -14,7 +14,16 @@ deno task test
 deno task test:integration   # soft-skips when Docker unavailable
 deno task test:parity        # compile + F-29/F-30
 
-# Optional live data-plane (requires Docker Compose stack up)
+# Real live data-plane harness (Docker required)
+# Creates ./testbento by default, brings compose up, creates an app with DB,
+# checks PHP version + MySQL + Redis connectivity. TLS ACME issuance is skipped.
+deno task test:stack
+# or:
+deno task run --test-stack              # default name: testbento
+deno task run test-stack mylab --keep   # leave stack running
+deno task run --test-stack=lab --skip-build --skip-http
+
+# Optional manual live data-plane
 export BENTO_STACK_ROOT=/var/lib/bento-scenario
 deno task run --stack "$BENTO_STACK_ROOT" init
 deno task run --stack "$BENTO_STACK_ROOT" render

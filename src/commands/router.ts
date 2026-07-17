@@ -70,6 +70,13 @@ import { buildStatus, formatStatus, statusToJson } from "../services/status.ts";
 import { checkPermissions, formatPermReport, repairPermissions } from "../services/permissions.ts";
 import { assertSafeComposeArgs, composeArgs, resolveComposeFiles } from "../services/compose.ts";
 import { ensureAcmeWebroot, tlsOperatorDocs, validateExternalTlsPaths } from "../services/tls.ts";
+import {
+  DEFAULT_SCHEDULE_WAIT_SEC,
+  DEFAULT_TEST_STACK_NAME,
+  formatTestStackReport,
+  resolveTestStackOptions,
+  runTestStack,
+} from "../services/test_stack.ts";
 import { printTable, redact } from "../ui/output.ts";
 import type { TlsMode } from "../domain/state.ts";
 import { runWizard } from "./wizard.ts";
@@ -248,6 +255,45 @@ function buildParser(state: RunState) {
       "Show stack/app/runtime status",
       () => {},
       bind(state, cmdStatus),
+    )
+    .command(
+      "test-stack [name]",
+      "Real Docker multi-chain harness (apps, db, domains, cron/worker, permissions; ACME skipped)",
+      (y: YargsBuilder) =>
+        y
+          .positional("name", {
+            type: "string",
+            default: DEFAULT_TEST_STACK_NAME,
+            describe:
+              `Compose project / stack directory name (default: ${DEFAULT_TEST_STACK_NAME})`,
+          })
+          .option("keep", {
+            type: "boolean",
+            default: false,
+            describe: "Leave containers running after the run",
+          })
+          .option("skip-build", {
+            type: "boolean",
+            default: false,
+            describe: "Skip docker compose build (reuse existing images)",
+          })
+          .option("skip-http", {
+            type: "boolean",
+            default: false,
+            describe: "Skip host-network nginx HTTP probe",
+          })
+          .option("timeout-sec", {
+            type: "number",
+            default: 180,
+            describe: "Per-service wait timeout in seconds",
+          })
+          .option("schedule-wait-sec", {
+            type: "number",
+            default: DEFAULT_SCHEDULE_WAIT_SEC,
+            describe:
+              `Seconds to wait for * * * * * cron + worker output (default: ${DEFAULT_SCHEDULE_WAIT_SEC})`,
+          }),
+      bind(state, cmdTestStack),
     )
     .command("app", "Provision and inspect applications", (y: YargsBuilder) =>
       y
@@ -971,7 +1017,7 @@ function buildParser(state: RunState) {
 }
 
 export async function runCli(argv: string[]): Promise<number> {
-  // Preserve historical short-circuits for version / bare help.
+  // Preserve historical short-circuits for version / bare help / test-stack flag.
   const tokens = stripGlobalTokens(argv);
   if (tokens[0] === "version" || tokens[0] === "--version" || tokens[0] === "-V") {
     printVersion();
@@ -985,6 +1031,26 @@ export async function runCli(argv: string[]): Promise<number> {
   ) {
     buildParser({ code: 0 }).showHelp();
     return 0;
+  }
+
+  // Global --test-stack [name] alias (default name: testbento).
+  const flagIdx = argv.findIndex((a) => a === "--test-stack" || a.startsWith("--test-stack="));
+  if (flagIdx >= 0) {
+    const flag = argv[flagIdx]!;
+    let name = DEFAULT_TEST_STACK_NAME;
+    if (flag.startsWith("--test-stack=") && flag.length > "--test-stack=".length) {
+      name = flag.slice("--test-stack=".length);
+    } else {
+      const next = argv[flagIdx + 1];
+      if (next && !next.startsWith("-")) name = next;
+    }
+    // Re-enter as the subcommand so stack/json/repo-root flags still apply.
+    const rest = argv.filter((_, i) => {
+      if (i === flagIdx) return false;
+      if (!flag.includes("=") && i === flagIdx + 1 && argv[i] === name) return false;
+      return true;
+    });
+    return await runCli(["test-stack", name, ...rest]);
   }
 
   const state: RunState = { code: 0 };
@@ -1014,6 +1080,20 @@ function stripGlobalTokens(args: string[]): string[] {
       continue;
     }
     if (a.startsWith("--stack=") || a.startsWith("--root=")) continue;
+    if (a === "--test-stack") {
+      // Keep optional name token for the flag short-circuit above.
+      rest.push(a);
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        rest.push(next);
+        i++;
+      }
+      continue;
+    }
+    if (a.startsWith("--test-stack=")) {
+      rest.push(a);
+      continue;
+    }
     if (a === "--json") continue;
     rest.push(a);
   }
@@ -1096,6 +1176,49 @@ async function cmdStatus(_argv: AnyArgv, ctx: CliContext): Promise<number> {
   if (ctx.json) ctx.log.out(statusToJson(report));
   else ctx.log.out(formatStatus(report));
   return 0;
+}
+
+async function cmdTestStack(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const name = argv.name ? String(argv.name) : DEFAULT_TEST_STACK_NAME;
+  // Only honor --stack when the operator actually passed it (yargs always fills the default).
+  const explicitStack = Deno.args.some((a) => a === "--stack" || a.startsWith("--stack="));
+  const opts = resolveTestStackOptions({
+    name,
+    stack: explicitStack && argv.stack ? String(argv.stack) : undefined,
+    keep: argv.keep === true,
+    skipBuild: argv["skip-build"] === true || argv.skipBuild === true,
+    skipHttp: argv["skip-http"] === true || argv.skipHttp === true,
+    timeoutSec: argv["timeout-sec"] != null
+      ? Number(argv["timeout-sec"])
+      : argv.timeoutSec != null
+      ? Number(argv.timeoutSec)
+      : 180,
+    scheduleWaitSec: argv["schedule-wait-sec"] != null
+      ? Number(argv["schedule-wait-sec"])
+      : argv.scheduleWaitSec != null
+      ? Number(argv.scheduleWaitSec)
+      : DEFAULT_SCHEDULE_WAIT_SEC,
+    repoRoot: argv["repo-root"]
+      ? String(argv["repo-root"])
+      : argv.repoRoot
+      ? String(argv.repoRoot)
+      : undefined,
+    log: (level, msg) => {
+      if (level === "error") ctx.log.error(msg);
+      else if (level === "warn") ctx.log.warn(msg);
+      else ctx.log.info(msg);
+    },
+  });
+  ctx.log.info(
+    `test-stack name=${opts.name} root=${opts.stackRoot} keep=${opts.keep} skipBuild=${opts.skipBuild} scheduleWait=${opts.scheduleWaitSec}s`,
+  );
+  const report = await runTestStack(opts);
+  if (ctx.json) {
+    ctx.log.out(JSON.stringify(report, null, 2));
+  } else {
+    ctx.log.out(formatTestStackReport(report));
+  }
+  return report.ok ? 0 : 1;
 }
 
 async function cmdAppList(_argv: AnyArgv, ctx: CliContext): Promise<number> {

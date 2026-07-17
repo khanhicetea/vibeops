@@ -114,7 +114,11 @@ export class StateStore {
     if (!(await this.platform.fs.exists(envPath))) {
       await this.platform.fs.atomicWriteText(
         envPath,
-        defaultEnvContent(this.platform.random.hex(24)),
+        defaultEnvContent({
+          mysqlRootPassword: this.platform.random.hex(24),
+          redisPassword: this.platform.random.hex(24),
+          projectName: "bento",
+        }),
         0o600,
       );
     }
@@ -148,13 +152,17 @@ export class StateStore {
   }
 }
 
-function defaultEnvContent(mysqlRootPassword: string): string {
+function defaultEnvContent(opts: {
+  mysqlRootPassword: string;
+  redisPassword: string;
+  projectName: string;
+}): string {
   return [
     "# Bento stack environment (operator-owned, sensitive)",
-    `MYSQL_ROOT_PASSWORD=${mysqlRootPassword}`,
-    "REDIS_PASSWORD=",
+    `MYSQL_ROOT_PASSWORD=${opts.mysqlRootPassword}`,
+    `REDIS_PASSWORD=${opts.redisPassword}`,
     "TZ=UTC",
-    "COMPOSE_PROJECT_NAME=bento",
+    `COMPOSE_PROJECT_NAME=${opts.projectName}`,
     "",
   ].join("\n");
 }

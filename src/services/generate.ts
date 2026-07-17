@@ -286,8 +286,9 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       // Always include deploy drain when deploy enabled
       const lines: string[] = [];
       if (app.deploy.enabled) {
+        // supercronic has no user field — drop privileges via setpriv.
         lines.push(
-          `* * * * * ${app.uid}:${app.gid} /opt/bento/helpers/deploy-drain.sh ${app.slug}`,
+          `* * * * * setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /opt/bento/helpers/deploy-drain.sh ${app.slug}`,
         );
       }
       for (const job of appJobs) {
@@ -303,11 +304,24 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       });
     }
 
-    // Supervisord programs (flat)
+    // Supervisord programs (flat). Control socket is required for supervisorctl
+    // reread/update and worker start|stop|restart|inspect.
     const programBlocks: string[] = [
-      withManagedMarker(`[supervisord]
+      withManagedMarker(`[unix_http_server]
+file=/var/run/supervisor.sock
+chmod=0700
+
+[supervisord]
 nodaemon=true
+user=root
 logfile=/var/log/supervisor/supervisord.log
+pidfile=/var/run/supervisord.pid
+
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[supervisorctl]
+serverurl=unix:///var/run/supervisor.sock
 `),
     ];
     // system log maintenance scheduler
@@ -336,10 +350,16 @@ stderr_logfile=/var/log/supervisor/scheduler-${app.slug}.err
       const app = state.apps[w.app];
       if (!app) continue;
       const cmd = w.command.map(shellQuote).join(" ");
+      // Supervisor requires a real /etc/passwd user for `user=`; app UIDs are not
+      // system accounts. Drop privileges with setpriv (same approach as cron).
+      const dropped = `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- sh -c ${
+        shellQuote(`cd ${w.workdir} && ${cmd}`)
+      }`;
       programBlocks.push(`[program:worker-${app.slug}-${w.name}]
-command=${cmd}
+command=${dropped}
 directory=${w.workdir}
-user=${app.uid}
+user=root
+environment=HOME="${app.home}",USER="${app.slug}",BENTO_APP="${app.slug}"
 autostart=true
 autorestart=${w.autorestart}
 stopsignal=${w.stopsignal}
@@ -398,8 +418,12 @@ function formatCronLine(job: CronJob, app: AppState): string {
   } else if (job.output === "log") {
     cmd = `${cmd} >> ${containerAppHome(app.slug)}/logs/cron-${job.name}.log 2>&1`;
   }
-  // supercronic format with user
-  return `${job.schedule} ${app.uid}:${app.gid} ${cmd}`;
+  // supercronic is 5-field + command only (no user column). Drop to the app
+  // identity with setpriv so open_basedir / home ownership stay consistent.
+  const drop = `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- sh -c ${
+    shellQuote(cmd)
+  }`;
+  return `${job.schedule} ${drop}`;
 }
 
 function shellQuote(s: string): string {
