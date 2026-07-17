@@ -343,6 +343,54 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
   }
 });
 
+Deno.test("cron shell scripts preserve user redirects outside Bento's job log", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-cron-script-" });
+  try {
+    const platform = testPlatform(root);
+    const provisioned = provisionApp(platform, createEmptyState(), {
+      slug: "alpha",
+      domain: "a.test",
+    });
+    const added = addCronJob(provisioned.state, {
+      app: "alpha",
+      name: "redirect",
+      schedule: "* * * * *",
+      command: ["echo 'Hello' >> public/abc.txt"],
+      commandMode: "shell",
+    }, platform);
+
+    const files = await generateAll(platform, added.state, "digest");
+    const script = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/jobs/alpha/redirect.sh")!.content,
+    );
+    const crontab = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/alpha.crontab")!.content,
+    );
+    assertEquals(script.includes("echo 'Hello' >> public/abc.txt"), true);
+    assertEquals(crontab.includes("/etc/bento/cron/jobs/alpha/redirect.sh"), true);
+    assertEquals(crontab.includes("public/abc.txt"), false);
+    assertEquals(crontab.includes("logs/cron-redirect.log 2>&1"), true);
+
+    // Exercise the same parent-log/child-script redirect hierarchy locally.
+    const workdir = join(root, "home");
+    await Deno.mkdir(join(workdir, "public"), { recursive: true });
+    const runnable = script.replace("cd /home/alpha", `cd ${workdir}`);
+    const scriptPath = join(root, "redirect.sh");
+    const bentoLog = join(root, "cron-redirect.log");
+    await Deno.writeTextFile(scriptPath, runnable);
+    const result = await new Deno.Command("sh", {
+      args: ["-c", 'sh "$1" >> "$2" 2>&1', "cron-test", scriptPath, bentoLog],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(result.success, true);
+    assertEquals(await Deno.readTextFile(join(workdir, "public/abc.txt")), "Hello\n");
+    assertEquals(await Deno.readTextFile(bentoLog), "");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("cron add/remove renders crontab and reloads existing Supercronic", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-cron-reload-" });
   try {
@@ -376,8 +424,16 @@ Deno.test("cron add/remove renders crontab and reloads existing Supercronic", as
     let crontab = await platform.fs.readText(
       join(root, "generated/runner/php85/cron/alpha.crontab"),
     );
-    assertEquals(crontab.includes("first-job"), true);
-    assertEquals(crontab.includes("second-job"), true);
+    assertEquals(crontab.includes("/jobs/alpha/first.sh"), true);
+    assertEquals(crontab.includes("/jobs/alpha/second.sh"), true);
+    const firstScript = await platform.fs.readText(
+      join(root, "generated/runner/php85/cron/jobs/alpha/first.sh"),
+    );
+    const secondScript = await platform.fs.readText(
+      join(root, "generated/runner/php85/cron/jobs/alpha/second.sh"),
+    );
+    assertEquals(firstScript.includes("exec echo first-job"), true);
+    assertEquals(secondScript.includes("exec echo second-job"), true);
     assertEquals(
       process.calls.some(({ command }) =>
         command.includes("signal") && command.includes("USR2") &&
@@ -398,8 +454,8 @@ Deno.test("cron add/remove renders crontab and reloads existing Supercronic", as
     crontab = await platform.fs.readText(
       join(root, "generated/runner/php85/cron/alpha.crontab"),
     );
-    assertEquals(crontab.includes("first-job"), true);
-    assertEquals(crontab.includes("second-job"), false);
+    assertEquals(crontab.includes("/jobs/alpha/first.sh"), true);
+    assertEquals(crontab.includes("/jobs/alpha/second.sh"), false);
     assertEquals(
       process.calls.some(({ command }) =>
         command.includes("signal") && command.includes("USR2") &&

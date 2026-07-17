@@ -123,6 +123,8 @@ export type CronJob = {
   timezone: string;
   workdir: string;
   command: string[];
+  /** argv is safely quoted; shell is stored as one script body without tokenizing it. */
+  commandMode: "argv" | "shell";
   output: "log" | "null" | "inherit";
   timeoutSec?: number;
   lock?: string;

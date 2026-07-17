@@ -23,6 +23,7 @@ export type AddCronInput = {
   app: string;
   schedule: string;
   command: string[];
+  commandMode?: "argv" | "shell";
   timezone?: string;
   workdir?: string;
   output?: "log" | "null" | "inherit";
@@ -53,6 +54,10 @@ export function addCronJob(
     "command",
   );
   if (command.length === 0) throw validationError("command must not be empty");
+  const commandMode = input.commandMode ?? "argv";
+  if (commandMode === "shell" && command.length !== 1) {
+    throw validationError("shell command must be supplied as one unparsed string");
+  }
 
   const workdir = platform.paths.assertInsideHome(
     app.home,
@@ -66,6 +71,7 @@ export function addCronJob(
     timezone: input.timezone ?? "UTC",
     workdir,
     command,
+    commandMode,
     output: input.output ?? "log",
     enabled: true,
     ...(input.timeoutSec !== undefined ? { timeoutSec: input.timeoutSec } : {}),

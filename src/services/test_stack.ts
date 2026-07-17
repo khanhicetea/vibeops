@@ -1033,8 +1033,11 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     const ct = await platform.fs.readText(
       join(opts.stackRoot, "generated", "runner", service, "cron", `${appSlug}.crontab`),
     );
-    if (!ct.includes("* * * * *") || !ct.includes("cron-ok")) {
-      return { ok: false, detail: `crontab missing job: ${ct.slice(0, 200)}` };
+    const jobScript = await platform.fs.readText(
+      join(opts.stackRoot, "generated", "runner", service, "cron", "jobs", appSlug, "print.sh"),
+    );
+    if (!ct.includes("* * * * *") || !ct.includes("/jobs/") || !jobScript.includes("cron-ok")) {
+      return { ok: false, detail: `crontab or job script missing job: ${ct.slice(0, 200)}` };
     }
     return { ok: true, detail: "schedule=* * * * * → logs/cron-print.log" };
   });

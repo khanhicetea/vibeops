@@ -676,7 +676,7 @@ function buildParser(state: RunState) {
                 .option("timeout", { type: "number", describe: "Timeout seconds" })
                 .option("cmd", {
                   type: "string",
-                  describe: "Command string (prefer -- argv form)",
+                  describe: "Shell command string (supports redirects and pipelines)",
                 }),
             ),
           bind(state, cmdCronAdd),
@@ -1816,7 +1816,8 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const app = argv.app ? String(argv.app) : "";
   const name = argv.name ? String(argv.name) : "";
   const schedule = argv.schedule ? String(argv.schedule) : "";
-  const cmd = argv.cmd ? String(argv.cmd).split(/\s+/).filter(Boolean) : trailing(argv, 2);
+  const shellCommand = argv.cmd ? String(argv.cmd) : undefined;
+  const cmd = shellCommand !== undefined ? [shellCommand] : trailing(argv, 2);
   if (!app || !name || !schedule || cmd.length === 0) {
     ctx.log.error(
       "usage: bento cron add --app <app> --name <name> --schedule '*/5 * * * *' -- <command...>",
@@ -1830,6 +1831,7 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
       name,
       schedule,
       command: cmd,
+      commandMode: shellCommand !== undefined ? "shell" : "argv",
       timezone: argv.timezone ? String(argv.timezone) : undefined,
       lock: argv.lock ? String(argv.lock) : undefined,
       timeoutSec: argv.timeout != null ? Number(argv.timeout) : undefined,

@@ -798,21 +798,21 @@ async function sectionCron(ui: WizardUI, ctx: CliContext, slug: string): Promise
         default: "*/5 * * * *",
       });
       if (!schedule) continue;
-      const cmdRaw = await ui.prompt("Command (space-separated argv)", {
+      const cmdRaw = await ui.prompt("Shell command", {
         required: true,
         default: "php artisan schedule:run",
       });
       if (!cmdRaw) continue;
       const timezone = await ui.prompt("Timezone (blank = default)", { default: "" });
       if (timezone === null) continue;
-      const command = cmdRaw.split(/\s+/).filter(Boolean);
       try {
         await ctx.store.withExclusive(async (state) => {
           const r = addCronJob(state, {
             app: slug,
             name,
             schedule,
-            command,
+            command: [cmdRaw],
+            commandMode: "shell",
             timezone: timezone || undefined,
           }, ctx.platform);
           await ctx.store.save(r.state);

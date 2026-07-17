@@ -293,6 +293,14 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       }
       for (const job of appJobs) {
         lines.push(formatCronLine(job, app));
+        files.push({
+          relPath: `runner/${v.service}/cron/jobs/${app.slug}/${job.name}.sh`,
+          content: formatCronScript(job),
+          // The crontab invokes this through `sh`; it only needs to be readable
+          // by the setpriv-dropped app identity.
+          mode: 0o644,
+          managed: true,
+        });
       }
       files.push({
         relPath: `runner/${v.service}/cron/${app.slug}.crontab`,
@@ -406,10 +414,13 @@ socket=/var/run/mysqld/mysqld.sock
 }
 
 function formatCronLine(job: CronJob, app: AppState): string {
-  const cmdParts = job.command.map(shellQuote).join(" ");
-  let cmd = `cd ${shellQuote(job.workdir)} && ${cmdParts}`;
+  // Keep user shell source out of the crontab. Besides making the generated
+  // line readable, the child script lets a user's own redirects override the
+  // inherited Bento log redirect in the normal shell manner.
+  const script = `/etc/bento/cron/jobs/${app.slug}/${job.name}.sh`;
+  let cmd = `sh ${shellQuote(script)}`;
   if (job.timeoutSec) {
-    cmd = `timeout ${job.timeoutSec}s sh -c ${shellQuote(cmd)}`;
+    cmd = `timeout ${job.timeoutSec}s ${cmd}`;
   }
   if (job.lock) {
     cmd = `flock -n /run/bento/${app.slug}/${job.lock}.lock -c ${shellQuote(cmd)}`;
@@ -419,12 +430,19 @@ function formatCronLine(job: CronJob, app: AppState): string {
   } else if (job.output === "log") {
     cmd = `${cmd} >> ${containerAppHome(app.slug)}/logs/cron-${job.name}.log 2>&1`;
   }
-  // supercronic is 5-field + command only (no user column). Drop to the app
-  // identity with setpriv so open_basedir / home ownership stay consistent.
+  // supercronic is 5-field + command only (no user column). Keep this shell so
+  // output files are opened after privileges have been dropped.
   const drop = `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- sh -c ${
     shellQuote(cmd)
   }`;
   return `${job.schedule} ${drop}`;
+}
+
+function formatCronScript(job: CronJob): string {
+  const command = job.commandMode === "shell"
+    ? job.command[0]!
+    : `exec ${job.command.map(shellQuote).join(" ")}`;
+  return withManagedMarker(`cd ${shellQuote(job.workdir)} || exit 1\n${command}\n`);
 }
 
 function shellQuote(s: string): string {
