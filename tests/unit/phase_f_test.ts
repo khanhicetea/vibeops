@@ -338,6 +338,23 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
         allBlob.includes("worker-alpha-queue"),
       true,
     );
+
+    const supervisor = textContent(
+      files.find((f) => f.relPath === "runner/php85/supervisord.conf")!.content,
+    );
+    const crontab = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/alpha.crontab")!.content,
+    );
+    const app = state.apps.alpha!;
+    assertEquals(
+      supervisor.includes(
+        `command=setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /usr/local/bin/supercronic`,
+      ),
+      true,
+    );
+    assertEquals(crontab.includes("setpriv"), false);
+    assertEquals(crontab.includes("sh -c"), false);
+    assertEquals(crontab.includes("sh /etc/bento/cron/jobs/alpha/tick.sh"), true);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

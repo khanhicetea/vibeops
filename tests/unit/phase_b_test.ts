@@ -282,8 +282,24 @@ Deno.test("goaccess report plan is one-shot docker run", async () => {
     assertEquals(plan.command[0], "docker");
     assertEquals(plan.command.includes("run"), true);
     assertEquals(plan.command.includes("--rm"), true);
+    assertEquals(plan.command.includes("-it"), false);
+    assertEquals(plan.command.includes("-o"), true);
     assertEquals(plan.dryRun, true);
     assertEquals(plan.reportPath.includes(join(root, "logs", "reports")), true);
+  });
+});
+
+Deno.test("goaccess terminal plan attaches the one-shot container", async () => {
+  await withRoot(async (_root, platform) => {
+    const plan = buildGoAccessReportPlan(platform, "demo", {
+      attach: true,
+      dryRun: true,
+    });
+    assertEquals(plan.attach, true);
+    assertEquals(plan.command.includes("--rm"), true);
+    assertEquals(plan.command.includes("-it"), true);
+    assertEquals(plan.command.includes("-o"), false);
+    assertEquals(plan.command.some((arg) => arg.includes("demo.access.log")), true);
   });
 });
 

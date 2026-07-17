@@ -35,6 +35,7 @@ type StringArgName =
 type BooleanArgName =
   | "accessLog"
   | "all"
+  | "attach"
   | "db"
   | "dryRun"
   | "fifo"

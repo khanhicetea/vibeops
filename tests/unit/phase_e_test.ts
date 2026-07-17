@@ -243,6 +243,16 @@ Deno.test("E3 disabled deploy omits /_bento routes; enabled matches helpers", as
     );
     assertEquals(crontab.includes("/opt/bento/helpers/deploy-drain.sh alpha"), true);
     assertEquals(crontab.includes("/run/php-fpm/php85/alpha.sock"), true);
+    assertEquals(crontab.includes("setpriv"), false);
+    const supervisor = textContent(
+      files.find((f) => f.relPath === "runner/php85/supervisord.conf")!.content,
+    );
+    assertEquals(
+      supervisor.includes(
+        `command=setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /usr/local/bin/supercronic`,
+      ),
+      true,
+    );
     const compose = textContent(
       files.find((f) => f.relPath === "compose/docker-compose.php-php85.yml")!.content,
     );

@@ -172,6 +172,25 @@ Deno.test("cli init render status app create", async () => {
       await runCli([...base, "logs", "access", "rotate", "--app", "demo"]),
       0,
     );
+    await Deno.mkdir(join(stack, "logs", "nginx"), { recursive: true });
+    await Deno.writeTextFile(join(stack, "logs", "nginx", "demo.access.log"), "request\n");
+    assertEquals(
+      await runCli([...base, "logs", "access", "report", "--app", "demo", "--dry-run"]),
+      0,
+    );
+    assertEquals(
+      await runCli([
+        ...base,
+        "logs",
+        "access",
+        "report",
+        "--app",
+        "demo",
+        "--attach",
+        "--dry-run",
+      ]),
+      0,
+    );
 
     // Phase B: mysql shell --print keeps secrets off printed argv
     // (stack .env has MYSQL_ROOT_PASSWORD from init)

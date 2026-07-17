@@ -1010,7 +1010,8 @@ async function sectionLogs(ui: WizardUI, ctx: CliContext, slug: string): Promise
       { label: "Enable", value: "enable", hint: "nginx-only reload" },
       { label: "Disable", value: "disable", hint: "preserves files" },
       { label: "Rotate + reopen", value: "rotate" },
-      { label: "GoAccess report (dry-run)", value: "report" },
+      { label: "Open GoAccess terminal", value: "report-terminal", hint: "attach container" },
+      { label: "Generate GoAccess HTML report", value: "report-html" },
     ]);
     if (!action) return;
 
@@ -1044,16 +1045,32 @@ async function sectionLogs(ui: WizardUI, ctx: CliContext, slug: string): Promise
             ? `Rotated to ${result.plan.rotatedPath}`
             : "No active log; reopen attempted",
         );
-      } else if (action === "report") {
+      } else if (action === "report-terminal") {
         const state = await ctx.store.load();
-        try {
-          const plan = await generateAccessReport(ctx.platform, state, slug, {
-            dryRun: true,
-          });
-          ui.message(plan.command.join(" "));
-        } catch (err) {
-          handleError(ui, err);
-        }
+        const plan = await generateAccessReport(ctx.platform, state, slug, {
+          attach: true,
+        });
+        ui.blank();
+        ui.info(`Attaching GoAccess to ${slug}'s access log.`);
+        ui.message(pcDim("Press q in GoAccess to return to the wizard."));
+        ui.blank();
+
+        const [cmd, ...args] = plan.command;
+        const child = new Deno.Command(cmd!, {
+          args,
+          cwd: ctx.stackRoot,
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        }).spawn();
+        const code = (await child.status).code;
+        ui.blank();
+        if (code === 0) ui.success("GoAccess terminal closed");
+        else ui.warn(`GoAccess exited ${code}`);
+      } else if (action === "report-html") {
+        const state = await ctx.store.load();
+        const report = await generateAccessReport(ctx.platform, state, slug);
+        ui.success("GoAccess report generated", report.reportPath);
       }
     } catch (err) {
       handleError(ui, err);

@@ -926,16 +926,23 @@ function buildParser(state: RunState) {
               )
               .command(
                 "report",
-                "One-shot GoAccess HTML report",
+                "One-shot GoAccess HTML report or attached terminal dashboard",
                 (y3: YargsBuilder) =>
                   y3
                     .option("app", { type: "string", demandOption: true })
                     .option("output", { type: "string", describe: "Report HTML path" })
+                    .option("attach", {
+                      alias: "terminal",
+                      type: "boolean",
+                      default: false,
+                      describe: "Attach an interactive GoAccess terminal dashboard",
+                    })
                     .option("dry-run", {
                       type: "boolean",
                       default: false,
                       describe: "Print planned docker run argv",
-                    }),
+                    })
+                    .conflicts("attach", "output"),
                 bind(state, cmdLogsAccessReport),
               )
               .demandCommand(1, "Specify: enable|disable|rotate|report")
@@ -2344,14 +2351,41 @@ async function cmdLogsAccessReport(
   const { app: slug } = argv;
   const state = await ctx.store.load();
   const dryRun = argv.dryRun === true;
+  const attach = argv.attach === true;
   const result = await generateAccessReport(ctx.platform, state, slug, {
     output: argv.output,
     dryRun,
+    attach,
   });
   if (dryRun) {
     if (ctx.json) ctx.log.out(JSON.stringify(result, null, 2));
     else ctx.log.out(result.command.join(" "));
     return 0;
+  }
+  if (attach) {
+    let tty = false;
+    try {
+      tty = Deno.stdin.isTerminal() && Deno.stdout.isTerminal();
+    } catch {
+      tty = false;
+    }
+    if (!tty) {
+      ctx.log.error(
+        "GoAccess attach requires an interactive terminal; use HTML mode or --dry-run.",
+      );
+      return 2;
+    }
+
+    ctx.log.info("attaching GoAccess terminal; press q to return");
+    const [cmd, ...args] = result.command;
+    const child = new Deno.Command(cmd!, {
+      args,
+      cwd: ctx.stackRoot,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    return (await child.status).code;
   }
   ctx.log.info(`report written to ${result.reportPath}`);
   return 0;

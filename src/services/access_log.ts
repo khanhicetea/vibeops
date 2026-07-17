@@ -3,7 +3,7 @@
  * Enable/disable is nginx-only (no PHP/runner reload). Rotation uses reopen, not config reload.
  */
 
-import { join } from "@std/path";
+import { basename, dirname, isAbsolute, join, resolve } from "@std/path";
 import type { DesiredState } from "../domain/state.ts";
 import { notFoundError, serviceError, validationError } from "../domain/errors.ts";
 import type { ReloadPlan } from "../domain/reload.ts";
@@ -143,53 +143,70 @@ export type GoAccessReportPlan = {
   slug: string;
   logPath: string;
   reportPath: string;
+  /** Attach opens GoAccess's terminal dashboard; otherwise an HTML report is written. */
+  attach: boolean;
   /** One-shot container; no permanent analytics service. */
   command: string[];
   dryRun: boolean;
 };
 
+export type GoAccessReportOptions = {
+  output?: string;
+  dryRun?: boolean;
+  /** Attach the one-shot container to the current terminal instead of writing HTML. */
+  attach?: boolean;
+};
+
 /**
- * Plan a one-shot GoAccess HTML report from the app access log.
+ * Plan a one-shot GoAccess HTML report or attached terminal dashboard.
  * Does not start a permanent analytics service (architecture §10).
  */
 export function buildGoAccessReportPlan(
   platform: Platform,
   slug: string,
-  opts?: { output?: string; dryRun?: boolean },
+  opts?: GoAccessReportOptions,
 ): GoAccessReportPlan {
   const logPath = accessLogHostPath(platform, slug);
-  const reportDir = join(platform.paths.paths.logsDir, "reports");
-  const reportPath = opts?.output ?? join(reportDir, `${slug}-access.html`);
+  const defaultReportDir = join(platform.paths.paths.logsDir, "reports");
+  const requestedOutput = opts?.output ?? join(defaultReportDir, `${slug}-access.html`);
+  const reportPath = isAbsolute(requestedOutput)
+    ? requestedOutput
+    : resolve(platform.paths.paths.root, requestedOutput);
+  const reportDir = dirname(reportPath);
+  const reportFile = basename(reportPath);
   const dryRun = opts?.dryRun ?? false;
+  const attach = opts?.attach ?? false;
 
-  // Mount stack logs read-only; write report to reports dir.
-  // Log format matches bento_timed in nginx.conf.tpl.
+  // Log format matches bento_timed in nginx.conf.tpl. The final fields preserve
+  // request/upstream timing while remaining compatible with GoAccess parsing.
+  const goAccessArgs = [
+    `/var/log/nginx/${slug}.access.log`,
+    '--log-format=%h %^[%d:%t %^] "%r" %s %b "%R" "%u" rt=%T urt=%^',
+    "--date-format=%d/%b/%Y",
+    "--time-format=%H:%M:%S",
+  ];
   const command = [
     "docker",
     "run",
     "--rm",
+    ...(attach ? ["-it"] : []),
     "-v",
     `${join(platform.paths.paths.logsDir, "nginx")}:/var/log/nginx:ro`,
-    "-v",
-    `${reportDir}:/report`,
+    ...(attach ? [] : ["-v", `${reportDir}:/report`]),
     "allinurl/goaccess:latest",
-    "/var/log/nginx/" + `${slug}.access.log`,
-    "-o",
-    `/report/${slug}-access.html`,
-    "--log-format=COMBINED",
-    "--date-format=%d/%b/%Y",
-    "--time-format=%H:%M:%S",
+    ...goAccessArgs,
+    ...(attach ? [] : ["-o", `/report/${reportFile}`]),
   ];
 
-  return { slug, logPath, reportPath, command, dryRun };
+  return { slug, logPath, reportPath, attach, command, dryRun };
 }
 
-/** Run GoAccess report generation (or return the dry-run plan). */
+/** Generate HTML, or return a dry-run/attached plan for the CLI or TUI. */
 export async function generateAccessReport(
   platform: Platform,
   state: DesiredState,
   slug: string,
-  opts?: { output?: string; dryRun?: boolean },
+  opts?: GoAccessReportOptions,
 ): Promise<GoAccessReportPlan & { code?: number; stdout?: string; stderr?: string }> {
   if (!state.apps[slug]) throw notFoundError(`app not found: ${slug}`);
   const plan = buildGoAccessReportPlan(platform, slug, opts);
@@ -201,9 +218,11 @@ export async function generateAccessReport(
     );
   }
 
-  await platform.fs.mkdirp(join(platform.paths.paths.logsDir, "reports"), 0o755);
+  if (!plan.attach) await platform.fs.mkdirp(dirname(plan.reportPath), 0o755);
 
-  if (plan.dryRun) return plan;
+  // Attached mode must be started by the CLI/TUI with inherited stdio. The
+  // platform runner intentionally captures output and would break GoAccess's UI.
+  if (plan.dryRun || plan.attach) return plan;
 
   const result = await platform.process.run(plan.command, {
     cwd: platform.paths.paths.root,

@@ -286,9 +286,9 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       // Always include deploy drain when deploy enabled
       const lines: string[] = [];
       if (app.deploy.enabled) {
-        // supercronic has no user field — drop privileges via setpriv.
+        // The per-app Supercronic process already runs as the app UID/GID.
         lines.push(
-          `* * * * * setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /opt/bento/helpers/deploy-drain.sh ${app.slug} /run/php-fpm/${app.phpService}/${app.slug}.sock`,
+          `* * * * * /opt/bento/helpers/deploy-drain.sh ${app.slug} /run/php-fpm/${app.phpService}/${app.slug}.sock`,
         );
       }
       for (const job of appJobs) {
@@ -343,9 +343,15 @@ user=root
     for (const app of appsOnVersion) {
       const appJobs = jobs.filter((j) => j.app === app.slug);
       if (appJobs.length > 0 || app.deploy.enabled) {
+        // App UIDs are not system accounts, so Supervisor cannot use `user=`
+        // directly. Launch through setpriv once; Supercronic and every job it
+        // starts then remain under the app identity.
+        const scheduler =
+          `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /usr/local/bin/supercronic /etc/bento/cron/${app.slug}.crontab`;
         programBlocks.push(`[program:scheduler-${app.slug}]
-command=/usr/local/bin/supercronic /etc/bento/cron/${app.slug}.crontab
+command=${scheduler}
 user=root
+environment=HOME="${app.home}",USER="${app.slug}",BENTO_APP="${app.slug}"
 autostart=true
 autorestart=true
 stdout_logfile=/var/log/supervisor/scheduler-${app.slug}.log
@@ -430,12 +436,9 @@ function formatCronLine(job: CronJob, app: AppState): string {
   } else if (job.output === "log") {
     cmd = `${cmd} >> ${containerAppHome(app.slug)}/logs/cron-${job.name}.log 2>&1`;
   }
-  // supercronic is 5-field + command only (no user column). Keep this shell so
-  // output files are opened after privileges have been dropped.
-  const drop = `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- sh -c ${
-    shellQuote(cmd)
-  }`;
-  return `${job.schedule} ${drop}`;
+  // Supercronic already executes the crontab command through /bin/sh, and its
+  // process already runs as the app UID/GID. No additional shell is needed.
+  return `${job.schedule} ${cmd}`;
 }
 
 function formatCronScript(job: CronJob): string {
