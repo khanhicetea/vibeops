@@ -3,7 +3,6 @@
  * Guided numbered menus over the same services as scripted CLI commands.
  */
 
-import { relative } from "@std/path";
 import { isBentoError } from "../domain/errors.ts";
 import type { TlsMode } from "../domain/state.ts";
 import { FPM_PROFILES } from "../domain/types.ts";
@@ -14,35 +13,17 @@ import {
   materializeAppHome,
   provisionApp,
 } from "../services/app.ts";
-import {
-  addPhpVersion,
-  buildCliExec,
-  cliRunComposeCommand,
-  listPhpVersions,
-  removePhpVersion,
-} from "../services/php.ts";
+import { addPhpVersion, listPhpVersions } from "../services/php.ts";
 import {
   addMysqlVersion,
   buildMysqlShellPlan,
   createAppDatabaseLive,
   listMysqlVersions,
-  listRecentBackupFiles,
+  type MysqlShellPlan,
   queryDatabaseSizes,
-  queryProcesslist,
   resolveMysqlServices,
-  runBackup,
-  runRestore,
 } from "../services/mysql.ts";
 import { loadRedisPassword, requireMysqlRootPassword } from "../services/stack_env.ts";
-import { createProxy } from "../services/proxy.ts";
-import {
-  deployWebhookInstructions,
-  disableDeploy,
-  drainDeploy,
-  enableDeploy,
-  loadQueue,
-  rotateDeploySecret,
-} from "../services/deploy.ts";
 import { addCronJob, listCronJobs, removeCronJob } from "../services/cron.ts";
 import {
   addWorker,
@@ -61,12 +42,9 @@ import {
   selectCustomTemplate,
   type TemplateKind,
 } from "../services/customization.ts";
-import { runStackMaintenance } from "../services/maintenance.ts";
 import { buildStatus, formatStatus } from "../services/status.ts";
-import { checkPermissions, formatPermReport, repairPermissions } from "../services/permissions.ts";
-import { assertSafeComposeArgs, composeArgs } from "../services/compose.ts";
 import { redact } from "../ui/output.ts";
-import { type MenuChoice, type TableMenuChoice, WizardUI } from "../ui/tui.ts";
+import { type MenuChoice, WizardUI } from "../ui/tui.ts";
 import { BENTO_VERSION } from "../version.ts";
 import type { CliContext } from "./context.ts";
 
@@ -93,22 +71,15 @@ export async function runWizard(ctx: CliContext): Promise<number> {
   try {
     while (true) {
       const choice = await ui.menu<string>("Main menu", [
-        { label: "Status & diagnostics", value: "status", hint: "stack / apps / capacity" },
+        {
+          label: "Manage app",
+          value: "apps",
+          hint: "databases · cron jobs · workers · domains · logs · templates",
+        },
+        { label: "Manage MySQL", value: "mysql", hint: "shell · add version · database sizes" },
+        { label: "Manage PHP", value: "php", hint: "add version · reload FPM" },
+        { label: "Status / Diag", value: "status", hint: "stack · apps · capacity" },
         { label: "Bootstrap", value: "bootstrap", hint: "init · render · apply" },
-        { label: "Applications", value: "apps", hint: "create · list · show · shell" },
-        { label: "PHP versions", value: "php", hint: "add · remove · list" },
-        { label: "MySQL", value: "mysql", hint: "versions · databases · shell · size" },
-        { label: "Reverse proxies", value: "proxy", hint: "create · list" },
-        { label: "Deploy webhooks", value: "deploy", hint: "enable · rotate · drain" },
-        { label: "Cron jobs", value: "cron", hint: "add · remove · list" },
-        { label: "Workers", value: "worker", hint: "add · control · list" },
-        { label: "Access logs", value: "logs", hint: "enable · rotate · report" },
-        { label: "Templates", value: "template", hint: "custom vhost/pool · drift" },
-        { label: "Maintenance", value: "maintenance", hint: "retention · host cron" },
-        { label: "TLS", value: "tls", hint: "boot · acme · external" },
-        { label: "Permissions", value: "permissions", hint: "check · repair" },
-        { label: "Backup / restore", value: "backup", hint: "MySQL dumps" },
-        { label: "Compose helpers", value: "compose", hint: "safe docker compose" },
       ], { cancelLabel: "Quit", allowCancel: true });
 
       if (choice === null) {
@@ -146,22 +117,6 @@ function pcDim(s: string): string {
   return `\x1b[2m${s}\x1b[22m`;
 }
 
-function formatHumanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB"];
-  let value = bytes;
-  let unit = -1;
-  do {
-    value /= 1024;
-    unit++;
-  } while (value >= 1024 && unit < units.length - 1);
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
-}
-
-function formatBackupDate(date: Date | null): string {
-  return date ? `${date.toISOString().slice(0, 19).replace("T", " ")} UTC` : "unknown";
-}
-
 function handleError(ui: WizardUI, err: unknown): void {
   if (isBentoError(err)) {
     ui.error(redact(err.message), err.recovery ? `recovery: ${err.recovery}` : undefined);
@@ -172,50 +127,14 @@ function handleError(ui: WizardUI, err: unknown): void {
 
 async function dispatch(ui: WizardUI, ctx: CliContext, section: string): Promise<void> {
   const map: Record<string, WizardAction> = {
+    apps: () => sectionApps(ui, ctx),
+    mysql: () => sectionMysql(ui, ctx),
+    php: () => sectionPhp(ui, ctx),
     status: () => sectionStatus(ui, ctx),
     bootstrap: () => sectionBootstrap(ui, ctx),
-    apps: () => sectionApps(ui, ctx),
-    php: () => sectionPhp(ui, ctx),
-    mysql: () => sectionMysql(ui, ctx),
-    proxy: () => sectionProxy(ui, ctx),
-    deploy: () => sectionDeploy(ui, ctx),
-    cron: () => sectionCron(ui, ctx),
-    worker: () => sectionWorker(ui, ctx),
-    logs: () => sectionLogs(ui, ctx),
-    template: () => sectionTemplate(ui, ctx),
-    maintenance: () => sectionMaintenance(ui, ctx),
-    tls: () => sectionTls(ui, ctx),
-    permissions: () => sectionPermissions(ui, ctx),
-    backup: () => sectionBackup(ui, ctx),
-    compose: () => sectionCompose(ui, ctx),
   };
   const fn = map[section];
   if (fn) await fn();
-}
-
-// --- shared pickers ----------------------------------------------------------
-
-async function pickApp(
-  ui: WizardUI,
-  ctx: CliContext,
-  opts?: { allowNone?: boolean; title?: string },
-): Promise<string | null> {
-  const state = await ctx.store.load();
-  const apps = Object.values(state.apps).sort((a, b) => a.slug.localeCompare(b.slug));
-  if (apps.length === 0) {
-    ui.warn("No applications yet", "Create one from Applications → Create app");
-    await ui.pause();
-    return null;
-  }
-  const choices: MenuChoice<string>[] = apps.map((a) => ({
-    label: a.slug,
-    value: a.slug,
-    hint: `${a.mainDomain} · php ${a.phpVersion} · ${a.tls.kind}`,
-  }));
-  return await ui.menu(opts?.title ?? "Select application", choices, {
-    allowCancel: true,
-    cancelLabel: opts?.allowNone ? "None / cancel" : "Cancel",
-  });
 }
 
 async function ensureState(ui: WizardUI, ctx: CliContext): Promise<boolean> {
@@ -351,124 +270,53 @@ async function sectionBootstrap(ui: WizardUI, ctx: CliContext): Promise<void> {
 }
 
 async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Applications");
+  ui.header("Manage app");
   if (!(await ensureState(ui, ctx))) return;
 
   while (true) {
-    const action = await ui.menu("Applications", [
-      { label: "List apps", value: "list" },
-      { label: "Show app details", value: "show", hint: "secrets redacted" },
-      { label: "Create / update app", value: "create" },
-      {
-        label: "Open CLI shell",
-        value: "shell",
-        hint: "attach ephemeral PHP CLI as app identity",
-      },
-    ]);
-    if (!action) return;
+    const state = await ctx.store.load();
+    const choices: MenuChoice<string>[] = Object.values(state.apps)
+      .sort((a, b) => a.slug.localeCompare(b.slug))
+      .map((app) => ({
+        label: app.slug,
+        value: app.slug,
+        hint: `${app.mainDomain} · php ${app.phpVersion}`,
+      }));
+    choices.push({ label: "Create application…", value: "__create" });
 
-    if (action === "list") {
-      const state = await ctx.store.load();
-      const rows = Object.values(state.apps)
-        .sort((a, b) => a.slug.localeCompare(b.slug))
-        .map((a) => [
-          a.slug,
-          String(a.uid),
-          a.mainDomain,
-          a.phpVersion,
-          a.fpmProfile,
-          a.tls.kind,
-          a.deploy.enabled ? "on" : "off",
-        ]);
-      ui.blank();
-      ui.table(["slug", "uid", "domain", "php", "fpm", "tls", "deploy"], rows);
-      await ui.pause();
-    } else if (action === "show") {
-      const slug = await pickApp(ui, ctx);
-      if (!slug) continue;
-      const state = await ctx.store.load();
-      const app = state.apps[slug]!;
-      const safe = {
-        ...app,
-        mysqlPassword: "***",
-        redis: {
-          ...app.redis,
-          password: app.redis.password ? "***" : undefined,
-          aclPassword: app.redis.aclPassword ? "***" : undefined,
-        },
-        deploy: {
-          ...app.deploy,
-          hmacSecret: app.deploy.hmacSecret ? "***" : undefined,
-        },
-      };
-      ui.blank();
-      ui.message(JSON.stringify(safe, null, 2));
-      await ui.pause();
-    } else if (action === "create") {
+    const slug = await ui.menu("Select application", choices);
+    if (!slug) return;
+    if (slug === "__create") {
       await wizardAppCreate(ui, ctx);
-    } else if (action === "shell") {
-      await wizardAppShell(ui, ctx);
+      continue;
+    }
+
+    while (true) {
+      const current = (await ctx.store.load()).apps[slug];
+      if (!current) break;
+      ui.clear();
+      ui.header(`App: ${slug}`, `${current.mainDomain} · php ${current.phpVersion}`);
+      const action = await ui.menu("Manage application", [
+        { label: "Databases", value: "databases", hint: "list · create · shell" },
+        { label: "Cron jobs", value: "cron", hint: "list · add · remove" },
+        { label: "Workers", value: "workers", hint: "list · add · control" },
+        { label: "Domains", value: "domains", hint: "primary · aliases · TLS" },
+        { label: "Access logs", value: "logs", hint: "enable · rotate · report" },
+        { label: "Templates", value: "templates", hint: "vhost · FPM pool · drift" },
+      ]);
+      if (!action) break;
+
+      if (action === "databases") await sectionAppDatabases(ui, ctx, slug);
+      else if (action === "cron") await sectionCron(ui, ctx, slug);
+      else if (action === "workers") await sectionWorker(ui, ctx, slug);
+      else if (action === "domains") await sectionAppDomains(ui, ctx, slug);
+      else if (action === "logs") await sectionLogs(ui, ctx, slug);
+      else if (action === "templates") await sectionTemplate(ui, ctx, slug);
     }
   }
 }
 
 /** Attach interactive ephemeral PHP CLI shell as the selected app identity. */
-async function wizardAppShell(ui: WizardUI, ctx: CliContext): Promise<void> {
-  const slug = await pickApp(ui, ctx, { title: "App for CLI shell" });
-  if (!slug) return;
-
-  const workdirRaw = await ui.prompt("Working directory (blank = app home)", {
-    default: "",
-  });
-  if (workdirRaw === null) return;
-
-  try {
-    const state = await ctx.store.load();
-    const plan = buildCliExec(
-      ctx.platform,
-      state,
-      slug,
-      [], // default interactive bash
-      { workdir: workdirRaw.trim() || undefined },
-    );
-    const composeCmd = cliRunComposeCommand(plan, { tty: true });
-    const compose = await composeArgs(ctx.platform, state, composeCmd);
-
-    ui.blank();
-    ui.info(
-      `Attaching ${plan.service} as uid ${plan.user} · php ${plan.phpVersion} · ${plan.workdir}`,
-    );
-    ui.message(
-      `scriptable: bento app shell ${slug}${
-        workdirRaw.trim() ? ` --workdir ${workdirRaw.trim()}` : ""
-      }`,
-    );
-    ui.message(pcDim(`$ ${compose.join(" ")}`));
-    ui.blank();
-    ui.message(pcDim("Exit the shell to return to the wizard."));
-    ui.blank();
-
-    const [cmd, ...args] = compose;
-    const child = new Deno.Command(cmd!, {
-      args,
-      cwd: ctx.stackRoot,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const status = await child.output();
-    ui.blank();
-    if (status.code === 0) {
-      ui.success(`Shell closed`, `app ${slug}`);
-    } else {
-      ui.warn(`Shell exited ${status.code}`, `app ${slug}`);
-    }
-  } catch (err) {
-    handleError(ui, err);
-  }
-  await ui.pause();
-}
-
 async function wizardAppCreate(ui: WizardUI, ctx: CliContext): Promise<void> {
   ui.blank();
   ui.message(pcDim("Create or update an application (same identity on update)."));
@@ -587,123 +435,91 @@ async function wizardAppCreate(ui: WizardUI, ctx: CliContext): Promise<void> {
   await ui.pause();
 }
 
-async function sectionPhp(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("PHP versions");
-  if (!(await ensureState(ui, ctx))) return;
+async function openMysqlShell(
+  ui: WizardUI,
+  ctx: CliContext,
+  plan: MysqlShellPlan,
+  scriptable: string,
+): Promise<void> {
+  ui.blank();
+  ui.info(
+    `Attaching MySQL shell to ${plan.service} as ${plan.user}${
+      plan.database ? ` · database=${plan.database}` : ""
+    }`,
+  );
+  ui.message(pcDim(`scriptable: ${scriptable}`));
+  ui.message(pcDim("Exit the MySQL client to return to the wizard."));
+  ui.blank();
 
-  while (true) {
-    const action = await ui.menu("PHP", [
-      { label: "List versions", value: "list" },
-      { label: "Add version", value: "add", hint: "creates fpm+runner+cli" },
-      { label: "Remove unused version", value: "remove" },
-    ]);
-    if (!action) return;
-
-    if (action === "list") {
-      const state = await ctx.store.load();
-      const rows = listPhpVersions(state).map((v) => [
-        v.version,
-        v.service,
-        v.image,
-        String(v.processCap),
-      ]);
-      ui.table(["version", "service", "image", "cap"], rows);
-      await ui.pause();
-    } else if (action === "add") {
-      const version = await ui.prompt("PHP version (e.g. 8.3)", { required: true });
-      if (!version) continue;
-      try {
-        await ctx.store.withExclusive(async (state) => {
-          const next = addPhpVersion(state, version);
-          await ctx.store.save(next);
-          await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
-          return next;
-        });
-        ui.success(`Added PHP ${version}`, "fpm + runner + cli roles");
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    } else if (action === "remove") {
-      const state = await ctx.store.load();
-      const choices = listPhpVersions(state).map((v) => ({
-        label: v.version,
-        value: v.version,
-        hint: v.version === state.defaults.phpVersion ? "default (blocked)" : undefined,
-        disabled: v.version === state.defaults.phpVersion,
-      }));
-      const version = await ui.menu("Remove PHP version", choices);
-      if (!version) continue;
-      if (!(await ui.confirm(`Remove PHP ${version}? Only allowed when unused.`))) continue;
-      try {
-        await ctx.store.withExclusive(async (s) => {
-          const next = removePhpVersion(s, version);
-          await ctx.store.save(next);
-          await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
-          return next;
-        });
-        ui.success(`Removed PHP ${version}`);
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
+  if (plan.stage) {
+    const staged = await ctx.platform.process.run(plan.stage.command, {
+      cwd: ctx.stackRoot,
+      stdin: plan.stage.stdin,
+      timeoutMs: 15_000,
+    });
+    if (staged.code !== 0) {
+      ui.error(
+        "Failed to stage MySQL credentials",
+        (staged.stderr || staged.stdout || "unknown error").trim(),
+      );
+      return;
     }
   }
+
+  let exitCode = 1;
+  try {
+    const [cmd, ...args] = plan.open.command;
+    const child = new Deno.Command(cmd!, {
+      args,
+      cwd: ctx.stackRoot,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    exitCode = (await child.output()).code;
+  } finally {
+    if (plan.cleanup) {
+      await ctx.platform.process.run(plan.cleanup.command, {
+        cwd: ctx.stackRoot,
+        timeoutMs: 10_000,
+      }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+    }
+  }
+
+  ui.blank();
+  if (exitCode === 0) ui.success("MySQL shell closed", plan.service);
+  else ui.warn(`MySQL shell exited ${exitCode}`, plan.service);
 }
 
-async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("MySQL");
-  if (!(await ensureState(ui, ctx))) return;
-
+async function sectionAppDatabases(
+  ui: WizardUI,
+  ctx: CliContext,
+  slug: string,
+): Promise<void> {
   while (true) {
-    const action = await ui.menu("MySQL", [
-      { label: "List versions", value: "list" },
-      { label: "Add version service", value: "add" },
-      {
-        label: "Remove version",
-        value: "remove",
-        hint: "blocked by design",
-        disabled: true,
-      },
-      { label: "Record database for app", value: "db" },
-      { label: "Open shell (root)", value: "shell-root", hint: "scriptable: mysql shell --root" },
-      { label: "Open shell (app)", value: "shell-app", hint: "scriptable: mysql shell --app" },
-      { label: "Database sizes", value: "size" },
-      { label: "Process list", value: "processlist" },
+    ui.clear();
+    ui.header(`Databases: ${slug}`);
+    const action = await ui.menu("Databases", [
+      { label: "List databases", value: "list" },
+      { label: "Create database", value: "create" },
+      { label: "Open MySQL shell", value: "shell", hint: `as app ${slug}` },
     ]);
     if (!action) return;
 
-    if (action === "list") {
-      const state = await ctx.store.load();
-      const rows = listMysqlVersions(state).map((v) => [
-        v.version,
-        v.service,
-        v.volume,
-        v.image,
-      ]);
-      ui.table(["version", "service", "volume", "image"], rows);
-      await ui.pause();
-    } else if (action === "add") {
-      const version = await ui.prompt("MySQL version (e.g. 8.4)", { required: true });
-      if (!version) continue;
-      try {
-        await ctx.store.withExclusive(async (state) => {
-          const next = addMysqlVersion(state, version);
-          await ctx.store.save(next);
-          await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
-          return next;
+    try {
+      if (action === "list") {
+        const app = (await ctx.store.load()).apps[slug];
+        if (!app) throw new Error(`app not found: ${slug}`);
+        ui.table(
+          ["database", "created"],
+          app.databases.map((db) => [db.name, db.createdAt]),
+        );
+      } else if (action === "create") {
+        const dbName = await ui.prompt("Database name", {
+          required: true,
+          default: slug,
         });
-        ui.success(`Added MySQL ${version}`);
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    } else if (action === "db") {
-      const slug = await pickApp(ui, ctx, { title: "App that owns the database" });
-      if (!slug) continue;
-      const dbName = await ui.prompt("Database name", { required: true });
-      if (!dbName) continue;
-      try {
+        if (!dbName) continue;
         await ctx.store.withExclusive(async (state) => {
           const rootPassword = await requireMysqlRootPassword(ctx.platform);
           const next = await createAppDatabaseLive(
@@ -723,308 +539,16 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
           return next;
         });
         ui.success(`Created database ${dbName}`, `app=${slug}`);
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    } else if (action === "shell-root" || action === "shell-app") {
-      try {
+      } else {
         const state = await ctx.store.load();
-        let plan;
-        if (action === "shell-root") {
-          const services = resolveMysqlServices(state);
-          const service = services[0];
-          if (!service) {
-            ui.error("No MySQL service managed");
-            await ui.pause();
-            continue;
-          }
-          plan = buildMysqlShellPlan(ctx.platform, {
-            kind: "root",
-            service,
-          });
-        } else {
-          const slug = await pickApp(ui, ctx);
-          if (!slug) continue;
-          const app = state.apps[slug];
-          if (!app) continue;
-          plan = buildMysqlShellPlan(ctx.platform, { kind: "app", app });
-        }
-        ui.blank();
-        ui.info(
-          `Attaching MySQL shell to ${plan.service} as ${plan.user}${
-            plan.database ? ` · database=${plan.database}` : ""
-          }`,
+        const app = state.apps[slug];
+        if (!app) throw new Error(`app not found: ${slug}`);
+        await openMysqlShell(
+          ui,
+          ctx,
+          buildMysqlShellPlan(ctx.platform, { kind: "app", app }),
+          `bento mysql shell --app ${slug}`,
         );
-        ui.message(
-          pcDim(
-            `scriptable: ${
-              action === "shell-root"
-                ? "bento mysql shell --root"
-                : `bento mysql shell --app ${plan.user.replace(/^app_/, "") || "<slug>"}`
-            }`,
-          ),
-        );
-        ui.message(pcDim("Exit the MySQL client to return to the wizard."));
-        ui.blank();
-
-        // App sessions stage credentials through stdin. Root sessions use the
-        // generated read-only option file mounted in the MySQL container.
-        if (plan.stage) {
-          const staged = await ctx.platform.process.run(plan.stage.command, {
-            cwd: ctx.stackRoot,
-            stdin: plan.stage.stdin,
-            timeoutMs: 15_000,
-          });
-          if (staged.code !== 0) {
-            ui.error(
-              "Failed to stage MySQL credentials",
-              (staged.stderr || staged.stdout || "unknown error").trim(),
-            );
-            await ui.pause();
-            continue;
-          }
-        }
-        let exitCode = 1;
-        try {
-          const [cmd, ...args] = plan.open.command;
-          const child = new Deno.Command(cmd!, {
-            args,
-            cwd: ctx.stackRoot,
-            stdin: "inherit",
-            stdout: "inherit",
-            stderr: "inherit",
-          });
-          exitCode = (await child.output()).code;
-        } finally {
-          if (plan.cleanup) {
-            await ctx.platform.process.run(plan.cleanup.command, {
-              cwd: ctx.stackRoot,
-              timeoutMs: 10_000,
-            }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
-          }
-        }
-        ui.blank();
-        if (exitCode === 0) {
-          ui.success("MySQL shell closed", plan.service);
-        } else {
-          ui.warn(`MySQL shell exited ${exitCode}`, plan.service);
-        }
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    } else if (action === "size") {
-      try {
-        const state = await ctx.store.load();
-        const rootPassword = await requireMysqlRootPassword(ctx.platform);
-        const services = resolveMysqlServices(state);
-        const rows: string[][] = [];
-        for (const service of services) {
-          const { rows: sized } = await queryDatabaseSizes(
-            ctx.platform,
-            service,
-            rootPassword,
-          );
-          for (const r of sized) {
-            rows.push([service, r.database, r.sizeMb, r.tables]);
-          }
-        }
-        ui.table(["service", "database", "size_mb", "tables"], rows);
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    } else if (action === "processlist") {
-      try {
-        const state = await ctx.store.load();
-        const rootPassword = await requireMysqlRootPassword(ctx.platform);
-        const services = resolveMysqlServices(state);
-        for (const service of services) {
-          const { stdout } = await queryProcesslist(
-            ctx.platform,
-            service,
-            rootPassword,
-          );
-          ui.message(`-- ${service} --\n${stdout.trimEnd() || "(empty)"}`);
-        }
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    }
-  }
-}
-
-async function sectionProxy(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Reverse proxies");
-  if (!(await ensureState(ui, ctx))) return;
-
-  while (true) {
-    const action = await ui.menu("Proxies", [
-      { label: "List proxies", value: "list" },
-      { label: "Create proxy", value: "create" },
-    ]);
-    if (!action) return;
-
-    if (action === "list") {
-      const state = await ctx.store.load();
-      const rows = Object.values(state.proxies).map((p) => [
-        p.name,
-        p.mainDomain,
-        p.upstream,
-        p.tls.kind,
-      ]);
-      ui.table(["name", "domain", "upstream", "tls"], rows);
-      await ui.pause();
-    } else if (action === "create") {
-      const name = await ui.prompt("Proxy name", { required: true });
-      if (!name) continue;
-      const domain = await ui.prompt("Primary domain", { required: true });
-      if (!domain) continue;
-      const upstream = await ui.prompt("Upstream URL", {
-        required: true,
-        default: "http://127.0.0.1:3000",
-      });
-      if (!upstream) continue;
-      const aliasRaw = await ui.prompt("Aliases (comma-separated)", { default: "" });
-      if (aliasRaw === null) continue;
-      try {
-        await ctx.store.withExclusive(async (state) => {
-          const result = createProxy(state, {
-            name,
-            domain,
-            upstream,
-            aliases: aliasRaw.split(",").map((s) => s.trim()).filter(Boolean),
-          }, ctx.platform.clock.nowIso());
-          await ctx.store.save(result.state);
-          await ctx.render.apply(result.state, {
-            reloadPlan: result.reloadPlan,
-            skipValidate: true,
-            alreadyLocked: true,
-          });
-          return result;
-        });
-        ui.success(`Created proxy ${name}`, `${domain} → ${upstream}`);
-      } catch (err) {
-        handleError(ui, err);
-      }
-      await ui.pause();
-    }
-  }
-}
-
-async function sectionDeploy(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Deploy webhooks");
-  if (!(await ensureState(ui, ctx))) return;
-
-  while (true) {
-    const action = await ui.menu("Deploy", [
-      { label: "Enable webhook deploy", value: "enable" },
-      { label: "Disable webhook deploy", value: "disable" },
-      { label: "Rotate HMAC secret", value: "rotate", hint: "printed once" },
-      { label: "Queue status / history", value: "status" },
-      { label: "Drain one queued job", value: "drain" },
-      { label: "Show webhook instructions", value: "instructions" },
-    ]);
-    if (!action) return;
-
-    const slug = await pickApp(ui, ctx);
-    if (!slug) continue;
-
-    try {
-      if (action === "enable") {
-        const fifo = await ui.confirm("Use FIFO queue policy? (default: latest)", {
-          defaultYes: false,
-        });
-        const result = await ctx.store.withExclusive(async (state) => {
-          const enabled = enableDeploy(state, {
-            slug,
-            queuePolicy: fifo ? "fifo" : "latest",
-          }, ctx.platform);
-          await materializeAppHome(ctx.platform, enabled.state.apps[slug]!, false);
-          await ctx.store.save(enabled.state);
-          await ctx.render.apply(enabled.state, {
-            reloadPlan: enabled.reloadPlan,
-            skipValidate: true,
-            alreadyLocked: true,
-          });
-          return enabled;
-        });
-        ui.success(`Deploy enabled for ${slug}`);
-        ui.blank();
-        ui.message(deployWebhookInstructions(result.state.apps[slug]!, result.secret));
-      } else if (action === "disable") {
-        if (!(await ui.confirm(`Disable deploy for ${slug}?`))) continue;
-        await ctx.store.withExclusive(async (state) => {
-          const r = disableDeploy(state, slug, ctx.platform.clock.nowIso());
-          await ctx.store.save(r.state);
-          await ctx.render.apply(r.state, {
-            reloadPlan: r.reloadPlan,
-            skipValidate: true,
-            alreadyLocked: true,
-          });
-          return r;
-        });
-        ui.success(`Deploy disabled for ${slug}`);
-      } else if (action === "rotate") {
-        ui.warn("New secret will be printed once");
-        if (!(await ui.confirm(`Rotate deploy secret for ${slug}?`))) continue;
-        const result = await ctx.store.withExclusive(async (state) => {
-          const r = rotateDeploySecret(state, slug, ctx.platform);
-          await ctx.store.save(r.state);
-          await ctx.render.apply(r.state, {
-            reloadPlan: r.reloadPlan,
-            skipValidate: true,
-            alreadyLocked: true,
-          });
-          return r;
-        });
-        ui.success("Secret rotated (copy now)");
-        ui.blank();
-        ui.message(result.secret);
-        ui.blank();
-      } else if (action === "status") {
-        const state = await ctx.store.load();
-        const app = state.apps[slug];
-        if (!app) {
-          ui.error(`app not found: ${slug}`);
-        } else {
-          const home = ctx.platform.paths.appHome(slug);
-          const queue = await loadQueue(ctx.platform, home);
-          const rows = queue.jobs.map((j) => [
-            j.id,
-            j.status,
-            j.receivedAt,
-            j.finishedAt ?? "",
-            j.error ?? "",
-          ]);
-          ui.table(["id", "status", "received", "finished", "error"], rows);
-        }
-      } else if (action === "drain") {
-        const state = await ctx.store.load();
-        const app = state.apps[slug];
-        if (!app) {
-          ui.error(`app not found: ${slug}`);
-        } else {
-          const home = ctx.platform.paths.appHome(slug);
-          const job = await drainDeploy(ctx.platform, app, home);
-          if (!job) ui.info("No job drained");
-          else ui.success(`Drained ${job.id}`, `status=${job.status}`);
-        }
-      } else if (action === "instructions") {
-        const state = await ctx.store.load();
-        const app = state.apps[slug];
-        if (!app?.deploy.enabled) {
-          ui.error("Deploy not enabled for this app");
-        } else {
-          ui.message(
-            deployWebhookInstructions(
-              app,
-              app.deploy.hmacSecret ? "<stored in state>" : "",
-            ),
-          );
-        }
       }
     } catch (err) {
       handleError(ui, err);
@@ -1033,9 +557,220 @@ async function sectionDeploy(ui: WizardUI, ctx: CliContext): Promise<void> {
   }
 }
 
-async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Cron jobs");
+async function sectionAppDomains(
+  ui: WizardUI,
+  ctx: CliContext,
+  slug: string,
+): Promise<void> {
+  while (true) {
+    const app = (await ctx.store.load()).apps[slug];
+    if (!app) return;
+    ui.clear();
+    ui.header(`Domains: ${slug}`, `${app.mainDomain} · TLS ${app.tls.kind}`);
+    const action = await ui.menu("Domains", [
+      { label: "Show domains", value: "show" },
+      { label: "Update primary domain / aliases", value: "update" },
+      { label: "Configure TLS", value: "tls" },
+    ]);
+    if (!action) return;
+
+    if (action === "show") {
+      ui.table(
+        ["kind", "domain"],
+        [["primary", app.mainDomain], ...app.aliases.map((alias) => ["alias", alias])],
+      );
+      await ui.pause();
+      continue;
+    }
+
+    try {
+      if (action === "update") {
+        const domain = await ui.prompt("Primary domain", {
+          required: true,
+          default: app.mainDomain,
+        });
+        if (!domain) continue;
+        const aliasesRaw = await ui.prompt("Aliases (comma-separated)", {
+          default: app.aliases.join(","),
+        });
+        if (aliasesRaw === null) continue;
+        const aliases = aliasesRaw.split(",").map((value) => value.trim()).filter(Boolean);
+        await ctx.store.withExclusive(async (state) => {
+          const result = provisionApp(ctx.platform, state, { slug, domain, aliases });
+          await ctx.store.save(result.state);
+          await ctx.render.apply(result.state, {
+            reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
+            skipValidate: false,
+            alreadyLocked: true,
+          });
+          return result;
+        });
+        ui.success(`Updated domains for ${slug}`, [domain, ...aliases].join(", "));
+      } else {
+        const mode = await ui.menu<"boot" | "acme" | "external">("TLS mode", [
+          { label: "Boot (self-signed starter)", value: "boot" },
+          { label: "ACME (Let's Encrypt)", value: "acme" },
+          { label: "External certificate files", value: "external" },
+        ]);
+        if (!mode) continue;
+
+        let tls: TlsMode;
+        if (mode === "boot") {
+          tls = { kind: "boot" };
+        } else if (mode === "acme") {
+          const email = await ui.prompt("ACME contact email (optional)", { default: "" });
+          if (email === null) continue;
+          tls = { kind: "acme", ...(email ? { email } : {}) };
+        } else {
+          const cert = await ui.prompt("Certificate path", { required: true });
+          if (!cert) continue;
+          const key = await ui.prompt("Private key path", { required: true });
+          if (!key) continue;
+          tls = { kind: "external", certPath: cert, keyPath: key };
+        }
+
+        await ctx.store.withExclusive(async (state) => {
+          const current = state.apps[slug];
+          if (!current) throw new Error(`app not found: ${slug}`);
+          const now = ctx.platform.clock.nowIso();
+          const next = {
+            ...state,
+            apps: { ...state.apps, [slug]: { ...current, tls, updatedAt: now } },
+            updatedAt: now,
+          };
+          await ctx.store.save(next);
+          await ctx.render.apply(next, {
+            reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
+            skipValidate: true,
+            alreadyLocked: true,
+          });
+          return next;
+        });
+        ui.success(`TLS mode set to ${mode}`, `app:${slug}`);
+      }
+    } catch (err) {
+      handleError(ui, err);
+    }
+    await ui.pause();
+  }
+}
+
+async function sectionPhp(ui: WizardUI, ctx: CliContext): Promise<void> {
+  ui.header("Manage PHP");
   if (!(await ensureState(ui, ctx))) return;
+
+  while (true) {
+    const action = await ui.menu("PHP", [
+      { label: "Add version", value: "add", hint: "creates FPM + runner + CLI" },
+      { label: "Reload FPM", value: "reload", hint: "select a managed version" },
+    ]);
+    if (!action) return;
+
+    if (action === "add") {
+      const version = await ui.prompt("PHP version (e.g. 8.3)", { required: true });
+      if (!version) continue;
+      try {
+        await ctx.store.withExclusive(async (state) => {
+          const next = addPhpVersion(state, version);
+          await ctx.store.save(next);
+          await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+          return next;
+        });
+        ui.success(`Added PHP ${version}`, "FPM + runner + CLI roles");
+      } catch (err) {
+        handleError(ui, err);
+      }
+    } else {
+      const state = await ctx.store.load();
+      const selected = await ui.menu(
+        "PHP version to reload",
+        listPhpVersions(state).map((version) => ({
+          label: version.version,
+          value: version.service,
+          hint: `${version.service} · ${version.image}`,
+        })),
+      );
+      if (!selected) continue;
+      try {
+        await ctx.render.apply(state, {
+          reloadPlan: {
+            nginx: false,
+            phpFpm: new Set([selected]),
+            phpRunner: new Set(),
+          },
+          skipValidate: false,
+        });
+        ui.success(`Reloaded FPM service ${selected}`);
+      } catch (err) {
+        handleError(ui, err);
+      }
+    }
+    await ui.pause();
+  }
+}
+
+async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
+  ui.header("Manage MySQL");
+  if (!(await ensureState(ui, ctx))) return;
+
+  while (true) {
+    const action = await ui.menu("MySQL", [
+      { label: "Open shell", value: "shell", hint: "root shell" },
+      { label: "Add version", value: "add", hint: "new MySQL service" },
+      { label: "Database sizes", value: "size" },
+    ]);
+    if (!action) return;
+
+    try {
+      const state = await ctx.store.load();
+      if (action === "add") {
+        const version = await ui.prompt("MySQL version (e.g. 8.4)", { required: true });
+        if (!version) continue;
+        await ctx.store.withExclusive(async (current) => {
+          const next = addMysqlVersion(current, version);
+          await ctx.store.save(next);
+          await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+          return next;
+        });
+        ui.success(`Added MySQL ${version}`);
+      } else if (action === "shell") {
+        const services = resolveMysqlServices(state);
+        if (services.length === 0) {
+          ui.error("No MySQL service managed");
+          await ui.pause();
+          continue;
+        }
+        const service = services.length === 1 ? services[0]! : await ui.menu(
+          "MySQL service",
+          services.map((value) => ({ label: value, value })),
+        );
+        if (!service) continue;
+        await openMysqlShell(
+          ui,
+          ctx,
+          buildMysqlShellPlan(ctx.platform, { kind: "root", service }),
+          "bento mysql shell --root",
+        );
+      } else {
+        const rootPassword = await requireMysqlRootPassword(ctx.platform);
+        const rows: string[][] = [];
+        for (const service of resolveMysqlServices(state)) {
+          const result = await queryDatabaseSizes(ctx.platform, service, rootPassword);
+          for (const row of result.rows) {
+            rows.push([service, row.database, row.sizeMb, row.tables]);
+          }
+        }
+        ui.table(["service", "database", "size_mb", "tables"], rows);
+      }
+    } catch (err) {
+      handleError(ui, err);
+    }
+    await ui.pause();
+  }
+}
+
+async function sectionCron(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
+  ui.header(`Cron jobs: ${slug}`);
 
   while (true) {
     const action = await ui.menu("Cron", [
@@ -1046,22 +781,16 @@ async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
     if (!action) return;
 
     if (action === "list") {
-      const filter = await ui.confirm("Filter by one app?", { defaultYes: false });
-      const app = filter ? await pickApp(ui, ctx) : undefined;
-      if (filter && !app) continue;
       const state = await ctx.store.load();
-      const rows = listCronJobs(state, app ?? undefined).map((j) => [
-        j.app,
+      const rows = listCronJobs(state, slug).map((j) => [
         j.name,
         j.schedule,
         j.command.join(" "),
         j.enabled ? "yes" : "no",
       ]);
-      ui.table(["app", "name", "schedule", "command", "enabled"], rows);
+      ui.table(["name", "schedule", "command", "enabled"], rows);
       await ui.pause();
     } else if (action === "add") {
-      const app = await pickApp(ui, ctx);
-      if (!app) continue;
       const name = await ui.prompt("Job name", { required: true });
       if (!name) continue;
       const schedule = await ui.prompt("Cron schedule", {
@@ -1080,7 +809,7 @@ async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
       try {
         await ctx.store.withExclusive(async (state) => {
           const r = addCronJob(state, {
-            app,
+            app: slug,
             name,
             schedule,
             command,
@@ -1094,14 +823,14 @@ async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
           });
           return r;
         });
-        ui.success(`Added cron ${name}`, `app=${app} schedule=${schedule}`);
+        ui.success(`Added cron ${name}`, `app=${slug} schedule=${schedule}`);
       } catch (err) {
         handleError(ui, err);
       }
       await ui.pause();
     } else if (action === "remove") {
       const state = await ctx.store.load();
-      const jobs = listCronJobs(state);
+      const jobs = listCronJobs(state, slug);
       if (jobs.length === 0) {
         ui.info("No cron jobs");
         await ui.pause();
@@ -1110,17 +839,16 @@ async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
       const picked = await ui.menu(
         "Remove cron job",
         jobs.map((j) => ({
-          label: `${j.app}/${j.name}`,
-          value: `${j.app}\0${j.name}`,
+          label: j.name,
+          value: j.name,
           hint: j.schedule,
         })),
       );
       if (!picked) continue;
-      const [app, name] = picked.split("\0");
-      if (!(await ui.confirm(`Remove cron ${name} for ${app}?`))) continue;
+      if (!(await ui.confirm(`Remove cron ${picked} for ${slug}?`))) continue;
       try {
         await ctx.store.withExclusive(async (s) => {
-          const r = removeCronJob(s, app!, name!, ctx.platform.clock.nowIso());
+          const r = removeCronJob(s, slug, picked, ctx.platform.clock.nowIso());
           await ctx.store.save(r.state);
           await ctx.render.apply(r.state, {
             reloadPlan: r.reloadPlan,
@@ -1129,7 +857,7 @@ async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
           });
           return r;
         });
-        ui.success(`Removed cron ${name}`);
+        ui.success(`Removed cron ${picked}`);
       } catch (err) {
         handleError(ui, err);
       }
@@ -1138,9 +866,8 @@ async function sectionCron(ui: WizardUI, ctx: CliContext): Promise<void> {
   }
 }
 
-async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Workers");
-  if (!(await ensureState(ui, ctx))) return;
+async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
+  ui.header(`Workers: ${slug}`);
 
   while (true) {
     const action = await ui.menu("Workers", [
@@ -1155,21 +882,15 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
     if (!action) return;
 
     if (action === "list") {
-      const filter = await ui.confirm("Filter by one app?", { defaultYes: false });
-      const app = filter ? await pickApp(ui, ctx) : undefined;
-      if (filter && !app) continue;
       const state = await ctx.store.load();
-      const rows = listWorkers(state, app ?? undefined).map((w) => [
-        w.app,
+      const rows = listWorkers(state, slug).map((w) => [
         w.name,
         w.command.join(" "),
         w.enabled ? "yes" : "no",
       ]);
-      ui.table(["app", "name", "command", "enabled"], rows);
+      ui.table(["name", "command", "enabled"], rows);
       await ui.pause();
     } else if (action === "add") {
-      const app = await pickApp(ui, ctx);
-      if (!app) continue;
       const name = await ui.prompt("Worker name", { required: true });
       if (!name) continue;
       const cmdRaw = await ui.prompt("Command (space-separated argv)", {
@@ -1180,7 +901,7 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
       const command = cmdRaw.split(/\s+/).filter(Boolean);
       try {
         await ctx.store.withExclusive(async (state) => {
-          const r = addWorker(state, { app, name, command }, ctx.platform);
+          const r = addWorker(state, { app: slug, name, command }, ctx.platform);
           await ctx.store.save(r.state);
           await ctx.render.apply(r.state, {
             reloadPlan: r.reloadPlan,
@@ -1189,33 +910,32 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
           });
           return r;
         });
-        ui.success(`Added worker ${name}`, `app=${app}`);
+        ui.success(`Added worker ${name}`, `app=${slug}`);
       } catch (err) {
         handleError(ui, err);
       }
       await ui.pause();
     } else if (action === "remove") {
       const state = await ctx.store.load();
-      const workers = listWorkers(state);
+      const workers = listWorkers(state, slug);
       if (workers.length === 0) {
-        ui.info("No workers");
+        ui.info(`No workers for ${slug}`);
         await ui.pause();
         continue;
       }
       const picked = await ui.menu(
         "Remove worker",
         workers.map((w) => ({
-          label: `${w.app}/${w.name}`,
-          value: `${w.app}\0${w.name}`,
+          label: w.name,
+          value: w.name,
           hint: w.command.join(" "),
         })),
       );
       if (!picked) continue;
-      const [app, name] = picked.split("\0");
-      if (!(await ui.confirm(`Remove worker ${name} for ${app}?`))) continue;
+      if (!(await ui.confirm(`Remove worker ${picked} for ${slug}?`))) continue;
       try {
         await ctx.store.withExclusive(async (s) => {
-          const r = removeWorker(s, app!, name!, ctx.platform.clock.nowIso());
+          const r = removeWorker(s, slug, picked, ctx.platform.clock.nowIso());
           await ctx.store.save(r.state);
           await ctx.render.apply(r.state, {
             reloadPlan: r.reloadPlan,
@@ -1224,7 +944,7 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
           });
           return r;
         });
-        ui.success(`Removed worker ${name}`);
+        ui.success(`Removed worker ${picked}`);
       } catch (err) {
         handleError(ui, err);
       }
@@ -1234,25 +954,24 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
       action === "inspect"
     ) {
       const state = await ctx.store.load();
-      const workers = listWorkers(state);
+      const workers = listWorkers(state, slug);
       if (workers.length === 0) {
-        ui.info("No workers");
+        ui.info(`No workers for ${slug}`);
         await ui.pause();
         continue;
       }
       const picked = await ui.menu(
         `${action} worker`,
         workers.map((w) => ({
-          label: `${w.app}/${w.name}`,
-          value: `${w.app}\0${w.name}`,
+          label: w.name,
+          value: w.name,
           hint: w.command.join(" "),
         })),
       );
       if (!picked) continue;
-      const [app, name] = picked.split("\0");
       try {
         if (action === "inspect") {
-          const result = await inspectWorker(ctx.platform, state, app!, name!);
+          const result = await inspectWorker(ctx.platform, state, slug, picked);
           ui.message(
             [
               `program: ${result.plan.program}`,
@@ -1263,8 +982,8 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
         } else {
           const plan = buildWorkerControlPlan(
             state,
-            app!,
-            name!,
+            slug,
+            picked,
             action as WorkerControlAction,
           );
           const result = await controlWorker(ctx.platform, plan);
@@ -1283,21 +1002,17 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
   }
 }
 
-async function sectionLogs(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Access logs");
-  if (!(await ensureState(ui, ctx))) return;
+async function sectionLogs(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
+  ui.header(`Access logs: ${slug}`);
 
   while (true) {
     const action = await ui.menu("Access logs", [
-      { label: "Enable for app", value: "enable", hint: "nginx-only reload" },
-      { label: "Disable for app", value: "disable", hint: "preserves files" },
+      { label: "Enable", value: "enable", hint: "nginx-only reload" },
+      { label: "Disable", value: "disable", hint: "preserves files" },
       { label: "Rotate + reopen", value: "rotate" },
       { label: "GoAccess report (dry-run)", value: "report" },
     ]);
     if (!action) return;
-
-    const slug = await pickApp(ui, ctx);
-    if (!slug) continue;
 
     try {
       if (action === "enable" || action === "disable") {
@@ -1347,9 +1062,8 @@ async function sectionLogs(ui: WizardUI, ctx: CliContext): Promise<void> {
   }
 }
 
-async function sectionTemplate(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Templates");
-  if (!(await ensureState(ui, ctx))) return;
+async function sectionTemplate(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
+  ui.header(`Templates: ${slug}`);
 
   while (true) {
     const action = await ui.menu("Templates", [
@@ -1362,13 +1076,14 @@ async function sectionTemplate(ui: WizardUI, ctx: CliContext): Promise<void> {
     try {
       if (action === "drift") {
         const state = await ctx.store.load();
-        const drifts = await detectTemplateDrift(ctx.platform, state);
+        const drifts = (await detectTemplateDrift(ctx.platform, state)).filter((drift) =>
+          drift.slug === slug
+        );
         if (drifts.length === 0) ui.info("No custom templates");
         else {
           ui.table(
-            ["app", "kind", "status", "source"],
+            ["kind", "status", "source"],
             drifts.map((d) => [
-              d.slug,
               d.kind,
               d.drifted ? "DRIFT" : "ok",
               d.sourcePath,
@@ -1380,8 +1095,6 @@ async function sectionTemplate(ui: WizardUI, ctx: CliContext): Promise<void> {
         continue;
       }
 
-      const slug = await pickApp(ui, ctx);
-      if (!slug) continue;
       const kind = await ui.menu<TemplateKind>("Template kind", [
         { label: "Nginx vhost", value: "vhost" },
         { label: "PHP-FPM pool", value: "pool" },
@@ -1434,371 +1147,4 @@ async function sectionTemplate(ui: WizardUI, ctx: CliContext): Promise<void> {
     }
     await ui.pause();
   }
-}
-
-async function sectionMaintenance(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Maintenance");
-  ui.note([
-    "Host maintenance (this menu) is separate from in-runner logrotate",
-    "(supervisord program system-logrotate).",
-  ]);
-
-  while (true) {
-    const action = await ui.menu("Maintenance", [
-      { label: "Run log retention now", value: "run" },
-      {
-        label: "Register host cron",
-        value: "register",
-        hint: "scriptable: bento maintenance register",
-      },
-      {
-        label: "Unregister host cron",
-        value: "unregister",
-        hint: "scriptable: bento maintenance unregister",
-      },
-    ]);
-    if (!action) return;
-
-    try {
-      if (action === "run") {
-        const daysRaw = await ui.prompt("Retain rotated logs (days)", {
-          default: "14",
-        });
-        const retainDays = Number(daysRaw ?? "14");
-        const result = await runStackMaintenance(ctx.platform, { retainDays });
-        for (const n of result.notes) ui.message(n);
-        ui.success(`Removed ${result.removed.length} file(s)`);
-      } else {
-        ui.info(
-          action === "register"
-            ? "Use: bento maintenance register [--schedule '15 3 * * *']"
-            : "Use: bento maintenance unregister",
-        );
-        ui.message("Host crontab merge preserves unrelated entries.");
-      }
-    } catch (err) {
-      handleError(ui, err);
-    }
-    await ui.pause();
-  }
-}
-
-async function sectionTls(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("TLS");
-  if (!(await ensureState(ui, ctx))) return;
-
-  const targetKind = await ui.menu<"app" | "proxy">("TLS target", [
-    { label: "Application", value: "app" },
-    { label: "Reverse proxy", value: "proxy" },
-  ]);
-  if (!targetKind) return;
-
-  let targetName: string | null = null;
-  if (targetKind === "app") {
-    targetName = await pickApp(ui, ctx);
-  } else {
-    const state = await ctx.store.load();
-    const proxies = Object.values(state.proxies);
-    if (proxies.length === 0) {
-      ui.warn("No proxies defined");
-      await ui.pause();
-      return;
-    }
-    targetName = await ui.menu(
-      "Select proxy",
-      proxies.map((p) => ({
-        label: p.name,
-        value: p.name,
-        hint: p.mainDomain,
-      })),
-    );
-  }
-  if (!targetName) return;
-
-  const mode = await ui.menu<"boot" | "acme" | "external">("TLS mode", [
-    { label: "Boot (self-signed starter)", value: "boot" },
-    { label: "ACME (Let's Encrypt)", value: "acme" },
-    { label: "External certificate files", value: "external" },
-  ]);
-  if (!mode) return;
-
-  let tls: TlsMode;
-  if (mode === "boot") {
-    tls = { kind: "boot" };
-  } else if (mode === "acme") {
-    const email = await ui.prompt("ACME contact email (optional)", { default: "" });
-    if (email === null) return;
-    tls = { kind: "acme", ...(email ? { email } : {}) };
-  } else {
-    const cert = await ui.prompt("Certificate path", { required: true });
-    if (!cert) return;
-    const key = await ui.prompt("Private key path", { required: true });
-    if (!key) return;
-    tls = { kind: "external", certPath: cert, keyPath: key };
-  }
-
-  try {
-    await ctx.store.withExclusive(async (state) => {
-      const now = ctx.platform.clock.nowIso();
-      let next = state;
-      if (targetKind === "app") {
-        const app = state.apps[targetName!];
-        if (!app) throw new Error(`app not found: ${targetName}`);
-        next = {
-          ...state,
-          apps: { ...state.apps, [targetName!]: { ...app, tls, updatedAt: now } },
-          updatedAt: now,
-        };
-      } else {
-        const proxy = state.proxies[targetName!];
-        if (!proxy) throw new Error(`proxy not found: ${targetName}`);
-        next = {
-          ...state,
-          proxies: { ...state.proxies, [targetName!]: { ...proxy, tls, updatedAt: now } },
-          updatedAt: now,
-        };
-      }
-      await ctx.store.save(next);
-      await ctx.render.apply(next, {
-        reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
-        skipValidate: true,
-        alreadyLocked: true,
-      });
-      return next;
-    });
-    ui.success(`TLS mode set to ${mode}`, `${targetKind}:${targetName}`);
-  } catch (err) {
-    handleError(ui, err);
-  }
-  await ui.pause();
-}
-
-async function sectionPermissions(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Permissions");
-  if (!(await ensureState(ui, ctx))) return;
-
-  const action = await ui.menu("Permissions", [
-    { label: "Check policy", value: "check" },
-    { label: "Repair policy", value: "repair" },
-  ]);
-  if (!action) return;
-
-  const slug = await pickApp(ui, ctx);
-  if (!slug) return;
-  const recursive = await ui.confirm("Recursive scan?", { defaultYes: false });
-
-  try {
-    const state = await ctx.store.load();
-    if (action === "check") {
-      const report = await checkPermissions(ctx.platform, state, slug, { recursive });
-      ui.blank();
-      ui.message(formatPermReport(report));
-      if (report.issues.length) ui.warn(`${report.issues.length} issue(s) found`);
-      else ui.success("Permissions look good");
-    } else {
-      const dryRun = await ui.confirm("Dry-run only?", { defaultYes: false });
-      const result = await repairPermissions(ctx.platform, state, slug, {
-        dryRun,
-        recursive,
-        shallow: !recursive,
-      });
-      for (const a of result.actions) ui.info(a);
-      ui.blank();
-      ui.message(formatPermReport(result.report));
-      ui.success(dryRun ? "Dry-run complete" : "Repair complete");
-    }
-  } catch (err) {
-    handleError(ui, err);
-  }
-  await ui.pause();
-}
-
-async function sectionBackup(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Backup / restore");
-  if (!(await ensureState(ui, ctx))) return;
-
-  const action = await ui.menu("Backup & restore", [
-    { label: "Backup", value: "backup", hint: "in-container dump over MySQL socket" },
-    { label: "Restore", value: "restore", hint: "non-atomic import" },
-  ]);
-  if (!action) return;
-
-  if (action === "backup") {
-    const scope = await ui.menu<"app" | "database" | "all">("Backup scope", [
-      { label: "All managed databases", value: "all" },
-      { label: "One app (all its DBs)", value: "app" },
-      { label: "Single database", value: "database" },
-    ]);
-    if (!scope) return;
-
-    let slug: string | undefined;
-    let database: string | undefined;
-    if (scope !== "all") {
-      const picked = await pickApp(ui, ctx);
-      if (!picked) return;
-      slug = picked;
-    }
-    if (scope === "database") {
-      const db = await ui.prompt("Database name", { required: true });
-      if (!db) return;
-      database = db;
-    }
-    const compress = await ui.menu<"zstd" | "gzip" | "none">("Compression", [
-      { label: "zstd (default)", value: "zstd" },
-      { label: "gzip", value: "gzip" },
-      { label: "none", value: "none" },
-    ]);
-    if (!compress) return;
-
-    try {
-      const state = await ctx.store.load();
-      const artifacts = await runBackup(ctx.platform, state, {
-        scope,
-        slug,
-        database,
-        compress,
-      });
-      if (artifacts.length === 0) ui.warn("No databases backed up");
-      for (const a of artifacts) {
-        ui.success(`backup ${a.database}`, `${a.path} (${a.bytes} bytes)`);
-      }
-    } catch (err) {
-      handleError(ui, err);
-    }
-    await ui.pause();
-    return;
-  }
-
-  // restore
-  ui.warn(
-    "Restore is not object-level atomic",
-    "A failed import can leave a partial destination database.",
-  );
-  type RestoreSource = { kind: "backup"; path: string } | { kind: "path" };
-  const recent = await listRecentBackupFiles(ctx.platform, 20).catch((err) => {
-    handleError(ui, err);
-    return [];
-  });
-  const sourceRows: TableMenuChoice<RestoreSource>[] = recent.map((backup) => ({
-    columns: [
-      relative(ctx.platform.paths.paths.backupsDir, backup.path) || backup.path,
-      formatBackupDate(backup.createdAt),
-      formatHumanSize(backup.bytes),
-    ],
-    value: { kind: "backup", path: backup.path },
-  }));
-  sourceRows.push({
-    columns: ["Path of file…", "", ""],
-    value: { kind: "path" },
-  });
-
-  const source = await ui.tableMenu(
-    "Choose dump file",
-    ["Backup file (latest 20)", "Created", "Size"],
-    sourceRows,
-  );
-  if (!source) return;
-  const file = source.kind === "backup"
-    ? source.path
-    : await ui.prompt("Dump file path", { required: true });
-  if (!file) return;
-
-  const slug = await pickApp(ui, ctx, { title: "Target app (ownership)" });
-  if (!slug) return;
-  const target = await ui.prompt("Target database name", { required: true });
-  if (!target) return;
-  const replace = await ui.confirm(
-    "Replace an existing database with this exact name? (requires confirmation)",
-    { defaultYes: false },
-  );
-  let replaceName: string | undefined;
-  if (replace) {
-    const confirmName = await ui.prompt(`Type the exact target name "${target}" to confirm`);
-    if (confirmName !== target) {
-      ui.error("Confirmation did not match; aborting");
-      await ui.pause();
-      return;
-    }
-    replaceName = target;
-  }
-  if (!(await ui.confirm("Proceed with restore?"))) {
-    ui.info("Cancelled");
-    await ui.pause();
-    return;
-  }
-  try {
-    const state = await ctx.store.load();
-    await runRestore(ctx.platform, state, {
-      file,
-      slug,
-      targetDatabase: target,
-      replaceOriginal: replaceName,
-    });
-    ui.success(`Restore completed into ${target}`);
-  } catch (err) {
-    handleError(ui, err);
-  }
-  await ui.pause();
-}
-
-async function sectionCompose(ui: WizardUI, ctx: CliContext): Promise<void> {
-  ui.header("Compose helpers");
-  if (!(await ensureState(ui, ctx))) return;
-
-  const action = await ui.menu("Docker Compose", [
-    { label: "Print compose argv for a command", value: "print" },
-    { label: "ps", value: "ps" },
-    { label: "logs (follow off)", value: "logs" },
-    { label: "Custom safe args", value: "custom", hint: "refuses down -v" },
-  ]);
-  if (!action) return;
-
-  let command: string[] = [];
-  if (action === "ps") command = ["ps"];
-  else if (action === "logs") command = ["logs", "--tail", "100"];
-  else if (action === "print" || action === "custom") {
-    const raw = await ui.prompt("Compose args (space-separated)", {
-      required: true,
-      default: action === "print" ? "config --services" : "ps",
-    });
-    if (!raw) return;
-    command = raw.split(/\s+/).filter(Boolean);
-  }
-
-  try {
-    assertSafeComposeArgs(command);
-    const state = await ctx.store.load();
-    const { materializeDockerAssets } = await import("../services/assets_materialize.ts");
-    await materializeDockerAssets(
-      ctx.platform,
-      state.phpVersions.map((v) => String(v.version)),
-    );
-    await ctx.render.apply(state, { renderOnly: true, skipValidate: true });
-    const full = await composeArgs(ctx.platform, state, command);
-
-    if (action === "print") {
-      ui.success("Compose argv");
-      ui.message(full.join(" "));
-      await ui.pause();
-      return;
-    }
-
-    ui.info(`running: docker compose ${command.join(" ")}`);
-    ui.blank();
-    const [cmd, ...cmdArgs] = full;
-    const child = new Deno.Command(cmd!, {
-      args: cmdArgs,
-      cwd: ctx.stackRoot,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const status = await child.output();
-    ui.blank();
-    if (status.code === 0) ui.success("Compose command finished");
-    else ui.error(`Compose exited with code ${status.code}`);
-  } catch (err) {
-    handleError(ui, err);
-  }
-  await ui.pause();
 }

@@ -49,6 +49,8 @@ export type TerminalIO = {
   isInteractive(): boolean;
   /** True when readKey can deliver arrows / instant digits without Enter. */
   supportsRawKeys(): boolean;
+  /** Current terminal width, when available. */
+  terminalColumns?(): number | null;
 };
 
 /** Default stdin/stdout terminal adapter. */
@@ -108,6 +110,13 @@ export function createStdTerminal(): TerminalIO {
         return Deno.stdin.isTerminal();
       } catch {
         return false;
+      }
+    },
+    terminalColumns() {
+      try {
+        return Deno.consoleSize().columns;
+      } catch {
+        return null;
       }
     },
   };
@@ -287,34 +296,43 @@ export class WizardUI {
       ? "↑/↓ move · key selects · Enter confirms · 0/Esc back"
       : "Type key and press Enter · 0 back";
 
+    let lastDrawnLines: string[] = [];
+
     const draw = (): number => {
-      let lines = 0;
+      let rows = 0;
+      const lines: string[] = [];
+      const columns = this.io.terminalColumns?.() ?? null;
+      const showHints = columns === null || columns >= 30;
+      const writeRow = (text = "") => {
+        this.io.writeLine(text);
+        lines.push(text);
+        rows += renderedTerminalRows(text, columns);
+      };
+
       for (let i = 0; i < choices.length; i++) {
-        this.io.writeLine(formatChoiceLine(choices[i]!, keys[i]!, i === cursor));
-        lines++;
+        writeRow(formatChoiceLine(choices[i]!, keys[i]!, i === cursor, showHints));
       }
-      if (allowCancel) {
-        this.io.writeLine(formatCancelLine(cancelLabel, cursor === -1));
-        lines++;
-      }
-      this.io.writeLine();
-      lines++;
-      this.io.writeLine(pc.dim(help));
-      lines++;
-      if (status) {
-        this.io.writeLine(pc.yellow(status));
-        lines++;
-      } else {
-        this.io.writeLine(""); // reserve status line for stable redraw height
-        lines++;
-      }
-      return lines;
+      if (allowCancel) writeRow(formatCancelLine(cancelLabel, cursor === -1));
+      writeRow();
+      writeRow(pc.dim(help));
+      // Reserve a status line for stable redraw height.
+      writeRow(status ? pc.yellow(status) : "");
+      lastDrawnLines = lines;
+      return rows;
     };
 
-    const erase = (lineCount: number) => {
-      if (lineCount <= 0) return;
-      // Move to start of menu block and clear downward.
-      this.io.write(`\x1b[${lineCount}A\x1b[J`);
+    const erase = (previousRowCount: number) => {
+      // Recalculate at the current width: the terminal may have reflowed the
+      // menu after a resize while readKey was waiting.
+      const columns = this.io.terminalColumns?.() ?? null;
+      const rowCount = columns === null ? previousRowCount : lastDrawnLines.reduce(
+        (total, line) => total + renderedTerminalRows(line, columns),
+        0,
+      );
+      if (rowCount <= 0) return;
+      // `F` moves to column one as well, so a redraw cannot continue inside a
+      // wrapped choice.
+      this.io.write(`\x1b[${rowCount}F\x1b[J`);
     };
 
     // Hide cursor while navigating when raw.
@@ -573,7 +591,12 @@ function moveCursor<T>(
   return positions[idx]!;
 }
 
-function formatChoiceLine<T>(choice: MenuChoice<T>, key: string, selected: boolean): string {
+function formatChoiceLine<T>(
+  choice: MenuChoice<T>,
+  key: string,
+  selected: boolean,
+  showHint = true,
+): string {
   const marker = selected ? pc.bold(pc.cyan("❯")) : " ";
   const prefix = choice.disabled
     ? pc.dim(` ${marker} [${key}]`)
@@ -585,8 +608,73 @@ function formatChoiceLine<T>(choice: MenuChoice<T>, key: string, selected: boole
     : selected
     ? pc.bold(pc.cyan(choice.label))
     : choice.label;
-  const hint = choice.hint ? pc.dim(`  — ${choice.hint}`) : "";
+  const hint = showHint && choice.hint ? pc.dim(`  — ${choice.hint}`) : "";
   return `${prefix}  ${label}${hint}`;
+}
+
+/** Number of physical rows occupied after the terminal wraps a line. */
+function renderedTerminalRows(text: string, columns: number | null): number {
+  if (columns === null || !Number.isFinite(columns) || columns < 1) return 1;
+  return Math.max(1, Math.ceil(terminalDisplayWidth(text) / Math.floor(columns)));
+}
+
+/** Visible cell width, excluding ANSI styling sequences. */
+function terminalDisplayWidth(text: string): number {
+  let width = 0;
+  const plain = stripAnsi(text);
+  for (const char of plain) {
+    const codePoint = char.codePointAt(0)!;
+    if (
+      codePoint === 0 ||
+      codePoint < 0x20 ||
+      (codePoint >= 0x7f && codePoint < 0xa0) ||
+      codePoint === 0x200d ||
+      (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+      /\p{Mark}/u.test(char)
+    ) continue;
+    width += isWideCodePoint(codePoint) ? 2 : 1;
+  }
+  return width;
+}
+
+function stripAnsi(text: string): string {
+  let plain = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) !== 0x1b) {
+      plain += text[i];
+      continue;
+    }
+
+    // Picocolors emits CSI sequences (ESC [ ... final-byte). Skip any other
+    // two-byte escape as well rather than counting it as visible text.
+    if (text[i + 1] !== "[") {
+      i++;
+      continue;
+    }
+    i += 2;
+    while (i < text.length) {
+      const code = text.charCodeAt(i);
+      if (code >= 0x40 && code <= 0x7e) break;
+      i++;
+    }
+  }
+  return plain;
+}
+
+function isWideCodePoint(codePoint: number): boolean {
+  return codePoint >= 0x1100 &&
+    (codePoint <= 0x115f ||
+      codePoint === 0x2329 ||
+      codePoint === 0x232a ||
+      (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+      (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+      (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+      (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+      (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
+      (codePoint >= 0x20000 && codePoint <= 0x3fffd));
 }
 
 function formatCancelLine(label: string, selected: boolean): string {

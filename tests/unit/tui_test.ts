@@ -8,7 +8,7 @@ import { type KeyEvent, type MenuChoice, type TerminalIO, WizardUI } from "../..
  */
 function fakeTerminal(
   inputs: Array<string | KeyEvent>,
-  opts?: { raw?: boolean },
+  opts?: { raw?: boolean; columns?: number },
 ): TerminalIO & { out: string[] } {
   const queue = [...inputs];
   const out: string[] = [];
@@ -60,6 +60,9 @@ function fakeTerminal(
     },
     supportsRawKeys() {
       return raw;
+    },
+    terminalColumns() {
+      return opts?.columns ?? null;
     },
   };
 }
@@ -178,6 +181,41 @@ Deno.test("menu j/k navigation when <10", async () => {
     { label: "Beta", value: "b" },
   ]);
   assertEquals(picked, "b");
+});
+
+Deno.test("narrow menu hides hints and erases wrapped physical rows", async () => {
+  const io = fakeTerminal(["down", "enter"], { columns: 20 });
+  const ui = new WizardUI(io);
+  const picked = await ui.menu("Pick", [
+    { label: "Alpha", value: "a", hint: "a long description" },
+    { label: "Beta", value: "b", hint: "another long description" },
+  ]);
+
+  assertEquals(picked, "b");
+  const output = io.out.join("");
+  assertEquals(output.includes("long description"), false);
+  assertEquals(output.includes("\x1b[9F\x1b[J"), true);
+});
+
+Deno.test("menu keeps hints at 30 columns", async () => {
+  const io = fakeTerminal(["enter"], { columns: 30 });
+  const ui = new WizardUI(io);
+  await ui.menu("Pick", [{ label: "Alpha", value: "a", hint: "description" }]);
+  assertEquals(io.out.join("").includes("description"), true);
+});
+
+Deno.test("menu recalculates wrapped rows after a terminal resize", async () => {
+  const io = fakeTerminal(["down", "enter"]);
+  let widthRead = 0;
+  io.terminalColumns = () => widthRead++ === 0 ? 80 : 20;
+  const ui = new WizardUI(io);
+  const picked = await ui.menu("Pick", [
+    { label: "Alpha", value: "a", hint: "a long description" },
+    { label: "Beta", value: "b", hint: "another long description" },
+  ]);
+
+  assertEquals(picked, "b");
+  assertEquals(io.out.join("").includes("\x1b[11F\x1b[J"), true);
 });
 
 Deno.test("confirm yes/no/default with raw keys", async () => {
