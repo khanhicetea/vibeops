@@ -264,6 +264,8 @@ function renderPhpFragment(service: string, image: string, version: string): str
         },
       },
       // Ephemeral CLI profile (compose run --rm ${service}-cli ...)
+      // Starts as root so entrypoint can install passwd/group for the app UID
+      // (avoids bash "I have no name!"), then setpriv-drops to BENTO_UID:BENTO_GID.
       [`${service}-cli`]: {
         image,
         profiles: ["cli"],
@@ -273,6 +275,8 @@ function renderPhpFragment(service: string, image: string, version: string): str
         working_dir: "/home",
         volumes: [
           "./homes:/home",
+          // Bind host entrypoint so CLI identity fixes apply without image rebuild.
+          "./docker/php/entrypoint.sh:/usr/local/bin/bento-php-entrypoint:ro",
           "./helpers:/opt/bento/helpers:ro",
         ],
         environment: {

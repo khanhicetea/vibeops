@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { createEmptyState } from "../../src/domain/state.ts";
 import { allocateIdentity, capacityWarnings, provisionApp } from "../../src/services/app.ts";
+import { addPhpVersion, buildCliExec, cliRunComposeCommand } from "../../src/services/php.ts";
 import { createFixedClock } from "../../src/platform/clock.ts";
 import { createSeededRandom } from "../../src/platform/random.ts";
 import { createFileSystem } from "../../src/platform/fs.ts";
@@ -211,6 +212,69 @@ Deno.test("workdir escape rejected by path policy", async () => {
     const platform = testPlatform(root);
     assertThrows(
       () => platform.paths.assertInsideHome(join(root, "homes", "app"), "../../etc"),
+      Error,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("buildCliExec targets profile-gated -cli service with app identity", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    let state = createEmptyState("2026-07-16T12:00:00.000Z");
+    const provisioned = provisionApp(platform, state, {
+      slug: "alpha",
+      domain: "alpha.example",
+    });
+    state = provisioned.state;
+    const app = provisioned.app;
+
+    const shell = buildCliExec(platform, state, "alpha", []);
+    assertEquals(shell.service, `${app.phpService}-cli`);
+    assertEquals(shell.profile, "cli");
+    assertEquals(shell.user, `${app.uid}:${app.gid}`);
+    assertEquals(shell.workdir, app.home);
+    assertEquals(shell.argv, ["bash"]);
+    assertEquals(shell.env.HOME, app.home);
+    assertEquals(shell.env.BENTO_APP, "alpha");
+    assertEquals(shell.env.BENTO_UID, String(app.uid));
+    assertEquals(shell.env.BENTO_GID, String(app.gid));
+    assertEquals(shell.env.USER, "alpha");
+
+    const runArgs = cliRunComposeCommand(shell, { tty: true });
+    assertEquals(runArgs.slice(0, 5), ["--profile", "cli", "run", "--rm", "-it"]);
+    assertEquals(runArgs.includes(shell.service), true);
+    // Must NOT use docker -u (that yields "I have no name!"); entrypoint setpriv-drops.
+    assertEquals(runArgs.includes("-u"), false);
+    assertEquals(runArgs.includes(`BENTO_UID=${app.uid}`), true);
+    assertEquals(runArgs.includes(`BENTO_GID=${app.gid}`), true);
+
+    const scripted = cliRunComposeCommand(
+      buildCliExec(platform, state, "alpha", ["php", "-v"]),
+      { tty: false },
+    );
+    assertEquals(scripted.includes("-T"), true);
+    assertEquals(scripted.includes("-it"), false);
+    assertEquals(scripted.includes("-u"), false);
+    assertEquals(scripted.slice(-2), ["php", "-v"]);
+
+    // workdir must stay inside app home
+    assertThrows(
+      () => buildCliExec(platform, state, "alpha", [], { workdir: "/etc" }),
+      Error,
+    );
+
+    // PHP override must be managed
+    state = addPhpVersion(state, "8.3");
+    const ov = buildCliExec(platform, state, "alpha", ["php", "-v"], {
+      phpVersionOverride: "8.3",
+    });
+    assertEquals(ov.service, "php83-cli");
+    assertEquals(ov.phpVersion, "8.3");
+    assertThrows(
+      () => buildCliExec(platform, state, "alpha", [], { phpVersionOverride: "7.4" }),
       Error,
     );
   } finally {

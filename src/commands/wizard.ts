@@ -13,7 +13,13 @@ import {
   materializeAppHome,
   provisionApp,
 } from "../services/app.ts";
-import { addPhpVersion, listPhpVersions, removePhpVersion } from "../services/php.ts";
+import {
+  addPhpVersion,
+  buildCliExec,
+  cliRunComposeCommand,
+  listPhpVersions,
+  removePhpVersion,
+} from "../services/php.ts";
 import {
   addMysqlVersion,
   applyRotatedMysqlPassword,
@@ -89,7 +95,7 @@ export async function runWizard(ctx: CliContext): Promise<number> {
       const choice = await ui.menu<string>("Main menu", [
         { label: "Status & diagnostics", value: "status", hint: "stack / apps / capacity" },
         { label: "Bootstrap", value: "bootstrap", hint: "init · render · apply" },
-        { label: "Applications", value: "apps", hint: "create · list · show" },
+        { label: "Applications", value: "apps", hint: "create · list · show · shell" },
         { label: "PHP versions", value: "php", hint: "add · remove · list" },
         { label: "MySQL", value: "mysql", hint: "versions · shell · size · password" },
         { label: "Reverse proxies", value: "proxy", hint: "create · list" },
@@ -337,6 +343,11 @@ async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> {
       { label: "List apps", value: "list" },
       { label: "Show app details", value: "show", hint: "secrets redacted" },
       { label: "Create / update app", value: "create" },
+      {
+        label: "Open CLI shell",
+        value: "shell",
+        hint: "attach ephemeral PHP CLI as app identity",
+      },
     ]);
     if (!action) return;
 
@@ -379,8 +390,67 @@ async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> {
       await ui.pause();
     } else if (action === "create") {
       await wizardAppCreate(ui, ctx);
+    } else if (action === "shell") {
+      await wizardAppShell(ui, ctx);
     }
   }
+}
+
+/** Attach interactive ephemeral PHP CLI shell as the selected app identity. */
+async function wizardAppShell(ui: WizardUI, ctx: CliContext): Promise<void> {
+  const slug = await pickApp(ui, ctx, { title: "App for CLI shell" });
+  if (!slug) return;
+
+  const workdirRaw = await ui.prompt("Working directory (blank = app home)", {
+    default: "",
+  });
+  if (workdirRaw === null) return;
+
+  try {
+    const state = await ctx.store.load();
+    const plan = buildCliExec(
+      ctx.platform,
+      state,
+      slug,
+      [], // default interactive bash
+      { workdir: workdirRaw.trim() || undefined },
+    );
+    const composeCmd = cliRunComposeCommand(plan, { tty: true });
+    const compose = await composeArgs(ctx.platform, state, composeCmd);
+
+    ui.blank();
+    ui.info(
+      `Attaching ${plan.service} as uid ${plan.user} · php ${plan.phpVersion} · ${plan.workdir}`,
+    );
+    ui.message(
+      `scriptable: bento app shell ${slug}${
+        workdirRaw.trim() ? ` --workdir ${workdirRaw.trim()}` : ""
+      }`,
+    );
+    ui.message(pcDim(`$ ${compose.join(" ")}`));
+    ui.blank();
+    ui.message(pcDim("Exit the shell to return to the wizard."));
+    ui.blank();
+
+    const [cmd, ...args] = compose;
+    const child = new Deno.Command(cmd!, {
+      args,
+      cwd: ctx.stackRoot,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const status = await child.output();
+    ui.blank();
+    if (status.code === 0) {
+      ui.success(`Shell closed`, `app ${slug}`);
+    } else {
+      ui.warn(`Shell exited ${status.code}`, `app ${slug}`);
+    }
+  } catch (err) {
+    handleError(ui, err);
+  }
+  await ui.pause();
 }
 
 async function wizardAppCreate(ui: WizardUI, ctx: CliContext): Promise<void> {

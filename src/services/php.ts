@@ -68,14 +68,30 @@ export function listPhpVersions(state: DesiredState): ManagedPhpVersion[] {
   return [...state.phpVersions].sort((a, b) => compareMajorMinor(a.version, b.version));
 }
 
-/** Ephemeral CLI execution plan (caller runs via docker compose run). */
+/** Ephemeral PHP CLI execution plan (caller runs via docker compose run). */
+export type CliExecPlan = {
+  /** Compose service name, e.g. `php85-cli` (profile-gated). */
+  service: string;
+  /** Compose profile that enables the CLI service. */
+  profile: "cli";
+  user: string;
+  workdir: string;
+  env: Record<string, string>;
+  argv: string[];
+  /** App slug for operator messaging. */
+  slug: string;
+  /** PHP version selected for this invocation. */
+  phpVersion: string;
+};
+
+/** Ephemeral CLI execution plan (caller runs via docker compose run --profile cli). */
 export function buildCliExec(
   platform: Platform,
   state: DesiredState,
   slug: string,
   argv: string[],
   opts?: { workdir?: string; phpVersionOverride?: string },
-): { service: string; user: string; workdir: string; env: Record<string, string>; argv: string[] } {
+): CliExecPlan {
   const app = state.apps[slug];
   if (!app) throw notFoundError(`app not found: ${slug}`);
 
@@ -102,14 +118,47 @@ export function buildCliExec(
   );
 
   return {
-    service: managed.service,
+    // Ephemeral CLI is a profile service: `${phpService}-cli` (see compose fragment).
+    service: `${managed.service}-cli`,
+    profile: "cli",
+    // Numeric identity for operator display; entrypoint drops privs (no docker -u).
     user: `${app.uid}:${app.gid}`,
     workdir,
     env: {
       HOME: app.home,
       BENTO_APP: app.slug,
+      BENTO_UID: String(app.uid),
+      BENTO_GID: String(app.gid),
       USER: app.slug,
+      LOGNAME: app.slug,
     },
     argv: argv.length ? argv : ["bash"],
+    slug: app.slug,
+    phpVersion: String(phpVersion),
   };
+}
+
+/**
+ * Compose command args (after global `-f` options) for an ephemeral app CLI attach/run.
+ * Container starts as root; entrypoint installs passwd name + setpriv-drops to app UID.
+ * Use `-it` for interactive shells and `-T` for scripted non-TTY invocations.
+ * Never pass docker `-u` here — that yields "I have no name!" with no passwd entry.
+ */
+export function cliRunComposeCommand(
+  plan: CliExecPlan,
+  opts?: { tty?: boolean },
+): string[] {
+  const tty = opts?.tty ?? true;
+  return [
+    "--profile",
+    plan.profile,
+    "run",
+    "--rm",
+    ...(tty ? ["-it"] : ["-T"]),
+    "-w",
+    plan.workdir,
+    ...Object.entries(plan.env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
+    plan.service,
+    ...plan.argv,
+  ];
 }

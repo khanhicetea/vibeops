@@ -184,6 +184,16 @@ Deno.test("cli init render status app create", async () => {
       0,
     );
 
+    // App CLI shell / exec --print (profile-gated php*-cli; no live attach)
+    assertEquals(
+      await runCli([...base, "app", "shell", "demo", "--print"]),
+      0,
+    );
+    assertEquals(
+      await runCli([...base, "exec", "demo", "--print", "--", "php", "-v"]),
+      0,
+    );
+
     // Phase B: template select / drift / return
     const customTpl = join(stack, "custom-vhost.tpl");
     await Deno.writeTextFile(customTpl, "# custom\nserver { listen 80; }\n");

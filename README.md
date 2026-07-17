@@ -115,29 +115,29 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 
 ## Command surface
 
-| Area | Commands |
-|------|----------|
-| Interactive | `tui` (wizard: menus, tables, alerts for common ops) |
-| Bootstrap | `init`, `render`, `apply`, `status` |
-| Live proof | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron `* * * * *` + worker (61s wait), permissions repair, HTTP boot TLS; ACME skipped |
-| Apps | `app create\|list\|show\|update` (delete/remove blocked) |
-| PHP | `php add\|remove\|list` |
-| MySQL | `mysql add\|list\|db\|password` (version removal blocked) |
-| Proxy | `proxy create\|list` (delete/remove blocked) |
-| TLS | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below) |
-| Background | `cron …`, `worker …` |
-| Deploy | `deploy enable\|disable\|rotate\|status\|drain\|instructions` |
-| Exec | `exec <app> -- <cmd>` |
-| Compose | `compose files`, `compose -- <args>` (refuses `down -v`) |
-| Safety | `permissions check\|repair [--shallow\|--recursive] [--dry-run]`, `backup`, `restore` |
+| Area         | Commands                                                                                                                                                                                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Interactive  | `tui` (wizard: menus, tables, alerts for common ops)                                                                                                                                                                             |
+| Bootstrap    | `init`, `render`, `apply`, `status`                                                                                                                                                                                              |
+| Live proof   | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron `* * * * *` + worker (61s wait), permissions repair, HTTP boot TLS; ACME skipped |
+| Apps         | `app create\|list\|show\|update\|shell` (delete/remove blocked)                                                                                                                                                                  |
+| PHP          | `php add\|remove\|list`                                                                                                                                                                                                          |
+| MySQL        | `mysql add\|list\|db\|password` (version removal blocked)                                                                                                                                                                        |
+| Proxy        | `proxy create\|list` (delete/remove blocked)                                                                                                                                                                                     |
+| TLS          | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below)                                                                                                                                                       |
+| Background   | `cron …`, `worker …`                                                                                                                                                                                                             |
+| Deploy       | `deploy enable\|disable\|rotate\|status\|drain\|instructions`                                                                                                                                                                    |
+| Exec / shell | `app shell <app>`, `exec <app> [-- <cmd>]` — ephemeral PHP CLI as app UID (TUI: Applications → Open CLI shell)                                                                                                                   |
+| Compose      | `compose files`, `compose -- <args>` (refuses `down -v`)                                                                                                                                                                         |
+| Safety       | `permissions check\|repair [--shallow\|--recursive] [--dry-run]`, `backup`, `restore`                                                                                                                                            |
 
 ### TLS modes (F-12)
 
-| Mode | Behavior |
-|------|----------|
-| `boot` | Self-signed starter cert under `certs/boot.{crt,key}` (created on materialize / nginx entrypoint). **No** HTTP→HTTPS redirect. |
-| `acme` | Real certs expected at `certs/acme/<domain>/{fullchain,privkey}.pem`. HTTP-01 webroot is `certs/acme-www` (container `/var/www/acme`). Generated vhosts expose `/.well-known/acme-challenge/` and enable HTTPS redirect. **DNS A/AAAA for the site must point at this host before issuance.** Example: `certbot certonly --webroot -w ./certs/acme-www -d example.com`. |
-| `external` | Operator-managed cert+key under stack `certs/` (paths validated; private key must not be world-readable, mode `0600`). HTTPS redirect on. |
+| Mode       | Behavior                                                                                                                                                                                                                                                                                                                                                                |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boot`     | Self-signed starter cert under `certs/boot.{crt,key}` (created on materialize / nginx entrypoint). **No** HTTP→HTTPS redirect.                                                                                                                                                                                                                                          |
+| `acme`     | Real certs expected at `certs/acme/<domain>/{fullchain,privkey}.pem`. HTTP-01 webroot is `certs/acme-www` (container `/var/www/acme`). Generated vhosts expose `/.well-known/acme-challenge/` and enable HTTPS redirect. **DNS A/AAAA for the site must point at this host before issuance.** Example: `certbot certonly --webroot -w ./certs/acme-www -d example.com`. |
+| `external` | Operator-managed cert+key under stack `certs/` (paths validated; private key must not be world-readable, mode `0600`). HTTPS redirect on.                                                                                                                                                                                                                               |
 
 TLS changes reload **Nginx only** (PHP/runners stay up).
 

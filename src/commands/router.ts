@@ -16,7 +16,13 @@ import {
   materializeAppHome,
   provisionApp,
 } from "../services/app.ts";
-import { addPhpVersion, buildCliExec, listPhpVersions, removePhpVersion } from "../services/php.ts";
+import {
+  addPhpVersion,
+  buildCliExec,
+  cliRunComposeCommand,
+  listPhpVersions,
+  removePhpVersion,
+} from "../services/php.ts";
 import {
   addMysqlVersion,
   applyRotatedMysqlPassword,
@@ -397,7 +403,28 @@ function buildParser(state: RunState) {
           (y2: YargsBuilder) => y2.positional("slug", { type: "string", demandOption: true }),
           bind(state, cmdAppDelete),
         )
-        .demandCommand(1, "Specify an app subcommand: create|list|show|update")
+        .command(
+          "shell <slug>",
+          "Attach interactive app CLI shell (ephemeral PHP identity)",
+          (y2: YargsBuilder) =>
+            y2
+              .positional("slug", { type: "string", demandOption: true })
+              .option("workdir", {
+                type: "string",
+                describe: "Working directory inside app home",
+              })
+              .option("php", {
+                type: "string",
+                describe: "Managed PHP version override",
+              })
+              .option("print", {
+                type: "boolean",
+                default: false,
+                describe: "Print compose argv instead of attaching",
+              }),
+          bind(state, cmdAppShell),
+        )
+        .demandCommand(1, "Specify an app subcommand: create|list|show|update|shell")
         .recommendCommands())
     .command("php", "Manage PHP versions", (y: YargsBuilder) =>
       y
@@ -755,10 +782,18 @@ function buildParser(state: RunState) {
         .recommendCommands())
     .command(
       "exec <app>",
-      "Ephemeral CLI as app identity (command after --)",
+      "Ephemeral CLI as app identity (shell when no command; args after --)",
       (y: YargsBuilder) =>
         y
           .positional("app", { type: "string", demandOption: true })
+          .option("workdir", {
+            type: "string",
+            describe: "Working directory inside app home",
+          })
+          .option("php", {
+            type: "string",
+            describe: "Managed PHP version override",
+          })
           .option("print", {
             type: "boolean",
             default: false,
@@ -2012,36 +2047,104 @@ async function cmdWorkerInspect(argv: AnyArgv, ctx: CliContext): Promise<number>
   return result.code === 0 ? 0 : 8;
 }
 
+async function cmdAppShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  // Interactive shell alias under `app shell` (no trailing command).
+  return await runCliExec(ctx, {
+    slug: String(argv.slug ?? ""),
+    argv: [],
+    workdir: argv.workdir ? String(argv.workdir) : undefined,
+    phpVersionOverride: argv.php ? String(argv.php) : undefined,
+    printOnly: argv.print === true,
+    usage: "usage: bento app shell <slug> [--workdir PATH] [--php VERSION] [--print]",
+  });
+}
+
 async function cmdExec(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const slug = String(argv.app ?? "");
-  if (!slug) {
-    ctx.log.error("usage: bento exec <app> -- <command...>");
+  const cmd = trailing(argv, 1);
+  return await runCliExec(ctx, {
+    slug,
+    argv: cmd,
+    workdir: argv.workdir ? String(argv.workdir) : undefined,
+    phpVersionOverride: argv.php ? String(argv.php) : undefined,
+    printOnly: argv.print === true,
+    usage: "usage: bento exec <app> [--workdir PATH] [--php VERSION] [--print] [-- <command...>]",
+  });
+}
+
+/**
+ * Ephemeral app CLI: interactive TTY attach for shells, inherited stdio for commands.
+ * Uses the profile-gated `${phpService}-cli` service (F-06 / F-16).
+ */
+async function runCliExec(
+  ctx: CliContext,
+  opts: {
+    slug: string;
+    argv: string[];
+    workdir?: string;
+    phpVersionOverride?: string;
+    printOnly: boolean;
+    usage: string;
+  },
+): Promise<number> {
+  if (!opts.slug) {
+    ctx.log.error(opts.usage);
     return 2;
   }
-  const cmd = trailing(argv, 1);
   const state = await ctx.store.load();
-  const plan = buildCliExec(ctx.platform, state, slug, cmd.length ? cmd : ["bash"]);
-  const compose = await composeArgs(ctx.platform, state, [
-    "run",
-    "--rm",
-    "-u",
-    plan.user,
-    "-w",
-    plan.workdir,
-    ...Object.entries(plan.env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
-    plan.service,
-    ...plan.argv,
-  ]);
-  if (argv.print === true) {
-    ctx.log.out(compose.join(" "));
+  let plan;
+  try {
+    plan = buildCliExec(ctx.platform, state, opts.slug, opts.argv, {
+      workdir: opts.workdir,
+      phpVersionOverride: opts.phpVersionOverride,
+    });
+  } catch (err) {
+    ctx.log.error(err instanceof Error ? err.message : String(err));
+    return 3;
+  }
+
+  let tty = false;
+  try {
+    tty = Deno.stdin.isTerminal() && Deno.stdout.isTerminal();
+  } catch {
+    tty = false;
+  }
+  // --print always uses non-TTY form for stable scripted output.
+  const composeCmd = cliRunComposeCommand(plan, { tty: !opts.printOnly && tty });
+  const compose = await composeArgs(ctx.platform, state, composeCmd);
+
+  if (opts.printOnly) {
+    if (ctx.json) {
+      ctx.log.out(JSON.stringify(
+        {
+          service: plan.service,
+          profile: plan.profile,
+          user: plan.user,
+          workdir: plan.workdir,
+          phpVersion: plan.phpVersion,
+          argv: plan.argv,
+          command: compose,
+        },
+        null,
+        2,
+      ));
+    } else {
+      ctx.log.out(compose.join(" "));
+    }
     return 0;
   }
-  const result = await ctx.platform.process.run(compose, {
+
+  // Interactive attach / inherited stdio — do not capture pipes (breaks shells).
+  const [cmd, ...args] = compose;
+  const child = new Deno.Command(cmd!, {
+    args,
     cwd: ctx.stackRoot,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
   });
-  if (result.stdout) await Deno.stdout.write(new TextEncoder().encode(result.stdout));
-  if (result.stderr) await Deno.stderr.write(new TextEncoder().encode(result.stderr));
-  return result.code;
+  const status = await child.output();
+  return status.code;
 }
 
 async function cmdCompose(argv: AnyArgv, ctx: CliContext): Promise<number> {
