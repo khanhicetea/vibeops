@@ -1,6 +1,6 @@
 # Bento remaining work (agent todo)
 
-Status snapshot: **~96% capabilities coded · ~85% acceptance proven · ~88% definition of done** (Phase A+B+C+D+E complete)
+Status snapshot: **~98% capabilities coded · ~96% acceptance proven · ~97% definition of done** (Phase A+B+C+D+E+F complete; host scenarios residual)
 
 Read first (in order):
 
@@ -233,58 +233,58 @@ Map each F-*/R-* to at least one automated test where practical. Current baselin
 
 | Area | Existing tests | Still needed |
 |------|----------------|--------------|
-| Validators / state | `tests/unit/validators_test.ts` | env/CLI token rejection cases |
-| App identity / domains | `tests/unit/app_test.ts` | docroot safety; legacy flag generation |
+| Validators / state | `tests/unit/validators_test.ts`, `phase_f_test.ts` | [x] env/CLI token rejection cases |
+| App identity / domains | `tests/unit/app_test.ts`, `phase_f_test.ts` | [x] docroot safety; legacy flag generation |
 | Render transaction | `tests/unit/render_test.ts`, `phase_c_test.ts` | keep green; expand integration later |
-| Deploy | `tests/unit/deploy_test.ts` | history prune files; interrupt reclaim |
-| CLI smoke | `tests/contract/cli_smoke_test.ts` | backup/restore dry paths; tls set; permissions |
+| Deploy | `tests/unit/deploy_test.ts`, `phase_f_test.ts` | [x] history prune files; interrupt reclaim |
+| CLI smoke | `tests/contract/cli_smoke_test.ts` | [x] backup/restore dry paths; tls set; permissions |
 | TUI | `tests/unit/tui_test.ts` | keep as UI-only |
-| Integration | **empty** | see F2 |
+| Integration | `tests/integration/` | see F2 |
 | Parity | `tests/contract/parity_test.ts` | keep green; release runs `test:parity` |
 
 ### F2. Integration suite  **P0** · contract §8
 
-Populate `tests/integration/` (skip automatically if Docker unavailable):
+Populate `tests/integration/` (Docker steps soft-skip when daemon unavailable):
 
-- [ ] Bootstrap empty stack; `compose up` subset or `compose config` validation.
-- [ ] Create two apps; assert homes/pools/sockets/domains separate on disk.
-- [ ] PHP add second version; move one app; exec uses new version.
-- [ ] Front-controller + legacy + proxy domains unique.
-- [ ] TLS mode switch boot → external (files) without runner reload.
-- [ ] MySQL create/refuse cross-service; password rotate isolation.
-- [ ] Redis shared vs ACL (if redis up).
-- [ ] Cron/worker config generation + scoped reload plan.
-- [ ] Deploy enqueue/drain with fake hook exits 0/99/1.
-- [ ] Inject validation failure; confirm rollback.
-- [ ] Access log enable + report if implemented.
-- [ ] Custom template select/return if implemented.
-- [ ] Corrupt state/env boundaries; reject before side effects.
+- [x] Bootstrap empty stack; `compose up` subset or `compose config` validation.
+- [x] Create two apps; assert homes/pools/sockets/domains separate on disk.
+- [x] PHP add second version; move one app; exec uses new version.
+- [x] Front-controller + legacy + proxy domains unique.
+- [x] TLS mode switch boot → external (files) without runner reload.
+- [x] MySQL create/refuse cross-service; password rotate isolation.
+- [x] Redis shared vs ACL (if redis up).
+- [x] Cron/worker config generation + scoped reload plan.
+- [x] Deploy enqueue/drain with fake hook exits 0/99/1.
+- [x] Inject validation failure; confirm rollback.
+- [x] Access log enable + report if implemented.
+- [x] Custom template select/return if implemented.
+- [x] Corrupt state/env boundaries; reject before side effects.
 
 ### F3. System scenarios checklist (manual or CI host)  **P0**
 
-Track the fourteen scenarios from contract §8. Mark when run on a disposable Linux host:
+Track the fourteen scenarios from contract §8. Automated proxies exist; mark **host run** when executed on a disposable Linux host with live data plane (see `scripts/system-scenarios.md`):
 
-1. [ ] Bootstrap; recreate containers without losing Redis/MySQL data
-2. [ ] Two apps same PHP version; isolation proof
-3. [ ] Second PHP version; migrate one app end-to-end
-4. [ ] Front-controller + legacy + reverse-proxy sites
-5. [ ] Boot TLS → real cert mode without disturbing PHP/workers
-6. [ ] DBs for two apps; refuse cross-MySQL; rotate one password
-7. [ ] Redis shared + ACL cross-app denial
-8. [ ] Schedules with locks/timeouts; independent worker restart
-9. [ ] Deploy valid/invalid/burst/FIFO/skip/fail/timeout; OPcache attempt
-10. [ ] Inject render/promote/validate/reload/dump/restore failures
-11. [ ] Access logs enable/rotate/report without runtime reload
-12. [ ] Custom vhost/pool; upstream drift; return to upstream
-13. [ ] Source + compiled amd64/arm64 parity smoke
-14. [ ] Corrupt each external boundary; reject before side effects
+1. [ ] Bootstrap; recreate containers without losing Redis/MySQL data — *proxy: F2 bootstrap + compose config*
+2. [ ] Two apps same PHP version; isolation proof — *proxy: F2 two-apps*
+3. [ ] Second PHP version; migrate one app end-to-end — *proxy: F2 PHP move*
+4. [ ] Front-controller + legacy + reverse-proxy sites — *proxy: F2 routing*
+5. [ ] Boot TLS → real cert mode without disturbing PHP/workers — *proxy: F2 TLS external*
+6. [ ] DBs for two apps; refuse cross-MySQL; rotate one password — *proxy: F2 MySQL + unit F1*
+7. [ ] Redis shared + ACL cross-app denial — *proxy: unit F-11; live ACL host residual*
+8. [ ] Schedules with locks/timeouts; independent worker restart — *proxy: F2 cron/worker*
+9. [ ] Deploy valid/invalid/burst/FIFO/skip/fail/timeout; OPcache — *proxy: unit deploy + F1*
+10. [ ] Inject render/promote/validate/reload/dump/restore failures — *proxy: Phase C + F2*
+11. [ ] Access logs enable/rotate/report without runtime reload — *proxy: F2 access logs*
+12. [ ] Custom vhost/pool; upstream drift; return to upstream — *proxy: F2 template*
+13. [ ] Source + compiled amd64/arm64 parity smoke — *proxy: `test:parity` + CI compile*
+14. [ ] Corrupt each external boundary; reject before side effects — *proxy: F2 corrupt boundaries*
 
 ### F4. CI / release gates  **P0** · product §6.12
 
-- [ ] CI: `fmt:check`, `lint`, `check`, `test`, `test:integration` (optional allow-skip), compile, binary smoke.
-- [ ] Fail on lockfile drift / unlock resolution.
-- [ ] Document exact Deno 2.9.x pin in README/release notes.
-- [ ] No required `-A` in documented operator path.
+- [x] CI: `fmt:check`, `lint`, `check`, `test`, `test:integration` (soft-skip), compile, binary smoke (`.github/workflows/ci.yml`).
+- [x] Fail on lockfile drift / unlock resolution (`deno install --frozen=true`).
+- [x] Document exact Deno 2.9.3 pin in README / `DENO_TARGET_VERSION`.
+- [x] No required `-A` in documented operator path (`deno.json` tasks use explicit allows).
 
 ---
 
@@ -312,7 +312,7 @@ Do in this order unless blocked:
 3. ~~**Phase C**~~ done  
 4. ~~**Phase D**~~ done  
 5. ~~**Phase E**~~ done  
-6. **Phase F** integration + system scenarios + CI gates  
+6. ~~**Phase F**~~ done (automated proof + CI; host scenarios residual in `scripts/system-scenarios.md`)  
 
 ---
 
@@ -338,8 +338,9 @@ Do in this order unless blocked:
 | Compose | `src/services/compose.ts`, `templates/compose/`, `templates/docker/` |
 | Assets | `src/platform/assets.ts`, `src/services/assets_materialize.ts` |
 | Templates | `templates/nginx/`, `templates/php/`, `templates/helpers/` |
-| Tests | `tests/unit/`, `tests/contract/`, `tests/integration/` (empty) |
-| Tooling | `deno.json`, `deno.lock`, `README.md` |
+| Tests | `tests/unit/`, `tests/contract/`, `tests/integration/` |
+| Tooling | `deno.json`, `deno.lock`, `README.md`, `.github/workflows/ci.yml` |
+| System scenarios | `scripts/system-scenarios.md` |
 
 ---
 
@@ -353,5 +354,6 @@ Do in this order unless blocked:
 | 2026-07-17 | phase C | Closed R-01–R-10 proof + C1 compose transactional safety. Added `candidateFactory`/`afterPromoteFile` test hooks; compose `config -q` validator (soft-skip when Docker down, fail-closed on real errors); fixed memory-lock TOCTOU so concurrent exclusive acquirers serialize. New `tests/unit/phase_c_test.ts` (17 cases). 95 unit/contract tests green. Residual: integration suite still empty; file-lock under real multi-process stress not in CI. |
 | 2026-07-17 | phase D | Distribution parity F-28/F-29/F-30. Digest-addressed asset cache (`.asset-cache/<digest>/` → publish `docker/`+`helpers/`); asset resolver notes for compile `--include=templates`; version banner kept accurate; `deno task test:parity` + `smoke:compiled`; contract suite `tests/contract/parity_test.ts` (source smoke always; binary smoke/parity when `BENTO_BIN`/`dist/bento`). README CI/release notes. Residual: cross-arch binary execution still release-host only (compile:amd64/arm64 produce artifacts). |
 | 2026-07-17 | phase E | Closed thin product edges E1–E8 (except optional live nginx integration). TLS: ACME challenge locations + per-site ssl snippets, external path/mode validation, boot redirect-off proof, DNS/certbot docs in README. PHP routing fixture for front-controller vs legacy. Deploy routes match helpers; disabled absent; interrupt reclaim + log prune. Permissions lstat walk never follows symlinks; check/dry-run/shallow/recursive documented. Status: roles, DB health soft-probe, compose files, config-ready notes, secret-redacted JSON. Schema migration chain + `loadAndMigrate` backup; no-op load does not rewrite. Compose `files` command + lexicographic overlay test. Module `tls.ts`, `schemas/migrations.ts`; tests `phase_e_test.ts` (11). 111 tests green. Residual: Phase F integration suite + system scenarios still open. |
+| 2026-07-17 | phase F | Closed acceptance proof F1–F4. F1: `phase_f_test.ts` (env/CLI tokens, docroot/legacy, MySQL/Redis matrix, cron/worker plans, deploy prune/interrupt, backup empty/restore namespace) + CLI smoke tls/permissions/backup-restore/legacy. F2: `tests/integration/` helpers + 14 stack tests (bootstrap/compose, two-app isolation, PHP move, routing+proxy, TLS external, MySQL rotate, Redis materialize, cron/worker, deploy surface, render restore, access logs, custom templates, corrupt boundaries, compose files). F3: `scripts/system-scenarios.md` maps 14 host scenarios to automated proxies; host-run boxes residual. F4: `.github/workflows/ci.yml` (fmt/lint/check/frozen lockfile/test/integration/compile/parity/cross-compile), README Deno 2.9.3 pin + no `-A`, `deno task ci`/`test:all`. 126 unit/contract + 14 integration green. Residual: live data-plane host scenarios 1–14 checkboxes; cross-arch binary execution on matching hosts. |
 
 When you complete a slice, append a row and check boxes above.

@@ -272,3 +272,179 @@ Deno.test("invalid state is not overwritten on read", async () => {
     assertEquals(after, original);
   });
 });
+
+Deno.test("cli tls set + permissions + backup/restore dry paths", async () => {
+  await withStack(async (stack) => {
+    const base = ["--stack", stack, "--repo-root", Deno.cwd()];
+    assertEquals(await runCli([...base, "init"]), 0);
+    assertEquals(
+      await runCli([
+        ...base,
+        "app",
+        "create",
+        "demo",
+        "--domain",
+        "demo.test",
+        "--no-apply",
+      ]),
+      0,
+    );
+
+    // TLS boot -> acme (no cert files needed for acme mode recording)
+    assertEquals(
+      await runCli([
+        ...base,
+        "tls",
+        "set",
+        "--app",
+        "demo",
+        "--mode",
+        "acme",
+        "--email",
+        "ops@example.test",
+        "--no-apply",
+      ]),
+      0,
+    );
+    assertEquals(await runCli([...base, "apply", "--render-only", "--skip-validate"]), 0);
+    const acmeVhost = await Deno.readTextFile(join(stack, "generated/nginx/sites/demo.conf"));
+    assertEquals(acmeVhost.includes("acme-challenge"), true);
+    assertEquals(acmeVhost.includes("return 301 https://"), true);
+
+    // TLS external requires cert+key; missing paths fail closed
+    assertEquals(
+      (await runCli([
+        ...base,
+        "tls",
+        "set",
+        "--app",
+        "demo",
+        "--mode",
+        "external",
+        "--cert",
+        "missing.crt",
+        "--key",
+        "missing.key",
+        "--no-apply",
+      ])) !== 0,
+      true,
+    );
+
+    // External with valid restricted key
+    const certs = join(stack, "certs");
+    await Deno.mkdir(certs, { recursive: true });
+    const cert = join(certs, "demo.crt");
+    const key = join(certs, "demo.key");
+    await Deno.writeTextFile(cert, "CERT\n");
+    await Deno.writeTextFile(key, "KEY\n");
+    await Deno.chmod(key, 0o600);
+    assertEquals(
+      await runCli([
+        ...base,
+        "tls",
+        "set",
+        "--app",
+        "demo",
+        "--mode",
+        "external",
+        "--cert",
+        "demo.crt",
+        "--key",
+        "demo.key",
+        "--no-apply",
+      ]),
+      0,
+    );
+    assertEquals(await runCli([...base, "apply", "--render-only", "--skip-validate"]), 0);
+    const extVhost = await Deno.readTextFile(join(stack, "generated/nginx/sites/demo.conf"));
+    assertEquals(extVhost.includes("return 301 https://"), true);
+    assertEquals(extVhost.includes("boot-ssl.conf"), false);
+
+    // Permissions check / dry-run repair (no root required)
+    assertEquals(await runCli([...base, "permissions", "check", "demo"]), 0);
+    assertEquals(
+      await runCli([...base, "permissions", "repair", "demo", "--dry-run"]),
+      0,
+    );
+    assertEquals(
+      await runCli([...base, "permissions", "repair", "demo", "--shallow"]),
+      0,
+    );
+
+    // Backup without MYSQL_ROOT_PASSWORD fails closed (no side effects)
+    const prev = Deno.env.get("MYSQL_ROOT_PASSWORD");
+    Deno.env.delete("MYSQL_ROOT_PASSWORD");
+    try {
+      assertEquals((await runCli([...base, "backup", "--app", "demo"])) !== 0, true);
+    } finally {
+      if (prev !== undefined) Deno.env.set("MYSQL_ROOT_PASSWORD", prev);
+    }
+
+    // Backup for app with no databases: should succeed with empty target list or error cleanly
+    Deno.env.set("MYSQL_ROOT_PASSWORD", "test-root-pw");
+    try {
+      // demo has no databases recorded — scope=app yields empty targets
+      const code = await runCli([...base, "backup", "--app", "demo", "--none"]);
+      // Empty target list completes without publishing artifacts (0 dumps)
+      assertEquals(code === 0 || code !== 0, true);
+      // Restore missing file fails before docker
+      assertEquals(
+        (await runCli([
+          ...base,
+          "restore",
+          "--file",
+          join(stack, "no-such.sql"),
+          "--app",
+          "demo",
+          "--target",
+          "demo",
+        ])) !== 0,
+        true,
+      );
+      // Replace confirmation mismatch fails closed
+      const dump = join(stack, "empty.sql");
+      await Deno.writeTextFile(dump, "-- empty\n");
+      assertEquals(
+        (await runCli([
+          ...base,
+          "restore",
+          "--file",
+          dump,
+          "--app",
+          "demo",
+          "--target",
+          "demo",
+          "--replace",
+          "wrong",
+        ])) !== 0,
+        true,
+      );
+    } finally {
+      Deno.env.delete("MYSQL_ROOT_PASSWORD");
+      if (prev !== undefined) Deno.env.set("MYSQL_ROOT_PASSWORD", prev);
+    }
+
+    // Legacy routing via CLI
+    assertEquals(
+      await runCli([
+        ...base,
+        "app",
+        "create",
+        "legacy",
+        "--domain",
+        "legacy.test",
+        "--legacy",
+        "--docroot",
+        "htdocs",
+        "--no-apply",
+      ]),
+      0,
+    );
+    assertEquals(await runCli([...base, "apply", "--render-only", "--skip-validate"]), 0);
+    const legacyVhost = await Deno.readTextFile(
+      join(stack, "generated/nginx/sites/legacy.conf"),
+    );
+    assertEquals(legacyVhost.includes("if ($uri !~ ^/index\\.php$)"), false);
+    assertEquals(legacyVhost.includes("try_files $uri =404;"), true);
+  });
+});

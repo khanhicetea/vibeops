@@ -14,21 +14,29 @@ This repository is a **Deno 2.9 / TypeScript** reimplementation of the Bento hos
 
 ## Requirements
 
-- Deno **2.9.x** (development / source mode)
+- Deno **2.9.3** (pinned 2.9.x line — see `src/version.ts` `DENO_TARGET_VERSION` and release notes)
 - Linux with Docker Engine + Docker Compose v2 (data plane)
 - No Python, Node.js, or `npm install` required to run the control plane (JSR/npm packages resolve through Deno + `deno.lock`)
+
+Install or switch the runtime with the official installer / package pin, for example:
+
+```bash
+curl -fsSL https://deno.land/install.sh | sh -s v2.9.3
+deno --version   # should report 2.9.3
+```
 
 ## Quick start (source mode)
 
 ```bash
 # pin/check runtime
-deno --version
+deno --version   # expect 2.9.x (CI uses 2.9.3)
 
 # format, lint, typecheck, test
 deno task fmt
 deno task lint
 deno task check
 deno task test
+deno task test:integration   # soft-skips Docker-only steps when daemon is down
 
 # initialize a stack root and render
 deno task run --stack ./my-stack init
@@ -75,7 +83,18 @@ deno task test:parity      # compile + require binary parity suite
 BENTO_BIN=$PWD/dist/bento deno task test
 ```
 
-Release CI should run `fmt:check`, `lint`, `check`, `test`, optional `test:integration`, `compile` / `compile:amd64` / `compile:arm64`, and `test:parity` (or an equivalent binary smoke against the built artifact). Pin Deno **2.9.x** for source and compile; do not document unrestricted `-A` as the operator path.
+Release CI (`.github/workflows/ci.yml`) runs:
+
+1. `fmt:check`, `lint`, `check`
+2. `deno install --frozen=true` (fail on lockfile / resolution drift)
+3. `deno task test` (unit + contract)
+4. `deno task test:integration` (soft-skips when Docker unavailable)
+5. `compile` + binary smoke (`init`/`render`/`status`) + `test:parity`
+6. `compile:amd64` and `compile:arm64` artifacts
+
+Pin Deno **2.9.3** for source and compile. Documented operator paths use the explicit permission set in `deno.json` tasks (`--allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys`). **Do not use unrestricted `-A` as the supported default.**
+
+Host-level system scenarios (contract §8 fourteen scenarios) are tracked in [`scripts/system-scenarios.md`](scripts/system-scenarios.md).
 
 ## Architecture (short)
 
@@ -138,7 +157,7 @@ Product, architecture, and reimplementation contract live in:
 2. [`specs/02-system-architecture.md`](specs/02-system-architecture.md)
 3. [`specs/03-reimplementation-contract.md`](specs/03-reimplementation-contract.md)
 
-Unit and contract tests cover state validation, domain uniqueness, render rollback, compose safety, deploy HMAC/queue policies, and CLI smoke flows.
+Unit, contract, and integration tests cover state validation, domain uniqueness, render rollback, compose safety, deploy HMAC/queue policies, CLI smoke flows, multi-app isolation, TLS/routing modes, and corrupt-boundary rejection (Phase F acceptance matrix).
 
 ## Project layout
 
@@ -152,8 +171,13 @@ src/
   commands/               # CLI router
   ui/                     # operator output + interactive TUI helpers
 templates/                # immutable nginx/php/helpers assets
-tests/                    # unit + contract suites
+tests/
+  unit/                   # domain + render + deploy unit suites
+  contract/               # CLI smoke + source/binary parity
+  integration/            # stack bootstrap / multi-app / boundary suite
+scripts/system-scenarios.md  # contract §8 host checklist
 specs/                    # product specifications
+.github/workflows/ci.yml  # release gates
 ```
 
 ## Security notes

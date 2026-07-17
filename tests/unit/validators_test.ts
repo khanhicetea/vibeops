@@ -71,3 +71,12 @@ Deno.test("corrupt JSON throws", () => {
 Deno.test("unwrap throws on error", () => {
   assertThrows(() => unwrap(parseAppSlug(""), "slug"), Error);
 });
+
+Deno.test("CLI token rejection: empty, uppercase slug, bad domain, shell cron", () => {
+  assertEquals(parseAppSlug("").ok, false);
+  assertEquals(parseAppSlug("Upper").ok, false);
+  assertEquals(parseDomainName("").ok, false);
+  assertEquals(parseDomainName("has space.com").ok, false);
+  assertEquals(parseSafeRelativePath("../escape").ok, false);
+  assertEquals(parseCronSchedule("* * * * *|rm").ok, false);
+});
