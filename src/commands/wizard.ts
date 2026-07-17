@@ -734,16 +734,61 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
           if (!app) continue;
           plan = buildMysqlShellPlan(ctx.platform, { kind: "app", app });
         }
+        ui.blank();
         ui.info(
-          "Shell plan (password never on host argv). Use scripted CLI for interactive attach:",
+          `Attaching MySQL shell to ${plan.service} as ${plan.user}${
+            plan.database ? ` · database=${plan.database}` : ""
+          }`,
         );
         ui.message(
-          action === "shell-root"
-            ? "bento mysql shell --root"
-            : `bento mysql shell --app ${plan.user.replace(/^app_/, "") || "<slug>"}`,
+          pcDim(
+            `scriptable: ${
+              action === "shell-root"
+                ? "bento mysql shell --root"
+                : `bento mysql shell --app ${plan.user.replace(/^app_/, "") || "<slug>"}`
+            }`,
+          ),
         );
-        ui.message(`stage: ${plan.stage.command.join(" ")}`);
-        ui.message(`open:  ${plan.open.command.join(" ")}`);
+        ui.message(pcDim("Exit the MySQL client to return to the wizard."));
+        ui.blank();
+
+        // Stage credentials through stdin, attach with inherited terminal I/O, and
+        // always remove the temporary option file when the client exits.
+        const staged = await ctx.platform.process.run(plan.stage.command, {
+          cwd: ctx.stackRoot,
+          stdin: plan.stage.stdin,
+          timeoutMs: 15_000,
+        });
+        if (staged.code !== 0) {
+          ui.error(
+            "Failed to stage MySQL credentials",
+            (staged.stderr || staged.stdout || "unknown error").trim(),
+          );
+        } else {
+          let exitCode = 1;
+          try {
+            const [cmd, ...args] = plan.open.command;
+            const child = new Deno.Command(cmd!, {
+              args,
+              cwd: ctx.stackRoot,
+              stdin: "inherit",
+              stdout: "inherit",
+              stderr: "inherit",
+            });
+            exitCode = (await child.output()).code;
+          } finally {
+            await ctx.platform.process.run(plan.cleanup.command, {
+              cwd: ctx.stackRoot,
+              timeoutMs: 10_000,
+            }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+          }
+          ui.blank();
+          if (exitCode === 0) {
+            ui.success("MySQL shell closed", plan.service);
+          } else {
+            ui.warn(`MySQL shell exited ${exitCode}`, plan.service);
+          }
+        }
       } catch (err) {
         handleError(ui, err);
       }
