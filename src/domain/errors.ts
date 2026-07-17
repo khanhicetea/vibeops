@@ -128,3 +128,22 @@ export function platformError(message: string, cause?: unknown): BentoError {
     recovery: "Check Docker, filesystem permissions, and Deno capability grants.",
   });
 }
+
+export function serviceError(
+  message: string,
+  recovery?: string,
+  cause?: unknown,
+): BentoError {
+  return new BentoError("SERVICE", message, {
+    recovery: recovery ??
+      "Ensure the target service is running and reachable, then retry.",
+    cause,
+  });
+}
+
+export function secretError(message: string, recovery?: string): BentoError {
+  return new BentoError("SECRET", message, {
+    recovery: recovery ??
+      "Set the required secret in the stack .env (mode 0600) and retry.",
+  });
+}

@@ -7,10 +7,16 @@ import { basename, join } from "@std/path";
 import type { AppState, DesiredState, ManagedMysqlVersion } from "../domain/state.ts";
 import { mysqlImage, mysqlServiceName } from "../domain/state.ts";
 import { asDatabaseName, asMysqlService, asMysqlVersion } from "../domain/types.ts";
-import { conflictError, notFoundError, safetyError, validationError } from "../domain/errors.ts";
+import {
+  conflictError,
+  notFoundError,
+  safetyError,
+  serviceError,
+  validationError,
+} from "../domain/errors.ts";
 import { compareMajorMinor, parseMysqlVersion, unwrap } from "../schemas/validators.ts";
 import type { Platform, RunResult } from "../platform/mod.ts";
-import { mysqlIdent, mysqlLikeEscape } from "./template.ts";
+import { mysqlIdent, mysqlLikeEscape, mysqlStringLiteral } from "./template.ts";
 
 export function addMysqlVersion(
   state: DesiredState,
@@ -78,25 +84,50 @@ export function createAppDatabase(
   };
 }
 
-/** SQL to ensure app user and grants (password passed via option file, not argv). */
-export function grantSql(app: AppState, dbName: string): string {
+/** SQL to ensure app user and grants for a specific database. */
+export function grantSql(app: AppState, dbName: string, password: string): string {
   const user = mysqlIdent(app.mysqlUser);
   const db = mysqlIdent(dbName);
-  // Escape wildcards in app name for namespace grants
   const like = mysqlLikeEscape(app.slug);
+  const pw = mysqlStringLiteral(password);
   return [
     `CREATE DATABASE IF NOT EXISTS ${db};`,
-    `CREATE USER IF NOT EXISTS ${user}@'%' IDENTIFIED BY @bento_app_password;`,
-    `ALTER USER ${user}@'%' IDENTIFIED BY @bento_app_password;`,
+    `CREATE USER IF NOT EXISTS ${user}@'%' IDENTIFIED BY ${pw};`,
+    `ALTER USER ${user}@'%' IDENTIFIED BY ${pw};`,
     `GRANT ALL PRIVILEGES ON ${db}.* TO ${user}@'%';`,
     `GRANT ALL PRIVILEGES ON \`${like}\\_%\`.* TO ${user}@'%';`,
     `FLUSH PRIVILEGES;`,
   ].join("\n");
 }
 
+/** Best-effort account setup without recording a database. */
+export function accountSetupSql(app: AppState, password: string): string {
+  const user = mysqlIdent(app.mysqlUser);
+  const slugDb = mysqlIdent(app.slug);
+  const like = mysqlLikeEscape(app.slug);
+  const pw = mysqlStringLiteral(password);
+  return [
+    `CREATE USER IF NOT EXISTS ${user}@'%' IDENTIFIED BY ${pw};`,
+    `ALTER USER ${user}@'%' IDENTIFIED BY ${pw};`,
+    `GRANT ALL PRIVILEGES ON ${slugDb}.* TO ${user}@'%';`,
+    `GRANT ALL PRIVILEGES ON \`${like}\\_%\`.* TO ${user}@'%';`,
+    `FLUSH PRIVILEGES;`,
+  ].join("\n");
+}
+
+/** SQL to rotate app user password only. */
+export function rotatePasswordSql(app: AppState, password: string): string {
+  const user = mysqlIdent(app.mysqlUser);
+  const pw = mysqlStringLiteral(password);
+  return [
+    `ALTER USER ${user}@'%' IDENTIFIED BY ${pw};`,
+    `FLUSH PRIVILEGES;`,
+  ].join("\n");
+}
+
 /**
  * Run SQL inside MySQL container using a protected option file staged via stdin.
- * Password never appears in host argv.
+ * Password never appears in host argv (only on the process stdin stream).
  */
 export async function execMysqlSql(
   platform: Platform,
@@ -104,24 +135,120 @@ export async function execMysqlSql(
   sql: string,
   password: string,
 ): Promise<RunResult> {
-  // Stage option file content through container stdin to a temp path, run, remove.
+  // Script reads option-file lines until __END_CNF__, then remaining stdin as SQL.
+  // The password is only present in stdin, never interpolated into argv.
   const script = [
     "set -e",
     "umask 077",
     "OPT=$(mktemp)",
-    `cat > "$OPT" <<'EOF'`,
+    "SQL=$(mktemp)",
+    'trap \'rm -f "$OPT" "$SQL"\' EXIT',
+    "while IFS= read -r line; do",
+    '  case "$line" in',
+    "    __END_CNF__) break ;;",
+    '    *) printf \'%s\\n\' "$line" >> "$OPT" ;;',
+    "  esac",
+    "done",
+    'cat > "$SQL"',
+    'mysql --defaults-extra-file="$OPT" < "$SQL"',
+  ].join("\n");
+
+  const stdin = [
     "[client]",
     "user=root",
     `password=${password.replace(/\n/g, "")}`,
-    "EOF",
-    `mysql --defaults-extra-file="$OPT" -e ${shellQuote(sql)}`,
-    'rm -f "$OPT"',
+    "__END_CNF__",
+    sql,
+    "",
   ].join("\n");
 
   return await platform.process.run(
     ["docker", "compose", "exec", "-T", service, "sh", "-c", script],
-    { cwd: platform.paths.paths.root, timeoutMs: 60_000 },
+    { cwd: platform.paths.paths.root, stdin, timeoutMs: 60_000 },
   );
+}
+
+/** True when the MySQL service container accepts compose exec. */
+export async function isMysqlReachable(
+  platform: Platform,
+  service: string,
+): Promise<boolean> {
+  try {
+    const result = await platform.process.run(
+      ["docker", "compose", "exec", "-T", service, "true"],
+      { cwd: platform.paths.paths.root, timeoutMs: 8_000 },
+    );
+    return result.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Apply CREATE DATABASE + grants for an app database.
+ * Throws SERVICE error on failure.
+ */
+export async function applyAppMysqlGrants(
+  platform: Platform,
+  app: AppState,
+  dbName: string,
+  rootPassword: string,
+): Promise<void> {
+  const sql = grantSql(app, dbName, app.mysqlPassword);
+  const result = await execMysqlSql(platform, app.mysqlService, sql, rootPassword);
+  if (result.code !== 0) {
+    throw serviceError(
+      `MySQL grant failed for database ${dbName} on ${app.mysqlService}: ${
+        (result.stderr || result.stdout || "unknown error").trim()
+      }`,
+      "Ensure the MySQL service is running and MYSQL_ROOT_PASSWORD matches the container, then retry `bento mysql db`.",
+    );
+  }
+}
+
+/**
+ * Best-effort MySQL account setup when the operator did not request a database.
+ * Returns true when applied, false when deferred (unreachable / failed).
+ */
+export async function tryBestEffortMysqlAccount(
+  platform: Platform,
+  app: AppState,
+  rootPassword: string | undefined,
+): Promise<boolean> {
+  if (!rootPassword) return false;
+  if (!(await isMysqlReachable(platform, app.mysqlService))) return false;
+  const sql = accountSetupSql(app, app.mysqlPassword);
+  const result = await execMysqlSql(platform, app.mysqlService, sql, rootPassword);
+  return result.code === 0;
+}
+
+/**
+ * Explicit database request path: require MySQL, apply grants, then return
+ * state with the database recorded. Fails before recording if MySQL is down.
+ */
+export async function createAppDatabaseLive(
+  platform: Platform,
+  state: DesiredState,
+  slug: string,
+  dbName: string,
+  rootPassword: string,
+): Promise<DesiredState> {
+  // Validate namespace / uniqueness first (pure).
+  const validated = createAppDatabase(
+    state,
+    slug,
+    dbName,
+    platform.clock.nowIso(),
+  );
+  const app = validated.apps[slug]!;
+  if (!(await isMysqlReachable(platform, app.mysqlService))) {
+    throw serviceError(
+      `MySQL service ${app.mysqlService} is unavailable; database ${dbName} was not recorded`,
+      "Start the stack MySQL service (e.g. `bento compose -- up -d`), confirm MYSQL_ROOT_PASSWORD, then retry `bento mysql db` or `bento app create --db`.",
+    );
+  }
+  await applyAppMysqlGrants(platform, app, dbName, rootPassword);
+  return validated;
 }
 
 export type BackupRequest = {
@@ -163,19 +290,41 @@ export async function runBackup(
       const partialPath = `${finalPath}.partial`;
 
       const dumpCmd = buildDumpCommand(t.service, t.database, compress);
-      // Stream to host partial file via docker exec
+      // Stream dump through stdin-staged option file so password is not on argv.
+      const script = [
+        "set -e",
+        "umask 077",
+        "OPT=$(mktemp)",
+        "trap 'rm -f \"$OPT\"' EXIT",
+        "while IFS= read -r line; do",
+        '  case "$line" in',
+        "    __END_CNF__) break ;;",
+        '    *) printf \'%s\\n\' "$line" >> "$OPT" ;;',
+        "  esac",
+        "done",
+        `mysqldump --defaults-extra-file="$OPT" --single-transaction --routines --triggers --databases ${
+          shellQuote(t.database)
+        }${compress === "gzip" ? " | gzip -c" : compress === "zstd" ? " | zstd -c" : ""}`,
+      ].join("\n");
+
+      const stdin = [
+        "[client]",
+        "user=root",
+        `password=${rootPassword.replace(/\n/g, "")}`,
+        "__END_CNF__",
+        "",
+      ].join("\n");
+
       const result = await platform.process.run(
-        ["docker", "compose", "exec", "-T", t.service, "sh", "-c", dumpCmd.shell],
+        ["docker", "compose", "exec", "-T", t.service, "sh", "-c", script],
         {
           cwd: platform.paths.paths.root,
-          env: {
-            MYSQL_PWD: rootPassword, // inside container env only via compose exec - not host argv list for mysql
-          },
+          stdin,
           timeoutMs: 30 * 60_000,
         },
       );
 
-      // Prefer writing stdout bytes as the dump stream
+      void dumpCmd;
       if (result.code !== 0) {
         await platform.fs.remove(partialPath).catch(() => {});
         throw new Error(`dump failed for ${t.database}: ${result.stderr || result.stdout}`);
@@ -209,7 +358,6 @@ function buildDumpCommand(
   database: string,
   compress: "zstd" | "gzip" | "none",
 ): { shell: string } {
-  // Use MYSQL_PWD inside container; not passed as mysql --password= on argv from host.
   const dump = `mysqldump --single-transaction --routines --triggers --databases ${
     shellQuote(database)
   }`;
@@ -330,28 +478,41 @@ export async function runRestore(
 
   await execMysqlSql(platform, app.mysqlService, createSql, rootPassword);
 
-  // Stream file into container mysql
+  // Stream file into container mysql via stdin-staged option file
   const bytes = await platform.fs.readBytes(file);
   const script = [
     "set -e",
     "umask 077",
     "OPT=$(mktemp)",
-    `cat > "$OPT" <<'EOF'`,
+    "DATA=$(mktemp)",
+    'trap \'rm -f "$OPT" "$DATA"\' EXIT',
+    "while IFS= read -r line; do",
+    '  case "$line" in',
+    "    __END_CNF__) break ;;",
+    '    *) printf \'%s\\n\' "$line" >> "$OPT" ;;',
+    "  esac",
+    "done",
+    'cat > "$DATA"',
+    `${decompress} < "$DATA" | mysql --defaults-extra-file="$OPT" ${shellQuote(dbName)}`,
+  ].join("\n");
+
+  const cnf = [
     "[client]",
     "user=root",
     `password=${rootPassword.replace(/\n/g, "")}`,
-    "EOF",
-    `${decompress} | mysql --defaults-extra-file="$OPT" ${shellQuote(dbName)}`,
-    'rm -f "$OPT"',
+    "__END_CNF__",
+    "",
   ].join("\n");
+  const stdin = new Uint8Array([
+    ...new TextEncoder().encode(cnf),
+    ...bytes,
+  ]);
 
-  // Feed backup bytes on stdin to decompress pipeline
-  // For simplicity when decompress is cat, pipe bytes; for compressed, write temp inside.
   const result = await platform.process.run(
     ["docker", "compose", "exec", "-T", app.mysqlService, "sh", "-c", script],
     {
       cwd: platform.paths.paths.root,
-      stdin: bytes,
+      stdin,
       timeoutMs: 60 * 60_000,
     },
   );
@@ -387,12 +548,276 @@ export function rotateAppPassword(
   };
 }
 
+/** Apply a rotated password to a live MySQL service when reachable. */
+export async function applyRotatedMysqlPassword(
+  platform: Platform,
+  app: AppState,
+  rootPassword: string | undefined,
+): Promise<boolean> {
+  if (!rootPassword) return false;
+  if (!(await isMysqlReachable(platform, app.mysqlService))) return false;
+  const result = await execMysqlSql(
+    platform,
+    app.mysqlService,
+    rotatePasswordSql(app, app.mysqlPassword),
+    rootPassword,
+  );
+  return result.code === 0;
+}
+
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 export function listMysqlVersions(state: DesiredState): ManagedMysqlVersion[] {
   return [...state.mysqlVersions].sort((a, b) => compareMajorMinor(a.version, b.version));
+}
+
+// ---------------------------------------------------------------------------
+// Interactive shells, size, processlist (product §6.5)
+// ---------------------------------------------------------------------------
+
+/** In-container path for a staged client option file (0600, removed after use). */
+export function mysqlClientOptionPath(token: string): string {
+  return `/tmp/bento-mysql-${token}.cnf`;
+}
+
+export type MysqlShellIdentity =
+  | { kind: "root"; service: string; password: string }
+  | { kind: "app"; app: AppState };
+
+export type MysqlShellPlan = {
+  service: string;
+  user: string;
+  database?: string;
+  /** Stage protected option file via stdin (password never on host argv). */
+  stage: { command: string[]; stdin: string };
+  /** Open mysql using the staged option file. */
+  open: { command: string[]; interactive: boolean };
+  /** Always remove the staged option file. */
+  cleanup: { command: string[] };
+  optionPath: string;
+};
+
+/**
+ * Plan a MySQL client session that stages a restricted option file in-container.
+ * Password is only present on stage stdin — never host argv.
+ */
+export function buildMysqlShellPlan(
+  platform: Platform,
+  identity: MysqlShellIdentity,
+  opts?: { database?: string; interactive?: boolean },
+): MysqlShellPlan {
+  const token = platform.random.hex(8);
+  const optionPath = mysqlClientOptionPath(token);
+  const interactive = opts?.interactive ?? true;
+
+  let service: string;
+  let user: string;
+  let password: string;
+  let database = opts?.database;
+
+  if (identity.kind === "root") {
+    service = identity.service;
+    user = "root";
+    password = identity.password;
+  } else {
+    service = identity.app.mysqlService;
+    user = identity.app.mysqlUser;
+    password = identity.app.mysqlPassword;
+    if (!database && identity.app.databases[0]) {
+      database = identity.app.databases[0].name;
+    }
+  }
+
+  const cnf = [
+    "[client]",
+    `user=${user}`,
+    `password=${password.replace(/\n/g, "")}`,
+    "",
+  ].join("\n");
+
+  const stageScript = [
+    "set -e",
+    "umask 077",
+    `cat > ${shellQuote(optionPath)}`,
+    `chmod 600 ${shellQuote(optionPath)}`,
+  ].join("\n");
+
+  const openArgs = [
+    "mysql",
+    `--defaults-extra-file=${optionPath}`,
+  ];
+  if (database) openArgs.push(database);
+
+  return {
+    service,
+    user,
+    database,
+    optionPath,
+    stage: {
+      command: ["docker", "compose", "exec", "-T", service, "sh", "-c", stageScript],
+      stdin: cnf,
+    },
+    open: {
+      command: interactive
+        ? ["docker", "compose", "exec", "-it", service, ...openArgs]
+        : ["docker", "compose", "exec", "-T", service, ...openArgs],
+      interactive,
+    },
+    cleanup: {
+      command: [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        service,
+        "rm",
+        "-f",
+        optionPath,
+      ],
+    },
+  };
+}
+
+/** Assert no secret material appears in shell plan argv. */
+export function assertShellPlanSecretsOffArgv(
+  plan: MysqlShellPlan,
+  secrets: string[],
+): void {
+  const argv = [
+    ...plan.stage.command,
+    ...plan.open.command,
+    ...plan.cleanup.command,
+  ].join(" ");
+  for (const secret of secrets) {
+    if (secret && argv.includes(secret)) {
+      throw serviceError("mysql shell plan leaked a secret onto host argv");
+    }
+  }
+}
+
+/** SQL to report managed database sizes (no secrets). */
+export function databaseSizeSql(databases: string[]): string {
+  if (databases.length === 0) {
+    return [
+      "SELECT table_schema AS db_name,",
+      "  ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb,",
+      "  COUNT(*) AS tables",
+      "FROM information_schema.tables",
+      "WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')",
+      "GROUP BY table_schema",
+      "ORDER BY size_mb DESC;",
+    ].join("\n");
+  }
+  const list = databases.map((d) => mysqlStringLiteral(d)).join(", ");
+  return [
+    "SELECT table_schema AS db_name,",
+    "  ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb,",
+    "  COUNT(*) AS tables",
+    "FROM information_schema.tables",
+    `WHERE table_schema IN (${list})`,
+    "GROUP BY table_schema",
+    "ORDER BY size_mb DESC;",
+  ].join("\n");
+}
+
+/** SQL for SHOW FULL PROCESSLIST (operator-safe; no credentials). */
+export function processlistSql(): string {
+  return "SHOW FULL PROCESSLIST;";
+}
+
+export type MysqlSizeRow = {
+  database: string;
+  sizeMb: string;
+  tables: string;
+};
+
+/**
+ * Query database sizes through a protected root option file (password on stdin only).
+ */
+export async function queryDatabaseSizes(
+  platform: Platform,
+  service: string,
+  rootPassword: string,
+  databases: string[] = [],
+): Promise<{ stdout: string; rows: MysqlSizeRow[] }> {
+  const sql = databaseSizeSql(databases);
+  // TSV header-less for easy parsing
+  const wrapped = [
+    "SELECT table_schema,",
+    "  IFNULL(ROUND(SUM(data_length + index_length) / 1024 / 1024, 2), 0),",
+    "  COUNT(*)",
+    "FROM information_schema.tables",
+    databases.length
+      ? `WHERE table_schema IN (${databases.map((d) => mysqlStringLiteral(d)).join(", ")})`
+      : "WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')",
+    "GROUP BY table_schema",
+    "ORDER BY 2 DESC;",
+  ].join("\n");
+  void sql;
+  const result = await execMysqlSql(platform, service, wrapped, rootPassword);
+  if (result.code !== 0) {
+    throw serviceError(
+      `MySQL size query failed on ${service}: ${
+        (result.stderr || result.stdout || "unknown").trim()
+      }`,
+      "Ensure the MySQL service is running and MYSQL_ROOT_PASSWORD matches the container.",
+    );
+  }
+  const rows: MysqlSizeRow[] = [];
+  for (const line of result.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split("\t");
+    if (parts.length < 3) continue;
+    rows.push({
+      database: parts[0] ?? "",
+      sizeMb: parts[1] ?? "0",
+      tables: parts[2] ?? "0",
+    });
+  }
+  return { stdout: result.stdout, rows };
+}
+
+/**
+ * Query processlist through a protected root option file (password on stdin only).
+ */
+export async function queryProcesslist(
+  platform: Platform,
+  service: string,
+  rootPassword: string,
+): Promise<{ stdout: string }> {
+  const result = await execMysqlSql(platform, service, processlistSql(), rootPassword);
+  if (result.code !== 0) {
+    throw serviceError(
+      `MySQL processlist failed on ${service}: ${
+        (result.stderr || result.stdout || "unknown").trim()
+      }`,
+      "Ensure the MySQL service is running and MYSQL_ROOT_PASSWORD matches the container.",
+    );
+  }
+  return { stdout: result.stdout };
+}
+
+/** Resolve which MySQL service(s) an operator request targets. */
+export function resolveMysqlServices(
+  state: DesiredState,
+  opts?: { service?: string; app?: string },
+): string[] {
+  if (opts?.service) {
+    const found = state.mysqlVersions.find(
+      (v) => v.service === opts.service || v.version === opts.service,
+    );
+    if (!found) throw notFoundError(`MySQL service not found: ${opts.service}`);
+    return [found.service];
+  }
+  if (opts?.app) {
+    const app = state.apps[opts.app];
+    if (!app) throw notFoundError(`app not found: ${opts.app}`);
+    return [app.mysqlService];
+  }
+  return state.mysqlVersions.map((v) => v.service);
 }
 
 // silence unused

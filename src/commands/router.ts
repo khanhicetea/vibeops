@@ -9,17 +9,29 @@ import { isBentoError } from "../domain/errors.ts";
 import { BENTO_VERSION, DENO_TARGET_VERSION, versionBanner } from "../version.ts";
 import { describeReloadPlan } from "../domain/reload.ts";
 import { type CliContext, contextFromArgv, defaultStackRoot } from "./context.ts";
-import { capacityWarnings, materializeAppHome, provisionApp } from "../services/app.ts";
+import {
+  applyAppDataPlane,
+  capacityWarnings,
+  materializeAppHome,
+  provisionApp,
+} from "../services/app.ts";
 import { addPhpVersion, buildCliExec, listPhpVersions, removePhpVersion } from "../services/php.ts";
 import {
   addMysqlVersion,
-  createAppDatabase,
+  applyRotatedMysqlPassword,
+  assertShellPlanSecretsOffArgv,
+  buildMysqlShellPlan,
+  createAppDatabaseLive,
   listMysqlVersions,
+  queryDatabaseSizes,
+  queryProcesslist,
   removeMysqlVersion,
+  resolveMysqlServices,
   rotateAppPassword,
   runBackup,
   runRestore,
 } from "../services/mysql.ts";
+import { loadRedisPassword, requireMysqlRootPassword } from "../services/stack_env.ts";
 import { createProxy } from "../services/proxy.ts";
 import {
   deployWebhookInstructions,
@@ -30,7 +42,29 @@ import {
   rotateDeploySecret,
 } from "../services/deploy.ts";
 import { addCronJob, listCronJobs, removeCronJob } from "../services/cron.ts";
-import { addWorker, listWorkers, removeWorker } from "../services/worker.ts";
+import {
+  addWorker,
+  buildWorkerControlPlan,
+  controlWorker,
+  inspectWorker,
+  listWorkers,
+  removeWorker,
+  type WorkerControlAction,
+} from "../services/worker.ts";
+import {
+  generateAccessReport,
+  isNginxOnlyReloadPlan,
+  rotateAccessLog,
+  setAppAccessLog,
+} from "../services/access_log.ts";
+import {
+  detectTemplateDrift,
+  formatDriftWarnings,
+  returnToUpstreamTemplate,
+  selectCustomTemplate,
+  type TemplateKind,
+} from "../services/customization.ts";
+import { registerHostMaintenance, runStackMaintenance } from "../services/maintenance.ts";
 import { buildStatus, formatStatus } from "../services/status.ts";
 import { checkPermissions, formatPermReport, repairPermissions } from "../services/permissions.ts";
 import { assertSafeComposeArgs, composeArgs } from "../services/compose.ts";
@@ -50,6 +84,18 @@ class EarlyExit extends Error {
 }
 
 type AnyArgv = Record<string, unknown> & { _: Array<string | number> };
+
+function wantsNoApply(argv: AnyArgv): boolean {
+  return argv["no-apply"] === true || argv.noApply === true;
+}
+
+function noApplyOption(y: YargsBuilder): YargsBuilder {
+  return y.option("no-apply", {
+    type: "boolean",
+    default: false,
+    describe: "Mutate desired state only; skip render/apply (use `bento apply` later)",
+  });
+}
 
 /** Drop command-path tokens from argv._ to recover passthrough args (after --). */
 function trailing(argv: AnyArgv, drop: number): string[] {
@@ -90,7 +136,7 @@ function printVersion(): void {
 function withGlobals<T>(y: Argv<T>): Argv<T> {
   return y
     .option("stack", {
-      alias: "root",
+      // Note: do not alias as --root; that flag is reserved for `mysql shell --root`.
       type: "string",
       default: defaultStackRoot(),
       describe: "Stack root (mutable state); env BENTO_STACK_ROOT",
@@ -187,6 +233,11 @@ function buildParser(state: RunState) {
             type: "boolean",
             default: false,
             describe: "Skip config validators before reload",
+          })
+          .option("preview", {
+            type: "boolean",
+            default: false,
+            describe: "Show pending reload plan without applying",
           }),
       bind(state, cmdApply),
     )
@@ -299,13 +350,19 @@ function buildParser(state: RunState) {
         .command(
           "add <version>",
           "Add a PHP version (fpm+runner+cli)",
-          (y2: YargsBuilder) => y2.positional("version", { type: "string", demandOption: true }),
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2.positional("version", { type: "string", demandOption: true }),
+            ),
           bind(state, cmdPhpAdd),
         )
         .command(
           "remove <version>",
           "Remove an unused non-default PHP version",
-          (y2: YargsBuilder) => y2.positional("version", { type: "string", demandOption: true }),
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2.positional("version", { type: "string", demandOption: true }),
+            ),
           bind(state, cmdPhpRemove),
         )
         .demandCommand(1, "Specify a php subcommand: add|remove|list")
@@ -321,7 +378,10 @@ function buildParser(state: RunState) {
         .command(
           "add <version>",
           "Add a MySQL version service",
-          (y2: YargsBuilder) => y2.positional("version", { type: "string", demandOption: true }),
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2.positional("version", { type: "string", demandOption: true }),
+            ),
           bind(state, cmdMysqlAdd),
         )
         .command(
@@ -345,7 +405,64 @@ function buildParser(state: RunState) {
           (y2: YargsBuilder) => y2.positional("app", { type: "string", demandOption: true }),
           bind(state, cmdMysqlPassword),
         )
-        .demandCommand(1, "Specify a mysql subcommand: add|list|db|password")
+        .command(
+          "shell",
+          "Open MySQL shell (password staged via stdin; never host argv)",
+          (y2: YargsBuilder) =>
+            y2
+              .option("root", {
+                type: "boolean",
+                default: false,
+                describe: "Connect as MySQL root",
+              })
+              .option("app", {
+                type: "string",
+                describe: "Connect as app MySQL user",
+              })
+              .option("service", {
+                type: "string",
+                describe: "MySQL service/version (root mode)",
+              })
+              .option("database", {
+                type: "string",
+                describe: "Default database",
+              })
+              .option("print", {
+                type: "boolean",
+                default: false,
+                describe: "Print planned argv (secrets redacted) instead of opening",
+              }),
+          bind(state, cmdMysqlShell),
+        )
+        .command(
+          "size",
+          "Show database sizes (no secrets)",
+          (y2: YargsBuilder) =>
+            y2
+              .option("app", { type: "string", describe: "Limit to one app's databases" })
+              .option("service", {
+                type: "string",
+                describe: "MySQL service/version",
+              }),
+          bind(state, cmdMysqlSize),
+        )
+        .command(
+          "processlist",
+          "Show active MySQL processes (no secrets)",
+          (y2: YargsBuilder) =>
+            y2.option("service", {
+              type: "string",
+              describe: "MySQL service/version",
+            }).option("app", {
+              type: "string",
+              describe: "Resolve service from app",
+            }),
+          bind(state, cmdMysqlProcesslist),
+        )
+        .demandCommand(
+          1,
+          "Specify a mysql subcommand: add|list|db|password|shell|size|processlist",
+        )
         .recommendCommands())
     .command("proxy", "Reverse-proxy sites", (y: YargsBuilder) =>
       y
@@ -359,22 +476,24 @@ function buildParser(state: RunState) {
           "create <name>",
           "Create a reverse-proxy site",
           (y2: YargsBuilder) =>
-            y2
-              .positional("name", { type: "string", demandOption: true })
-              .option("domain", {
-                type: "string",
-                demandOption: true,
-                describe: "Primary domain",
-              })
-              .option("upstream", {
-                type: "string",
-                demandOption: true,
-                describe: "Upstream URL (e.g. http://127.0.0.1:3000)",
-              })
-              .option("alias", {
-                type: "string",
-                describe: "Comma-separated domain aliases",
-              }),
+            noApplyOption(
+              y2
+                .positional("name", { type: "string", demandOption: true })
+                .option("domain", {
+                  type: "string",
+                  demandOption: true,
+                  describe: "Primary domain",
+                })
+                .option("upstream", {
+                  type: "string",
+                  demandOption: true,
+                  describe: "Upstream URL (e.g. http://127.0.0.1:3000)",
+                })
+                .option("alias", {
+                  type: "string",
+                  describe: "Comma-separated domain aliases",
+                }),
+            ),
           bind(state, cmdProxyCreate),
         )
         .demandCommand(1, "Specify a proxy subcommand: create|list")
@@ -385,25 +504,33 @@ function buildParser(state: RunState) {
           "enable <app>",
           "Enable webhook deploy for an app",
           (y2: YargsBuilder) =>
-            y2
-              .positional("app", { type: "string", demandOption: true })
-              .option("fifo", {
-                type: "boolean",
-                default: false,
-                describe: "Use FIFO queue policy (default: latest)",
-              }),
+            noApplyOption(
+              y2
+                .positional("app", { type: "string", demandOption: true })
+                .option("fifo", {
+                  type: "boolean",
+                  default: false,
+                  describe: "Use FIFO queue policy (default: latest)",
+                }),
+            ),
           bind(state, cmdDeployEnable),
         )
         .command(
           "disable <app>",
           "Disable webhook deploy",
-          (y2: YargsBuilder) => y2.positional("app", { type: "string", demandOption: true }),
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2.positional("app", { type: "string", demandOption: true }),
+            ),
           bind(state, cmdDeployDisable),
         )
         .command(
           "rotate <app>",
           "Rotate deploy HMAC secret (printed once)",
-          (y2: YargsBuilder) => y2.positional("app", { type: "string", demandOption: true }),
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2.positional("app", { type: "string", demandOption: true }),
+            ),
           bind(state, cmdDeployRotate),
         )
         .command(
@@ -447,30 +574,34 @@ function buildParser(state: RunState) {
           "add",
           "Add a cron job (command after --)",
           (y2: YargsBuilder) =>
-            y2
-              .option("app", { type: "string", demandOption: true })
-              .option("name", { type: "string", demandOption: true })
-              .option("schedule", {
-                type: "string",
-                demandOption: true,
-                describe: "Cron expression",
-              })
-              .option("timezone", { type: "string" })
-              .option("lock", { type: "string" })
-              .option("timeout", { type: "number", describe: "Timeout seconds" })
-              .option("cmd", {
-                type: "string",
-                describe: "Command string (prefer -- argv form)",
-              }),
+            noApplyOption(
+              y2
+                .option("app", { type: "string", demandOption: true })
+                .option("name", { type: "string", demandOption: true })
+                .option("schedule", {
+                  type: "string",
+                  demandOption: true,
+                  describe: "Cron expression",
+                })
+                .option("timezone", { type: "string" })
+                .option("lock", { type: "string" })
+                .option("timeout", { type: "number", describe: "Timeout seconds" })
+                .option("cmd", {
+                  type: "string",
+                  describe: "Command string (prefer -- argv form)",
+                }),
+            ),
           bind(state, cmdCronAdd),
         )
         .command(
           "remove <app> <name>",
           "Remove a cron job",
           (y2: YargsBuilder) =>
-            y2
-              .positional("app", { type: "string", demandOption: true })
-              .positional("name", { type: "string", demandOption: true }),
+            noApplyOption(
+              y2
+                .positional("app", { type: "string", demandOption: true })
+                .positional("name", { type: "string", demandOption: true }),
+            ),
           bind(state, cmdCronRemove),
         )
         .demandCommand(1, "Specify a cron subcommand: add|remove|list")
@@ -487,25 +618,68 @@ function buildParser(state: RunState) {
           "add",
           "Add a worker (command after --)",
           (y2: YargsBuilder) =>
-            y2
-              .option("app", { type: "string", demandOption: true })
-              .option("name", { type: "string", demandOption: true })
-              .option("cmd", {
-                type: "string",
-                describe: "Command string (prefer -- argv form)",
-              }),
+            noApplyOption(
+              y2
+                .option("app", { type: "string", demandOption: true })
+                .option("name", { type: "string", demandOption: true })
+                .option("cmd", {
+                  type: "string",
+                  describe: "Command string (prefer -- argv form)",
+                }),
+            ),
           bind(state, cmdWorkerAdd),
         )
         .command(
           "remove <app> <name>",
           "Remove a worker",
           (y2: YargsBuilder) =>
+            noApplyOption(
+              y2
+                .positional("app", { type: "string", demandOption: true })
+                .positional("name", { type: "string", demandOption: true }),
+            ),
+          bind(state, cmdWorkerRemove),
+        )
+        .command(
+          "start <app> <name>",
+          "Start one worker (scoped supervisorctl)",
+          (y2: YargsBuilder) =>
             y2
               .positional("app", { type: "string", demandOption: true })
               .positional("name", { type: "string", demandOption: true }),
-          bind(state, cmdWorkerRemove),
+          bind(state, cmdWorkerStart),
         )
-        .demandCommand(1, "Specify a worker subcommand: add|remove|list")
+        .command(
+          "stop <app> <name>",
+          "Stop one worker (scoped supervisorctl)",
+          (y2: YargsBuilder) =>
+            y2
+              .positional("app", { type: "string", demandOption: true })
+              .positional("name", { type: "string", demandOption: true }),
+          bind(state, cmdWorkerStop),
+        )
+        .command(
+          "restart <app> <name>",
+          "Restart one worker (scoped supervisorctl)",
+          (y2: YargsBuilder) =>
+            y2
+              .positional("app", { type: "string", demandOption: true })
+              .positional("name", { type: "string", demandOption: true }),
+          bind(state, cmdWorkerRestart),
+        )
+        .command(
+          "inspect <app> <name>",
+          "Inspect one worker (supervisor status)",
+          (y2: YargsBuilder) =>
+            y2
+              .positional("app", { type: "string", demandOption: true })
+              .positional("name", { type: "string", demandOption: true }),
+          bind(state, cmdWorkerInspect),
+        )
+        .demandCommand(
+          1,
+          "Specify a worker subcommand: add|remove|list|start|stop|restart|inspect",
+        )
         .recommendCommands())
     .command(
       "exec <app>",
@@ -600,20 +774,162 @@ function buildParser(state: RunState) {
           "set",
           "Set TLS mode for app or proxy",
           (y2: YargsBuilder) =>
-            y2
-              .option("app", { type: "string", describe: "App slug" })
-              .option("proxy", { type: "string", describe: "Proxy name" })
-              .option("mode", {
-                type: "string",
-                demandOption: true,
-                choices: ["boot", "acme", "external"] as const,
-              })
-              .option("email", { type: "string", describe: "ACME contact email" })
-              .option("cert", { type: "string", describe: "External certificate path" })
-              .option("key", { type: "string", describe: "External private key path" }),
+            noApplyOption(
+              y2
+                .option("app", { type: "string", describe: "App slug" })
+                .option("proxy", { type: "string", describe: "Proxy name" })
+                .option("mode", {
+                  type: "string",
+                  demandOption: true,
+                  choices: ["boot", "acme", "external"] as const,
+                })
+                .option("email", { type: "string", describe: "ACME contact email" })
+                .option("cert", { type: "string", describe: "External certificate path" })
+                .option("key", { type: "string", describe: "External private key path" }),
+            ),
           bind(state, cmdTlsSet),
         )
         .demandCommand(1, "Specify a tls subcommand: set")
+        .recommendCommands())
+    .command("logs", "Access log control and reports", (y: YargsBuilder) =>
+      y
+        .command(
+          "access",
+          "Per-app access logs (enable|disable|rotate|report)",
+          (y2: YargsBuilder) =>
+            y2
+              .command(
+                "enable",
+                "Enable access logs for an app (nginx-only reload)",
+                (y3: YargsBuilder) =>
+                  noApplyOption(
+                    y3.option("app", { type: "string", demandOption: true }),
+                  ),
+                bind(state, cmdLogsAccessEnable),
+              )
+              .command(
+                "disable",
+                "Disable access logs (preserves existing files)",
+                (y3: YargsBuilder) =>
+                  noApplyOption(
+                    y3.option("app", { type: "string", demandOption: true }),
+                  ),
+                bind(state, cmdLogsAccessDisable),
+              )
+              .command(
+                "rotate",
+                "Rotate access log and reopen nginx (not config reload)",
+                (y3: YargsBuilder) => y3.option("app", { type: "string", demandOption: true }),
+                bind(state, cmdLogsAccessRotate),
+              )
+              .command(
+                "report",
+                "One-shot GoAccess HTML report",
+                (y3: YargsBuilder) =>
+                  y3
+                    .option("app", { type: "string", demandOption: true })
+                    .option("output", { type: "string", describe: "Report HTML path" })
+                    .option("dry-run", {
+                      type: "boolean",
+                      default: false,
+                      describe: "Print planned docker run argv",
+                    }),
+                bind(state, cmdLogsAccessReport),
+              )
+              .demandCommand(1, "Specify: enable|disable|rotate|report")
+              .recommendCommands(),
+          () => {
+            /* nested */
+          },
+        )
+        .demandCommand(1, "Specify a logs subcommand: access")
+        .recommendCommands())
+    .command("template", "App vhost/pool template customization", (y: YargsBuilder) =>
+      y
+        .command(
+          "select",
+          "Activate a custom vhost or pool template",
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2
+                .option("app", { type: "string", demandOption: true })
+                .option("kind", {
+                  type: "string",
+                  demandOption: true,
+                  choices: ["vhost", "pool"] as const,
+                })
+                .option("source", {
+                  type: "string",
+                  demandOption: true,
+                  describe: "Path to operator-owned template source",
+                })
+                .option("no-copy", {
+                  type: "boolean",
+                  default: false,
+                  describe: "Record source path in-place (do not copy into custom/)",
+                }),
+            ),
+          bind(state, cmdTemplateSelect),
+        )
+        .command(
+          "return",
+          "Return to upstream template (keeps custom source on disk)",
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2
+                .option("app", { type: "string", demandOption: true })
+                .option("kind", {
+                  type: "string",
+                  demandOption: true,
+                  choices: ["vhost", "pool"] as const,
+                }),
+            ),
+          bind(state, cmdTemplateReturn),
+        )
+        .command(
+          "drift",
+          "Report upstream template drift for custom apps",
+          (y2: YargsBuilder) => y2.option("app", { type: "string" }),
+          bind(state, cmdTemplateDrift),
+        )
+        .demandCommand(1, "Specify a template subcommand: select|return|drift")
+        .recommendCommands())
+    .command("maintenance", "Host/stack maintenance", (y: YargsBuilder) =>
+      y
+        .command(
+          "run",
+          "On-demand log retention (in-runner logrotate is separate)",
+          (y2: YargsBuilder) =>
+            y2.option("retain-days", {
+              type: "number",
+              default: 14,
+              describe: "Delete rotated logs older than N days",
+            }),
+          bind(state, cmdMaintenanceRun),
+        )
+        .command(
+          "register",
+          "Register host cron entry (preserves unrelated crontab lines)",
+          (y2: YargsBuilder) =>
+            y2
+              .option("schedule", {
+                type: "string",
+                default: "15 3 * * *",
+                describe: "Cron schedule",
+              })
+              .option("bin", {
+                type: "string",
+                describe: "bento executable path (default: bento on PATH)",
+              }),
+          bind(state, cmdMaintenanceRegister),
+        )
+        .command(
+          "unregister",
+          "Remove host cron entry (preserves unrelated crontab lines)",
+          () => {},
+          bind(state, cmdMaintenanceUnregister),
+        )
+        .demandCommand(1, "Specify a maintenance subcommand: run|register|unregister")
         .recommendCommands())
     .demandCommand(1, "Specify a command")
     .recommendCommands();
@@ -705,7 +1021,33 @@ async function cmdRender(_argv: AnyArgv, ctx: CliContext): Promise<number> {
 async function cmdApply(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const renderOnly = argv["render-only"] === true || argv.renderOnly === true;
   const skipValidate = argv["skip-validate"] === true || argv.skipValidate === true;
+  const preview = argv.preview === true;
   const state = await ctx.store.load();
+
+  // Surface template drift on apply/preview (F-24).
+  const drifts = await detectTemplateDrift(ctx.platform, state);
+  for (const w of formatDriftWarnings(drifts)) ctx.log.warn(w);
+
+  if (preview) {
+    const candidate = await ctx.render.renderCandidate(state);
+    const plan = describeReloadPlan(candidate.reloadPlan);
+    ctx.log.info(`preview: ${candidate.files.length} files; reload=${plan.join(",")}`);
+    if (ctx.json) {
+      ctx.log.out(JSON.stringify(
+        {
+          files: candidate.managedManifest,
+          reloadPlan: plan,
+          driftWarnings: formatDriftWarnings(drifts),
+        },
+        null,
+        2,
+      ));
+    } else {
+      ctx.log.out(plan.map((p) => `  - ${p}`).join("\n"));
+    }
+    return 0;
+  }
+
   const result = await ctx.render.apply(state, { renderOnly, skipValidate });
   ctx.log.info(
     `applied ${result.files.length} files; reload=${
@@ -784,8 +1126,9 @@ async function cmdAppCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
     return 2;
   }
   const aliases = argv.alias ? String(argv.alias).split(",").filter(Boolean) : [];
-  const noApply = argv["no-apply"] === true || argv.noApply === true;
+  const noApply = wantsNoApply(argv);
   const skipValidate = argv["skip-validate"] === true || argv.skipValidate === true;
+  const explicitDb = argv.db === true;
   const result = await ctx.store.withExclusive(async (state) => {
     const provisioned = provisionApp(ctx.platform, state, {
       slug,
@@ -800,11 +1143,19 @@ async function cmdAppCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
       phpVersion: argv.php ? String(argv.php) : undefined,
       fpmProfile: argv.fpm ? String(argv.fpm) : undefined,
       mysqlVersion: argv.mysql ? String(argv.mysql) : undefined,
-      createDatabase: argv.db === true,
+      createDatabase: explicitDb,
       databaseName: argv.database ? String(argv.database) : undefined,
       accessLog: argv["access-log"] === true || argv.accessLog === true,
     });
-    await materializeAppHome(ctx.platform, provisioned.app, true);
+    // Live MySQL/Redis side effects before recording state (explicit --db fails closed).
+    const plane = await applyAppDataPlane(ctx.platform, provisioned.app, {
+      explicitDatabase: explicitDb,
+    });
+    const redisShared = await loadRedisPassword(ctx.platform);
+    await materializeAppHome(ctx.platform, provisioned.app, {
+      recursivePerms: true,
+      redisSharedPassword: redisShared,
+    });
     await ctx.store.save(provisioned.state);
     if (!noApply) {
       await ctx.render.apply(provisioned.state, {
@@ -813,14 +1164,15 @@ async function cmdAppCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
         alreadyLocked: true,
       });
     }
-    return provisioned;
+    return { provisioned, plane };
   });
   ctx.log.info(
     `${
-      result.created ? "created" : "updated"
-    } app ${result.app.slug} uid=${result.app.uid} domain=${result.app.mainDomain}`,
+      result.provisioned.created ? "created" : "updated"
+    } app ${result.provisioned.app.slug} uid=${result.provisioned.app.uid} domain=${result.provisioned.app.mainDomain}`,
   );
-  for (const w of capacityWarnings(result.state)) ctx.log.warn(w);
+  for (const note of result.plane.deferredNotes) ctx.log.warn(note);
+  for (const w of capacityWarnings(result.provisioned.state)) ctx.log.warn(w);
   return 0;
 }
 
@@ -843,13 +1195,20 @@ async function cmdPhpAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
     ctx.log.error("usage: bento php add <version>");
     return 2;
   }
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const next = addPhpVersion(state, version);
     await ctx.store.save(next);
-    await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+    if (!noApply) {
+      await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+    }
     return next;
   });
-  ctx.log.info(`added PHP ${version} (fpm+runner+cli roles)`);
+  ctx.log.info(
+    noApply
+      ? `added PHP ${version} (state only; run bento apply)`
+      : `added PHP ${version} (fpm+runner+cli roles)`,
+  );
   return 0;
 }
 
@@ -859,13 +1218,18 @@ async function cmdPhpRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
     ctx.log.error("usage: bento php remove <version>");
     return 2;
   }
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const next = removePhpVersion(state, version);
     await ctx.store.save(next);
-    await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+    if (!noApply) {
+      await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+    }
     return next;
   });
-  ctx.log.info(`removed PHP ${version}`);
+  ctx.log.info(
+    noApply ? `removed PHP ${version} (state only; run bento apply)` : `removed PHP ${version}`,
+  );
   return 0;
 }
 
@@ -887,13 +1251,18 @@ async function cmdMysqlAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
     ctx.log.error("usage: bento mysql add <version>");
     return 2;
   }
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const next = addMysqlVersion(state, version);
     await ctx.store.save(next);
-    await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+    if (!noApply) {
+      await ctx.render.apply(next, { skipValidate: true, alreadyLocked: true });
+    }
     return next;
   });
-  ctx.log.info(`added MySQL ${version}`);
+  ctx.log.info(
+    noApply ? `added MySQL ${version} (state only; run bento apply)` : `added MySQL ${version}`,
+  );
   return 0;
 }
 
@@ -910,11 +1279,25 @@ async function cmdMysqlDb(argv: AnyArgv, ctx: CliContext): Promise<number> {
     return 2;
   }
   await ctx.store.withExclusive(async (state) => {
-    const next = createAppDatabase(state, slug, dbName, ctx.platform.clock.nowIso());
+    const rootPassword = await requireMysqlRootPassword(ctx.platform);
+    // Fail before recording when MySQL is unavailable or grants fail.
+    const next = await createAppDatabaseLive(
+      ctx.platform,
+      state,
+      slug,
+      dbName,
+      rootPassword,
+    );
+    const app = next.apps[slug]!;
+    const redisShared = await loadRedisPassword(ctx.platform);
+    await materializeAppHome(ctx.platform, app, {
+      recursivePerms: false,
+      redisSharedPassword: redisShared,
+    });
     await ctx.store.save(next);
     return next;
   });
-  ctx.log.info(`recorded database ${dbName} for app ${slug}`);
+  ctx.log.info(`created database ${dbName} for app ${slug}`);
   return 0;
 }
 
@@ -926,11 +1309,170 @@ async function cmdMysqlPassword(argv: AnyArgv, ctx: CliContext): Promise<number>
   }
   const result = await ctx.store.withExclusive(async (state) => {
     const rotated = rotateAppPassword(ctx.platform, state, slug);
+    const app = rotated.state.apps[slug]!;
+    const rootPassword = await requireMysqlRootPassword(ctx.platform).catch(() => undefined);
+    const applied = await applyRotatedMysqlPassword(
+      ctx.platform,
+      app,
+      rootPassword,
+    );
+    const redisShared = await loadRedisPassword(ctx.platform);
+    await materializeAppHome(ctx.platform, app, {
+      recursivePerms: false,
+      redisSharedPassword: redisShared,
+    });
     await ctx.store.save(rotated.state);
-    return rotated;
+    return { ...rotated, applied };
   });
+  // Password is intentionally printed once for the operator (not status/list).
   ctx.log.out(result.password);
-  ctx.log.info(`rotated MySQL password for ${slug} (shown once above)`);
+  ctx.log.info(
+    result.applied
+      ? `rotated MySQL password for ${slug} (shown once above; applied to live MySQL)`
+      : `rotated MySQL password for ${slug} (shown once above; live MySQL apply deferred — retry when MySQL is up)`,
+  );
+  return 0;
+}
+
+async function cmdMysqlShell(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const asRoot = argv.root === true;
+  const appSlug = argv.app ? String(argv.app) : "";
+  if (asRoot === Boolean(appSlug)) {
+    ctx.log.error("usage: bento mysql shell --root [--service mysql84] | --app <slug>");
+    return 2;
+  }
+  const state = await ctx.store.load();
+  const database = argv.database ? String(argv.database) : undefined;
+  const printOnly = argv.print === true;
+
+  let plan;
+  if (asRoot) {
+    const services = resolveMysqlServices(state, {
+      service: argv.service ? String(argv.service) : undefined,
+    });
+    const service = services[0];
+    if (!service) {
+      ctx.log.error("no MySQL service managed");
+      return 3;
+    }
+    const password = await requireMysqlRootPassword(ctx.platform);
+    plan = buildMysqlShellPlan(ctx.platform, { kind: "root", service, password }, {
+      database,
+      interactive: !printOnly,
+    });
+    assertShellPlanSecretsOffArgv(plan, [password]);
+  } else {
+    const app = state.apps[appSlug];
+    if (!app) {
+      ctx.log.error(`app not found: ${appSlug}`);
+      return 3;
+    }
+    plan = buildMysqlShellPlan(ctx.platform, { kind: "app", app }, {
+      database,
+      interactive: !printOnly,
+    });
+    assertShellPlanSecretsOffArgv(plan, [app.mysqlPassword]);
+  }
+
+  if (printOnly) {
+    if (ctx.json) {
+      ctx.log.out(JSON.stringify(
+        {
+          service: plan.service,
+          user: plan.user,
+          database: plan.database,
+          stage: plan.stage.command,
+          open: plan.open.command,
+          cleanup: plan.cleanup.command,
+        },
+        null,
+        2,
+      ));
+    } else {
+      ctx.log.out(`stage: ${plan.stage.command.join(" ")}`);
+      ctx.log.out(`open:  ${plan.open.command.join(" ")}`);
+      ctx.log.out(`cleanup: ${plan.cleanup.command.join(" ")}`);
+    }
+    return 0;
+  }
+
+  // Stage option file (password on stdin only).
+  const staged = await ctx.platform.process.run(plan.stage.command, {
+    cwd: ctx.stackRoot,
+    stdin: plan.stage.stdin,
+    timeoutMs: 15_000,
+  });
+  if (staged.code !== 0) {
+    ctx.log.error(
+      `failed to stage mysql option file: ${(staged.stderr || staged.stdout || "").trim()}`,
+    );
+    return 8;
+  }
+
+  try {
+    // Interactive attach — CLI layer may use Deno.Command with inherited stdio.
+    const [cmd, ...args] = plan.open.command;
+    const child = new Deno.Command(cmd!, {
+      args,
+      cwd: ctx.stackRoot,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const status = await child.output();
+    return status.code;
+  } finally {
+    await ctx.platform.process.run(plan.cleanup.command, {
+      cwd: ctx.stackRoot,
+      timeoutMs: 10_000,
+    }).catch(() => ({ code: 1, stdout: "", stderr: "" }));
+  }
+}
+
+async function cmdMysqlSize(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const state = await ctx.store.load();
+  const rootPassword = await requireMysqlRootPassword(ctx.platform);
+  const services = resolveMysqlServices(state, {
+    service: argv.service ? String(argv.service) : undefined,
+    app: argv.app ? String(argv.app) : undefined,
+  });
+  const allRows: Array<{ service: string; database: string; sizeMb: string; tables: string }> = [];
+  for (const service of services) {
+    let databases: string[] = [];
+    if (argv.app) {
+      const app = state.apps[String(argv.app)];
+      databases = app?.databases.map((d) => d.name) ?? [];
+    }
+    const { rows } = await queryDatabaseSizes(ctx.platform, service, rootPassword, databases);
+    for (const r of rows) {
+      allRows.push({ service, ...r });
+    }
+  }
+  if (ctx.json) {
+    ctx.log.out(JSON.stringify(allRows, null, 2));
+  } else {
+    ctx.log.out(
+      printTable(
+        ["service", "database", "size_mb", "tables"],
+        allRows.map((r) => [r.service, r.database, r.sizeMb, r.tables]),
+      ),
+    );
+  }
+  return 0;
+}
+
+async function cmdMysqlProcesslist(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const state = await ctx.store.load();
+  const rootPassword = await requireMysqlRootPassword(ctx.platform);
+  const services = resolveMysqlServices(state, {
+    service: argv.service ? String(argv.service) : undefined,
+    app: argv.app ? String(argv.app) : undefined,
+  });
+  for (const service of services) {
+    const { stdout } = await queryProcesslist(ctx.platform, service, rootPassword);
+    if (services.length > 1) ctx.log.out(`-- ${service} --`);
+    ctx.log.out(stdout.trimEnd() || "(no processes)");
+  }
   return 0;
 }
 
@@ -954,6 +1496,7 @@ async function cmdProxyCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
     );
     return 2;
   }
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const result = createProxy(state, {
       name,
@@ -962,14 +1505,18 @@ async function cmdProxyCreate(argv: AnyArgv, ctx: CliContext): Promise<number> {
       aliases: argv.alias ? String(argv.alias).split(",") : [],
     }, ctx.platform.clock.nowIso());
     await ctx.store.save(result.state);
-    await ctx.render.apply(result.state, {
-      reloadPlan: result.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(result.state, {
+        reloadPlan: result.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return result;
   });
-  ctx.log.info(`created proxy ${name}`);
+  ctx.log.info(
+    noApply ? `created proxy ${name} (state only; run bento apply)` : `created proxy ${name}`,
+  );
   return 0;
 }
 
@@ -980,15 +1527,18 @@ async function cmdDeployEnable(argv: AnyArgv, ctx: CliContext): Promise<number> 
     return 2;
   }
   const policy = argv.fifo === true ? "fifo" as const : "latest" as const;
+  const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
     const enabled = enableDeploy(state, { slug, queuePolicy: policy }, ctx.platform);
     await materializeAppHome(ctx.platform, enabled.state.apps[slug]!, false);
     await ctx.store.save(enabled.state);
-    await ctx.render.apply(enabled.state, {
-      reloadPlan: enabled.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(enabled.state, {
+        reloadPlan: enabled.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return enabled;
   });
   ctx.log.out(deployWebhookInstructions(result.state.apps[slug]!, result.secret));
@@ -998,14 +1548,17 @@ async function cmdDeployEnable(argv: AnyArgv, ctx: CliContext): Promise<number> 
 async function cmdDeployDisable(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const slug = String(argv.app ?? "");
   if (!slug) return 2;
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = disableDeploy(state, slug, ctx.platform.clock.nowIso());
     await ctx.store.save(r.state);
-    await ctx.render.apply(r.state, {
-      reloadPlan: r.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return r;
   });
   ctx.log.info(`deploy disabled for ${slug}`);
@@ -1015,14 +1568,17 @@ async function cmdDeployDisable(argv: AnyArgv, ctx: CliContext): Promise<number>
 async function cmdDeployRotate(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const slug = String(argv.app ?? "");
   if (!slug) return 2;
+  const noApply = wantsNoApply(argv);
   const result = await ctx.store.withExclusive(async (state) => {
     const r = rotateDeploySecret(state, slug, ctx.platform);
     await ctx.store.save(r.state);
-    await ctx.render.apply(r.state, {
-      reloadPlan: r.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return r;
   });
   ctx.log.out(result.secret);
@@ -1108,6 +1664,7 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
     );
     return 2;
   }
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = addCronJob(state, {
       app,
@@ -1119,11 +1676,13 @@ async function cmdCronAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
       timeoutSec: argv.timeout != null ? Number(argv.timeout) : undefined,
     }, ctx.platform);
     await ctx.store.save(r.state);
-    await ctx.render.apply(r.state, {
-      reloadPlan: r.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return r;
   });
   ctx.log.info(`added cron ${name} for ${app}`);
@@ -1134,14 +1693,17 @@ async function cmdCronRemove(argv: AnyArgv, ctx: CliContext): Promise<number> {
   const app = String(argv.app ?? "");
   const name = String(argv.name ?? "");
   if (!app || !name) return 2;
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = removeCronJob(state, app, name, ctx.platform.clock.nowIso());
     await ctx.store.save(r.state);
-    await ctx.render.apply(r.state, {
-      reloadPlan: r.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return r;
   });
   ctx.log.info(`removed cron ${name}`);
@@ -1171,6 +1733,7 @@ async function cmdWorkerAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
     );
     return 2;
   }
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = addWorker(state, {
       app,
@@ -1178,11 +1741,13 @@ async function cmdWorkerAdd(argv: AnyArgv, ctx: CliContext): Promise<number> {
       command: cmd,
     }, ctx.platform);
     await ctx.store.save(r.state);
-    await ctx.render.apply(r.state, {
-      reloadPlan: r.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return r;
   });
   ctx.log.info(`added worker ${name} for ${app}`);
@@ -1193,18 +1758,92 @@ async function cmdWorkerRemove(argv: AnyArgv, ctx: CliContext): Promise<number> 
   const app = String(argv.app ?? "");
   const name = String(argv.name ?? "");
   if (!app || !name) return 2;
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const r = removeWorker(state, app, name, ctx.platform.clock.nowIso());
     await ctx.store.save(r.state);
-    await ctx.render.apply(r.state, {
-      reloadPlan: r.reloadPlan,
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return r;
   });
   ctx.log.info(`removed worker ${name}`);
   return 0;
+}
+
+async function cmdWorkerControl(
+  argv: AnyArgv,
+  ctx: CliContext,
+  action: WorkerControlAction,
+): Promise<number> {
+  const app = String(argv.app ?? "");
+  const name = String(argv.name ?? "");
+  if (!app || !name) {
+    ctx.log.error(`usage: bento worker ${action} <app> <name>`);
+    return 2;
+  }
+  const state = await ctx.store.load();
+  const plan = buildWorkerControlPlan(state, app, name, action);
+  const result = await controlWorker(ctx.platform, plan);
+  if (result.stdout) ctx.log.out(result.stdout.trimEnd());
+  if (result.stderr && result.code !== 0) {
+    ctx.log.error(result.stderr.trim());
+  }
+  if (result.code === 0) {
+    ctx.log.info(`${action} ${plan.program} on ${plan.runnerService}`);
+  }
+  return result.code === 0 ? 0 : 8;
+}
+
+async function cmdWorkerStart(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  return await cmdWorkerControl(argv, ctx, "start");
+}
+async function cmdWorkerStop(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  return await cmdWorkerControl(argv, ctx, "stop");
+}
+async function cmdWorkerRestart(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  return await cmdWorkerControl(argv, ctx, "restart");
+}
+async function cmdWorkerInspect(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const app = String(argv.app ?? "");
+  const name = String(argv.name ?? "");
+  if (!app || !name) {
+    ctx.log.error("usage: bento worker inspect <app> <name>");
+    return 2;
+  }
+  const state = await ctx.store.load();
+  const result = await inspectWorker(ctx.platform, state, app, name);
+  if (ctx.json) {
+    ctx.log.out(JSON.stringify(
+      {
+        app: result.worker.app,
+        name: result.worker.name,
+        program: result.plan.program,
+        runner: result.plan.runnerService,
+        command: result.worker.command,
+        enabled: result.worker.enabled,
+        supervisor: result.stdout.trim(),
+      },
+      null,
+      2,
+    ));
+  } else {
+    ctx.log.out(
+      [
+        `worker ${result.worker.app}/${result.worker.name}`,
+        `  program: ${result.plan.program}`,
+        `  runner:  ${result.plan.runnerService}`,
+        `  command: ${result.worker.command.join(" ")}`,
+        `  enabled: ${result.worker.enabled ? "yes" : "no"}`,
+        `  status:  ${result.stdout.trim() || result.stderr.trim() || "(no output)"}`,
+      ].join("\n"),
+    );
+  }
+  return result.code === 0 ? 0 : 8;
 }
 
 async function cmdExec(argv: AnyArgv, ctx: CliContext): Promise<number> {
@@ -1388,6 +2027,7 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
     return 2;
   }
 
+  const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const now = ctx.platform.clock.nowIso();
     let next = state;
@@ -1419,13 +2059,254 @@ async function cmdTlsSet(argv: AnyArgv, ctx: CliContext): Promise<number> {
       throw new Error("provide --app or --proxy");
     }
     await ctx.store.save(next);
-    await ctx.render.apply(next, {
-      reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
-      skipValidate: true,
-      alreadyLocked: true,
-    });
+    if (!noApply) {
+      await ctx.render.apply(next, {
+        reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
     return next;
   });
-  ctx.log.info(`tls mode set to ${mode}`);
+  ctx.log.info(
+    noApply ? `tls mode set to ${mode} (state only; run bento apply)` : `tls mode set to ${mode}`,
+  );
+  return 0;
+}
+
+// --- access logs (F-23) ------------------------------------------------------
+
+async function cmdLogsAccessEnable(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  return await mutateAccessLog(argv, ctx, true);
+}
+
+async function cmdLogsAccessDisable(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  return await mutateAccessLog(argv, ctx, false);
+}
+
+async function mutateAccessLog(
+  argv: AnyArgv,
+  ctx: CliContext,
+  enabled: boolean,
+): Promise<number> {
+  const slug = argv.app ? String(argv.app) : "";
+  if (!slug) {
+    ctx.log.error(`usage: bento logs access ${enabled ? "enable" : "disable"} --app <slug>`);
+    return 2;
+  }
+  const noApply = wantsNoApply(argv);
+  const result = await ctx.store.withExclusive(async (state) => {
+    const mutation = setAppAccessLog(
+      state,
+      slug,
+      enabled,
+      ctx.platform.clock.nowIso(),
+      ctx.platform,
+    );
+    if (!isNginxOnlyReloadPlan(mutation.reloadPlan)) {
+      throw new Error("access log mutation must be nginx-only");
+    }
+    await ctx.store.save(mutation.state);
+    if (!noApply) {
+      await ctx.render.apply(mutation.state, {
+        reloadPlan: mutation.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
+    return mutation;
+  });
+  ctx.log.info(
+    enabled
+      ? `access logs enabled for ${slug}`
+      : `access logs disabled for ${slug} (existing files preserved at ${result.preservedLogPath})`,
+  );
+  return 0;
+}
+
+async function cmdLogsAccessRotate(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const slug = argv.app ? String(argv.app) : "";
+  if (!slug) {
+    ctx.log.error("usage: bento logs access rotate --app <slug>");
+    return 2;
+  }
+  const state = await ctx.store.load();
+  const result = await rotateAccessLog(ctx.platform, state, slug);
+  // Assert reopen path (not nginx -s reload).
+  const joined = result.plan.reopenCommand.join(" ");
+  if (!joined.includes("reopen") || joined.includes("reload")) {
+    ctx.log.error("internal: rotate plan must use nginx -s reopen");
+    return 1;
+  }
+  ctx.log.info(
+    result.rotated
+      ? `rotated ${result.plan.logPath} -> ${result.plan.rotatedPath}`
+      : `no active log file at ${result.plan.logPath}; reopen ${
+        result.reopened ? "ok" : "skipped (nginx unavailable)"
+      }`,
+  );
+  return 0;
+}
+
+async function cmdLogsAccessReport(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const slug = argv.app ? String(argv.app) : "";
+  if (!slug) {
+    ctx.log.error("usage: bento logs access report --app <slug> [--dry-run]");
+    return 2;
+  }
+  const state = await ctx.store.load();
+  const dryRun = argv["dry-run"] === true || argv.dryRun === true;
+  const result = await generateAccessReport(ctx.platform, state, slug, {
+    output: argv.output ? String(argv.output) : undefined,
+    dryRun,
+  });
+  if (dryRun) {
+    if (ctx.json) ctx.log.out(JSON.stringify(result, null, 2));
+    else ctx.log.out(result.command.join(" "));
+    return 0;
+  }
+  ctx.log.info(`report written to ${result.reportPath}`);
+  return 0;
+}
+
+// --- templates (F-24) --------------------------------------------------------
+
+async function cmdTemplateSelect(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const slug = argv.app ? String(argv.app) : "";
+  const kind = String(argv.kind ?? "") as TemplateKind;
+  const source = argv.source ? String(argv.source) : "";
+  if (!slug || (kind !== "vhost" && kind !== "pool") || !source) {
+    ctx.log.error(
+      "usage: bento template select --app <slug> --kind vhost|pool --source <path>",
+    );
+    return 2;
+  }
+  const noApply = wantsNoApply(argv);
+  const result = await ctx.store.withExclusive(async (state) => {
+    const selected = await selectCustomTemplate(ctx.platform, state, {
+      slug,
+      kind,
+      sourcePath: source,
+      copy: !(argv["no-copy"] === true || argv.noCopy === true),
+    });
+    await ctx.store.save(selected.state);
+    if (!noApply) {
+      await ctx.render.apply(selected.state, {
+        reloadPlan: selected.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+    }
+    return selected;
+  });
+  ctx.log.info(
+    `activated custom ${kind} template for ${slug} -> ${result.recordedPath}`,
+  );
+  return 0;
+}
+
+async function cmdTemplateReturn(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const slug = argv.app ? String(argv.app) : "";
+  const kind = String(argv.kind ?? "") as TemplateKind;
+  if (!slug || (kind !== "vhost" && kind !== "pool")) {
+    ctx.log.error("usage: bento template return --app <slug> --kind vhost|pool");
+    return 2;
+  }
+  const noApply = wantsNoApply(argv);
+  const result = await ctx.store.withExclusive(async (state) => {
+    const returned = returnToUpstreamTemplate(
+      state,
+      slug,
+      kind,
+      ctx.platform.clock.nowIso(),
+    );
+    await ctx.store.save(returned.state);
+    if (!noApply) {
+      await ctx.render.apply(returned.state, {
+        reloadPlan: returned.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
+    return returned;
+  });
+  if (result.preservedPath) {
+    ctx.log.info(
+      `returned ${slug} ${kind} to upstream; custom source preserved at ${result.preservedPath}`,
+    );
+  } else {
+    ctx.log.info(`${slug} ${kind} already upstream`);
+  }
+  return 0;
+}
+
+async function cmdTemplateDrift(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const state = await ctx.store.load();
+  const drifts = await detectTemplateDrift(
+    ctx.platform,
+    state,
+    argv.app ? String(argv.app) : undefined,
+  );
+  if (ctx.json) {
+    ctx.log.out(JSON.stringify(drifts, null, 2));
+  } else if (drifts.length === 0) {
+    ctx.log.info("no custom templates");
+  } else {
+    const rows = drifts.map((d) => [
+      d.slug,
+      d.kind,
+      d.drifted ? "DRIFT" : "ok",
+      d.sourcePath,
+    ]);
+    ctx.log.out(printTable(["app", "kind", "status", "source"], rows));
+    for (const w of formatDriftWarnings(drifts)) ctx.log.warn(w);
+  }
+  return drifts.some((d) => d.drifted) ? 1 : 0;
+}
+
+// --- maintenance (product §6.10) ---------------------------------------------
+
+async function cmdMaintenanceRun(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const retainDays = argv["retain-days"] != null
+    ? Number(argv["retain-days"])
+    : argv.retainDays != null
+    ? Number(argv.retainDays)
+    : 14;
+  const result = await runStackMaintenance(ctx.platform, { retainDays });
+  for (const n of result.notes) ctx.log.info(n);
+  if (ctx.json) {
+    ctx.log.out(JSON.stringify(result, null, 2));
+  } else {
+    ctx.log.info(`removed ${result.removed.length} file(s)`);
+    for (const p of result.removed) ctx.log.out(`  removed ${p}`);
+  }
+  return 0;
+}
+
+async function cmdMaintenanceRegister(argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const result = await registerHostMaintenance(ctx.platform, {
+    action: "install",
+    schedule: argv.schedule ? String(argv.schedule) : undefined,
+    bentoBin: argv.bin ? String(argv.bin) : undefined,
+    stackRoot: ctx.stackRoot,
+  });
+  ctx.log.info(
+    result.action === "installed"
+      ? "registered host maintenance cron (unrelated entries preserved)"
+      : "host maintenance cron already registered",
+  );
+  return 0;
+}
+
+async function cmdMaintenanceUnregister(_argv: AnyArgv, ctx: CliContext): Promise<number> {
+  const result = await registerHostMaintenance(ctx.platform, {
+    action: "remove",
+    stackRoot: ctx.stackRoot,
+  });
+  ctx.log.info(
+    result.action === "removed"
+      ? "unregistered host maintenance cron (unrelated entries preserved)"
+      : "no host maintenance cron entry found",
+  );
   return 0;
 }

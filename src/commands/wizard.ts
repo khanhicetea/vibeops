@@ -7,16 +7,27 @@ import { isBentoError } from "../domain/errors.ts";
 import type { TlsMode } from "../domain/state.ts";
 import { FPM_PROFILES } from "../domain/types.ts";
 import { describeReloadPlan } from "../domain/reload.ts";
-import { capacityWarnings, materializeAppHome, provisionApp } from "../services/app.ts";
+import {
+  applyAppDataPlane,
+  capacityWarnings,
+  materializeAppHome,
+  provisionApp,
+} from "../services/app.ts";
 import { addPhpVersion, listPhpVersions, removePhpVersion } from "../services/php.ts";
 import {
   addMysqlVersion,
-  createAppDatabase,
+  applyRotatedMysqlPassword,
+  buildMysqlShellPlan,
+  createAppDatabaseLive,
   listMysqlVersions,
+  queryDatabaseSizes,
+  queryProcesslist,
+  resolveMysqlServices,
   rotateAppPassword,
   runBackup,
   runRestore,
 } from "../services/mysql.ts";
+import { loadRedisPassword, requireMysqlRootPassword } from "../services/stack_env.ts";
 import { createProxy } from "../services/proxy.ts";
 import {
   deployWebhookInstructions,
@@ -27,7 +38,24 @@ import {
   rotateDeploySecret,
 } from "../services/deploy.ts";
 import { addCronJob, listCronJobs, removeCronJob } from "../services/cron.ts";
-import { addWorker, listWorkers, removeWorker } from "../services/worker.ts";
+import {
+  addWorker,
+  buildWorkerControlPlan,
+  controlWorker,
+  inspectWorker,
+  listWorkers,
+  removeWorker,
+  type WorkerControlAction,
+} from "../services/worker.ts";
+import { generateAccessReport, rotateAccessLog, setAppAccessLog } from "../services/access_log.ts";
+import {
+  detectTemplateDrift,
+  formatDriftWarnings,
+  returnToUpstreamTemplate,
+  selectCustomTemplate,
+  type TemplateKind,
+} from "../services/customization.ts";
+import { runStackMaintenance } from "../services/maintenance.ts";
 import { buildStatus, formatStatus } from "../services/status.ts";
 import { checkPermissions, formatPermReport, repairPermissions } from "../services/permissions.ts";
 import { assertSafeComposeArgs, composeArgs } from "../services/compose.ts";
@@ -63,11 +91,14 @@ export async function runWizard(ctx: CliContext): Promise<number> {
         { label: "Bootstrap", value: "bootstrap", hint: "init · render · apply" },
         { label: "Applications", value: "apps", hint: "create · list · show" },
         { label: "PHP versions", value: "php", hint: "add · remove · list" },
-        { label: "MySQL", value: "mysql", hint: "versions · databases · password" },
+        { label: "MySQL", value: "mysql", hint: "versions · shell · size · password" },
         { label: "Reverse proxies", value: "proxy", hint: "create · list" },
         { label: "Deploy webhooks", value: "deploy", hint: "enable · rotate · drain" },
         { label: "Cron jobs", value: "cron", hint: "add · remove · list" },
-        { label: "Workers", value: "worker", hint: "add · remove · list" },
+        { label: "Workers", value: "worker", hint: "add · control · list" },
+        { label: "Access logs", value: "logs", hint: "enable · rotate · report" },
+        { label: "Templates", value: "template", hint: "custom vhost/pool · drift" },
+        { label: "Maintenance", value: "maintenance", hint: "retention · host cron" },
         { label: "TLS", value: "tls", hint: "boot · acme · external" },
         { label: "Permissions", value: "permissions", hint: "check · repair" },
         { label: "Backup / restore", value: "backup", hint: "MySQL dumps" },
@@ -128,6 +159,9 @@ async function dispatch(ui: WizardUI, ctx: CliContext, section: string): Promise
     deploy: () => sectionDeploy(ui, ctx),
     cron: () => sectionCron(ui, ctx),
     worker: () => sectionWorker(ui, ctx),
+    logs: () => sectionLogs(ui, ctx),
+    template: () => sectionTemplate(ui, ctx),
+    maintenance: () => sectionMaintenance(ui, ctx),
     tls: () => sectionTls(ui, ctx),
     permissions: () => sectionPermissions(ui, ctx),
     backup: () => sectionBackup(ui, ctx),
@@ -167,7 +201,10 @@ async function ensureState(ui: WizardUI, ctx: CliContext): Promise<boolean> {
     await ctx.store.load();
     return true;
   } catch {
-    ui.warn("Stack not initialized", `Run Bootstrap → Initialize, or: bento --stack ${ctx.stackRoot} init`);
+    ui.warn(
+      "Stack not initialized",
+      `Run Bootstrap → Initialize, or: bento --stack ${ctx.stackRoot} init`,
+    );
     await ui.pause();
     return false;
   }
@@ -249,7 +286,11 @@ async function sectionBootstrap(ui: WizardUI, ctx: CliContext): Promise<void> {
     { label: "Initialize empty desired state", value: "init", hint: "bento init" },
     { label: "Render generated config (no reload)", value: "render", hint: "bento render" },
     { label: "Apply (render + validate + reload)", value: "apply", hint: "bento apply" },
-    { label: "Render only (skip service signals)", value: "apply-ro", hint: "bento apply --render-only" },
+    {
+      label: "Render only (skip service signals)",
+      value: "apply-ro",
+      hint: "bento apply --render-only",
+    },
   ]);
   if (!action) return;
 
@@ -430,7 +471,14 @@ async function wizardAppCreate(ui: WizardUI, ctx: CliContext): Promise<void> {
         databaseName: databaseName || undefined,
         accessLog,
       });
-      await materializeAppHome(ctx.platform, provisioned.app, true);
+      const plane = await applyAppDataPlane(ctx.platform, provisioned.app, {
+        explicitDatabase: createDb,
+      });
+      const redisShared = await loadRedisPassword(ctx.platform);
+      await materializeAppHome(ctx.platform, provisioned.app, {
+        recursivePerms: true,
+        redisSharedPassword: redisShared,
+      });
       await ctx.store.save(provisioned.state);
       if (!noApply) {
         await ctx.render.apply(provisioned.state, {
@@ -439,13 +487,14 @@ async function wizardAppCreate(ui: WizardUI, ctx: CliContext): Promise<void> {
           alreadyLocked: true,
         });
       }
-      return provisioned;
+      return { provisioned, plane };
     });
     ui.success(
-      `${result.created ? "Created" : "Updated"} app ${result.app.slug}`,
-      `uid=${result.app.uid} domain=${result.app.mainDomain}`,
+      `${result.provisioned.created ? "Created" : "Updated"} app ${result.provisioned.app.slug}`,
+      `uid=${result.provisioned.app.uid} domain=${result.provisioned.app.mainDomain}`,
     );
-    for (const w of capacityWarnings(result.state)) ui.warn(w);
+    for (const note of result.plane.deferredNotes) ui.warn(note);
+    for (const w of capacityWarnings(result.provisioned.state)) ui.warn(w);
   } catch (err) {
     handleError(ui, err);
   }
@@ -532,6 +581,10 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
       },
       { label: "Record database for app", value: "db" },
       { label: "Rotate app password", value: "password", hint: "printed once" },
+      { label: "Open shell (root)", value: "shell-root", hint: "scriptable: mysql shell --root" },
+      { label: "Open shell (app)", value: "shell-app", hint: "scriptable: mysql shell --app" },
+      { label: "Database sizes", value: "size" },
+      { label: "Process list", value: "processlist" },
     ]);
     if (!action) return;
 
@@ -567,11 +620,24 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
       if (!dbName) continue;
       try {
         await ctx.store.withExclusive(async (state) => {
-          const next = createAppDatabase(state, slug, dbName, ctx.platform.clock.nowIso());
+          const rootPassword = await requireMysqlRootPassword(ctx.platform);
+          const next = await createAppDatabaseLive(
+            ctx.platform,
+            state,
+            slug,
+            dbName,
+            rootPassword,
+          );
+          const app = next.apps[slug]!;
+          const redisShared = await loadRedisPassword(ctx.platform);
+          await materializeAppHome(ctx.platform, app, {
+            recursivePerms: false,
+            redisSharedPassword: redisShared,
+          });
           await ctx.store.save(next);
           return next;
         });
-        ui.success(`Recorded database ${dbName}`, `app=${slug}`);
+        ui.success(`Created database ${dbName}`, `app=${slug}`);
       } catch (err) {
         handleError(ui, err);
       }
@@ -584,13 +650,108 @@ async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void> {
       try {
         const result = await ctx.store.withExclusive(async (state) => {
           const rotated = rotateAppPassword(ctx.platform, state, slug);
+          const app = rotated.state.apps[slug]!;
+          const rootPassword = await requireMysqlRootPassword(ctx.platform).catch(
+            () => undefined,
+          );
+          const applied = await applyRotatedMysqlPassword(
+            ctx.platform,
+            app,
+            rootPassword,
+          );
+          const redisShared = await loadRedisPassword(ctx.platform);
+          await materializeAppHome(ctx.platform, app, {
+            recursivePerms: false,
+            redisSharedPassword: redisShared,
+          });
           await ctx.store.save(rotated.state);
-          return rotated;
+          return { ...rotated, applied };
         });
-        ui.success("Password rotated (copy now)");
+        ui.success(
+          result.applied
+            ? "Password rotated and applied to live MySQL (copy now)"
+            : "Password rotated in state (live MySQL apply deferred; copy now)",
+        );
         ui.blank();
         ui.message(result.password);
         ui.blank();
+      } catch (err) {
+        handleError(ui, err);
+      }
+      await ui.pause();
+    } else if (action === "shell-root" || action === "shell-app") {
+      try {
+        const state = await ctx.store.load();
+        let plan;
+        if (action === "shell-root") {
+          const services = resolveMysqlServices(state);
+          const service = services[0];
+          if (!service) {
+            ui.error("No MySQL service managed");
+            await ui.pause();
+            continue;
+          }
+          const password = await requireMysqlRootPassword(ctx.platform);
+          plan = buildMysqlShellPlan(ctx.platform, {
+            kind: "root",
+            service,
+            password,
+          });
+        } else {
+          const slug = await pickApp(ui, ctx);
+          if (!slug) continue;
+          const app = state.apps[slug];
+          if (!app) continue;
+          plan = buildMysqlShellPlan(ctx.platform, { kind: "app", app });
+        }
+        ui.info(
+          "Shell plan (password never on host argv). Use scripted CLI for interactive attach:",
+        );
+        ui.message(
+          action === "shell-root"
+            ? "bento mysql shell --root"
+            : `bento mysql shell --app ${plan.user.replace(/^app_/, "") || "<slug>"}`,
+        );
+        ui.message(`stage: ${plan.stage.command.join(" ")}`);
+        ui.message(`open:  ${plan.open.command.join(" ")}`);
+      } catch (err) {
+        handleError(ui, err);
+      }
+      await ui.pause();
+    } else if (action === "size") {
+      try {
+        const state = await ctx.store.load();
+        const rootPassword = await requireMysqlRootPassword(ctx.platform);
+        const services = resolveMysqlServices(state);
+        const rows: string[][] = [];
+        for (const service of services) {
+          const { rows: sized } = await queryDatabaseSizes(
+            ctx.platform,
+            service,
+            rootPassword,
+          );
+          for (const r of sized) {
+            rows.push([service, r.database, r.sizeMb, r.tables]);
+          }
+        }
+        ui.table(["service", "database", "size_mb", "tables"], rows);
+      } catch (err) {
+        handleError(ui, err);
+      }
+      await ui.pause();
+    } else if (action === "processlist") {
+      try {
+        const state = await ctx.store.load();
+        const rootPassword = await requireMysqlRootPassword(ctx.platform);
+        const services = resolveMysqlServices(state);
+        for (const service of services) {
+          const { stdout } = await queryProcesslist(
+            ctx.platform,
+            service,
+            rootPassword,
+          );
+          ui.message(`-- ${service} --\n${stdout.trimEnd() || "(empty)"}`);
+        }
       } catch (err) {
         handleError(ui, err);
       }
@@ -890,6 +1051,10 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
       { label: "List workers", value: "list" },
       { label: "Add worker", value: "add" },
       { label: "Remove worker", value: "remove" },
+      { label: "Start worker", value: "start" },
+      { label: "Stop worker", value: "stop" },
+      { label: "Restart worker", value: "restart" },
+      { label: "Inspect worker", value: "inspect" },
     ]);
     if (!action) return;
 
@@ -968,7 +1133,257 @@ async function sectionWorker(ui: WizardUI, ctx: CliContext): Promise<void> {
         handleError(ui, err);
       }
       await ui.pause();
+    } else if (
+      action === "start" || action === "stop" || action === "restart" ||
+      action === "inspect"
+    ) {
+      const state = await ctx.store.load();
+      const workers = listWorkers(state);
+      if (workers.length === 0) {
+        ui.info("No workers");
+        await ui.pause();
+        continue;
+      }
+      const picked = await ui.menu(
+        `${action} worker`,
+        workers.map((w) => ({
+          label: `${w.app}/${w.name}`,
+          value: `${w.app}\0${w.name}`,
+          hint: w.command.join(" "),
+        })),
+      );
+      if (!picked) continue;
+      const [app, name] = picked.split("\0");
+      try {
+        if (action === "inspect") {
+          const result = await inspectWorker(ctx.platform, state, app!, name!);
+          ui.message(
+            [
+              `program: ${result.plan.program}`,
+              `runner: ${result.plan.runnerService}`,
+              `status: ${result.stdout.trim() || result.stderr.trim() || "(no output)"}`,
+            ].join("\n"),
+          );
+        } else {
+          const plan = buildWorkerControlPlan(
+            state,
+            app!,
+            name!,
+            action as WorkerControlAction,
+          );
+          const result = await controlWorker(ctx.platform, plan);
+          if (result.code === 0) {
+            ui.success(`${action} ${plan.program}`);
+            if (result.stdout.trim()) ui.message(result.stdout.trim());
+          } else {
+            ui.error(result.stderr.trim() || result.stdout.trim() || `${action} failed`);
+          }
+        }
+      } catch (err) {
+        handleError(ui, err);
+      }
+      await ui.pause();
     }
+  }
+}
+
+async function sectionLogs(ui: WizardUI, ctx: CliContext): Promise<void> {
+  ui.header("Access logs");
+  if (!(await ensureState(ui, ctx))) return;
+
+  while (true) {
+    const action = await ui.menu("Access logs", [
+      { label: "Enable for app", value: "enable", hint: "nginx-only reload" },
+      { label: "Disable for app", value: "disable", hint: "preserves files" },
+      { label: "Rotate + reopen", value: "rotate" },
+      { label: "GoAccess report (dry-run)", value: "report" },
+    ]);
+    if (!action) return;
+
+    const slug = await pickApp(ui, ctx);
+    if (!slug) continue;
+
+    try {
+      if (action === "enable" || action === "disable") {
+        const enabled = action === "enable";
+        await ctx.store.withExclusive(async (state) => {
+          const mutation = setAppAccessLog(
+            state,
+            slug,
+            enabled,
+            ctx.platform.clock.nowIso(),
+            ctx.platform,
+          );
+          await ctx.store.save(mutation.state);
+          await ctx.render.apply(mutation.state, {
+            reloadPlan: mutation.reloadPlan,
+            skipValidate: true,
+            alreadyLocked: true,
+          });
+          return mutation;
+        });
+        ui.success(
+          enabled ? `Access logs enabled for ${slug}` : `Access logs disabled for ${slug}`,
+        );
+      } else if (action === "rotate") {
+        const state = await ctx.store.load();
+        const result = await rotateAccessLog(ctx.platform, state, slug);
+        ui.success(
+          result.rotated
+            ? `Rotated to ${result.plan.rotatedPath}`
+            : "No active log; reopen attempted",
+        );
+      } else if (action === "report") {
+        const state = await ctx.store.load();
+        try {
+          const plan = await generateAccessReport(ctx.platform, state, slug, {
+            dryRun: true,
+          });
+          ui.message(plan.command.join(" "));
+        } catch (err) {
+          handleError(ui, err);
+        }
+      }
+    } catch (err) {
+      handleError(ui, err);
+    }
+    await ui.pause();
+  }
+}
+
+async function sectionTemplate(ui: WizardUI, ctx: CliContext): Promise<void> {
+  ui.header("Templates");
+  if (!(await ensureState(ui, ctx))) return;
+
+  while (true) {
+    const action = await ui.menu("Templates", [
+      { label: "Select custom template", value: "select" },
+      { label: "Return to upstream", value: "return" },
+      { label: "Check upstream drift", value: "drift" },
+    ]);
+    if (!action) return;
+
+    try {
+      if (action === "drift") {
+        const state = await ctx.store.load();
+        const drifts = await detectTemplateDrift(ctx.platform, state);
+        if (drifts.length === 0) ui.info("No custom templates");
+        else {
+          ui.table(
+            ["app", "kind", "status", "source"],
+            drifts.map((d) => [
+              d.slug,
+              d.kind,
+              d.drifted ? "DRIFT" : "ok",
+              d.sourcePath,
+            ]),
+          );
+          for (const w of formatDriftWarnings(drifts)) ui.warn(w);
+        }
+        await ui.pause();
+        continue;
+      }
+
+      const slug = await pickApp(ui, ctx);
+      if (!slug) continue;
+      const kind = await ui.menu<TemplateKind>("Template kind", [
+        { label: "Nginx vhost", value: "vhost" },
+        { label: "PHP-FPM pool", value: "pool" },
+      ]);
+      if (!kind) continue;
+
+      if (action === "select") {
+        const source = await ui.prompt("Path to custom template source", {
+          required: true,
+        });
+        if (!source) continue;
+        const result = await ctx.store.withExclusive(async (state) => {
+          const selected = await selectCustomTemplate(ctx.platform, state, {
+            slug,
+            kind,
+            sourcePath: source,
+          });
+          await ctx.store.save(selected.state);
+          await ctx.render.apply(selected.state, {
+            reloadPlan: selected.reloadPlan,
+            skipValidate: false,
+            alreadyLocked: true,
+          });
+          return selected;
+        });
+        ui.success(`Activated custom ${kind}`, result.recordedPath);
+      } else if (action === "return") {
+        const result = await ctx.store.withExclusive(async (state) => {
+          const returned = returnToUpstreamTemplate(
+            state,
+            slug,
+            kind,
+            ctx.platform.clock.nowIso(),
+          );
+          await ctx.store.save(returned.state);
+          await ctx.render.apply(returned.state, {
+            reloadPlan: returned.reloadPlan,
+            skipValidate: true,
+            alreadyLocked: true,
+          });
+          return returned;
+        });
+        ui.success(
+          `Returned ${kind} to upstream`,
+          result.preservedPath ? `custom source preserved at ${result.preservedPath}` : undefined,
+        );
+      }
+    } catch (err) {
+      handleError(ui, err);
+    }
+    await ui.pause();
+  }
+}
+
+async function sectionMaintenance(ui: WizardUI, ctx: CliContext): Promise<void> {
+  ui.header("Maintenance");
+  ui.note([
+    "Host maintenance (this menu) is separate from in-runner logrotate",
+    "(supervisord program system-logrotate).",
+  ]);
+
+  while (true) {
+    const action = await ui.menu("Maintenance", [
+      { label: "Run log retention now", value: "run" },
+      {
+        label: "Register host cron",
+        value: "register",
+        hint: "scriptable: bento maintenance register",
+      },
+      {
+        label: "Unregister host cron",
+        value: "unregister",
+        hint: "scriptable: bento maintenance unregister",
+      },
+    ]);
+    if (!action) return;
+
+    try {
+      if (action === "run") {
+        const daysRaw = await ui.prompt("Retain rotated logs (days)", {
+          default: "14",
+        });
+        const retainDays = Number(daysRaw ?? "14");
+        const result = await runStackMaintenance(ctx.platform, { retainDays });
+        for (const n of result.notes) ui.message(n);
+        ui.success(`Removed ${result.removed.length} file(s)`);
+      } else {
+        ui.info(
+          action === "register"
+            ? "Use: bento maintenance register [--schedule '15 3 * * *']"
+            : "Use: bento maintenance unregister",
+        );
+        ui.message("Host crontab merge preserves unrelated entries.");
+      }
+    } catch (err) {
+      handleError(ui, err);
+    }
+    await ui.pause();
   }
 }
 

@@ -32,3 +32,8 @@ export function mysqlIdent(value: string): string {
 export function mysqlLikeEscape(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
+
+/** Quote a MySQL string literal (password, etc.). */
+export function mysqlStringLiteral(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}

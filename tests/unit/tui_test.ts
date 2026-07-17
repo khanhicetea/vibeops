@@ -1,10 +1,5 @@
 import { assertEquals } from "@std/assert";
-import {
-  type KeyEvent,
-  type MenuChoice,
-  type TerminalIO,
-  WizardUI,
-} from "../../src/ui/tui.ts";
+import { type KeyEvent, type MenuChoice, type TerminalIO, WizardUI } from "../../src/ui/tui.ts";
 
 /**
  * Fake terminal. String tokens map to key events:

@@ -10,6 +10,7 @@ import { renderTemplate } from "./template.ts";
 import { type GeneratedFile, withManagedMarker } from "./render.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { assembleComposeDocuments } from "./compose.ts";
+import { loadMysqlRootPassword } from "./stack_env.ts";
 
 export async function generateAll(
   platform: Platform,
@@ -31,8 +32,9 @@ export async function generateAll(
   // Runner: supercronic + supervisord programs
   files.push(...generateRunnerConfig(state));
 
-  // MySQL client option files (restricted)
-  files.push(...generateMysqlSecrets(state));
+  // MySQL root client option files (restricted; password from stack .env)
+  const rootPassword = (await loadMysqlRootPassword(platform)) ?? "";
+  files.push(...generateMysqlSecrets(state, rootPassword));
 
   // Generation marker
   files.push({
@@ -332,16 +334,22 @@ stderr_logfile=/var/log/supervisor/worker-${app.slug}-${w.name}.err
   return files;
 }
 
-function generateMysqlSecrets(state: DesiredState): GeneratedFile[] {
-  // Root client files are placeholders; real password comes from env at materialize time.
-  // We generate a restricted template reference, not the password in state.
+/**
+ * Materialize root MySQL client option files with real password content from stack env.
+ * Mode is always 0600; files are disposable generated config (not durable secrets store).
+ */
+export function generateMysqlSecrets(
+  state: DesiredState,
+  rootPassword: string,
+): GeneratedFile[] {
   const files: GeneratedFile[] = [];
   for (const m of state.mysqlVersions) {
+    // MySQL accepts # comments; marker keeps file in the managed set.
     files.push({
-      relPath: `mysql/${m.service}/root.cnf.tpl`,
+      relPath: `mysql/${m.service}/root.cnf`,
       content: withManagedMarker(`[client]
 user=root
-password={{MYSQL_ROOT_PASSWORD}}
+password=${rootPassword.replace(/\n/g, "")}
 host=${m.service}
 `),
       mode: 0o600,

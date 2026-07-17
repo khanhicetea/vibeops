@@ -32,6 +32,10 @@ import type { Platform } from "../platform/mod.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { type ReloadPlan, reloadPlanForPoolChange } from "../domain/reload.ts";
 import { applyAppPermissionPolicy } from "./permissions.ts";
+import { applyAppMysqlGrants, isMysqlReachable, tryBestEffortMysqlAccount } from "./mysql.ts";
+import { tryApplyAppRedisAcl } from "./redis.ts";
+import { loadMysqlRootPassword, loadRedisPassword, requireMysqlRootPassword } from "./stack_env.ts";
+import { serviceError } from "../domain/errors.ts";
 
 export type ProvisionAppInput = {
   slug: string;
@@ -255,12 +259,22 @@ export function allocateIdentity(
   return { uid: asUid(n), gid: asGid(n) };
 }
 
+export type MaterializeAppHomeOptions = {
+  recursivePerms?: boolean;
+  /** Shared Redis password from stack .env (shared mode). */
+  redisSharedPassword?: string;
+};
+
 /** Create app home directory structure on the host. */
 export async function materializeAppHome(
   platform: Platform,
   app: AppState,
-  recursivePerms = true,
+  recursivePermsOrOpts: boolean | MaterializeAppHomeOptions = true,
 ): Promise<void> {
+  const opts: MaterializeAppHomeOptions = typeof recursivePermsOrOpts === "boolean"
+    ? { recursivePerms: recursivePermsOrOpts }
+    : recursivePermsOrOpts;
+  const recursivePerms = opts.recursivePerms ?? true;
   const home = platform.paths.appHome(app.slug);
   const dirs = [
     home,
@@ -278,18 +292,30 @@ export async function materializeAppHome(
     await platform.fs.mkdirp(d, 0o750);
   }
 
-  // Credentials (mode 0600 conceptually; host may not chown without root)
+  // Credentials (mode 0600); shared Redis auth comes from stack env when not on app state.
+  const sharedRedisPassword = app.redis.password ?? opts.redisSharedPassword ?? "";
+  const redisLines = app.redis.mode === "shared"
+    ? [
+      `REDIS_PASSWORD=${sharedRedisPassword}`,
+      `REDIS_PREFIX=${app.redis.prefix}`,
+      `REDIS_MODE=shared`,
+    ]
+    : [
+      `REDIS_USERNAME=${app.redis.aclUsername ?? ""}`,
+      `REDIS_PASSWORD=${app.redis.aclPassword ?? ""}`,
+      `REDIS_ACL_USERNAME=${app.redis.aclUsername ?? ""}`,
+      `REDIS_ACL_PASSWORD=${app.redis.aclPassword ?? ""}`,
+      `REDIS_PREFIX=${app.redis.prefix}`,
+      `REDIS_MODE=acl`,
+    ];
   const cred = [
     `MYSQL_HOST=${app.mysqlService}`,
     `MYSQL_USER=${app.mysqlUser}`,
     `MYSQL_PASSWORD=${app.mysqlPassword}`,
     `MYSQL_DATABASE=${app.databases[0]?.name ?? app.slug}`,
     `REDIS_HOST=redis`,
-    `REDIS_PREFIX=${app.redis.prefix}`,
-    app.redis.mode === "shared" ? `REDIS_PASSWORD=${app.redis.password ?? ""}` : [
-      `REDIS_ACL_USERNAME=${app.redis.aclUsername ?? ""}`,
-      `REDIS_ACL_PASSWORD=${app.redis.aclPassword ?? ""}`,
-    ].join("\n"),
+    `REDIS_PORT=6379`,
+    ...redisLines,
     "",
   ].join("\n");
   await platform.fs.atomicWriteText(join(home, "credentials", "app.env"), cred, 0o600);
@@ -350,6 +376,65 @@ export async function materializeAppHome(
   } else {
     await applyAppPermissionPolicy(platform, app, { recursive: false });
   }
+}
+
+export type AppDataPlaneResult = {
+  mysqlApplied: boolean;
+  redisApplied: boolean;
+  /** Operator-facing note when best-effort work was deferred. */
+  deferredNotes: string[];
+};
+
+/**
+ * Apply live MySQL/Redis side effects for a provisioned app.
+ *
+ * Explicit database request (createDatabase / databases just added): fail hard if MySQL is down.
+ * Without an explicit database: best-effort account setup may defer.
+ */
+export async function applyAppDataPlane(
+  platform: Platform,
+  app: AppState,
+  opts: {
+    /** When true, MySQL must be up and grants applied for each recorded database. */
+    explicitDatabase: boolean;
+  },
+): Promise<AppDataPlaneResult> {
+  const deferredNotes: string[] = [];
+  let mysqlApplied = false;
+  let redisApplied = false;
+
+  if (opts.explicitDatabase) {
+    const rootPassword = await requireMysqlRootPassword(platform);
+    if (!(await isMysqlReachable(platform, app.mysqlService))) {
+      throw serviceError(
+        `MySQL service ${app.mysqlService} is unavailable; database was not recorded`,
+        "Start the stack MySQL service, confirm MYSQL_ROOT_PASSWORD, then retry `bento app create --db` or `bento mysql db`.",
+      );
+    }
+    const dbs = app.databases.length > 0 ? app.databases.map((d) => d.name) : [app.slug];
+    for (const dbName of dbs) {
+      await applyAppMysqlGrants(platform, app, dbName, rootPassword);
+    }
+    mysqlApplied = true;
+  } else {
+    const rootPassword = await loadMysqlRootPassword(platform);
+    mysqlApplied = await tryBestEffortMysqlAccount(platform, app, rootPassword);
+    if (!mysqlApplied) {
+      deferredNotes.push(
+        `MySQL account setup deferred for ${app.slug}; retry with 'bento mysql db ${app.slug} ${app.slug}' when MySQL is up`,
+      );
+    }
+  }
+
+  const redisShared = await loadRedisPassword(platform);
+  redisApplied = await tryApplyAppRedisAcl(platform, app, redisShared);
+  if (app.redis.mode === "acl" && !redisApplied) {
+    deferredNotes.push(
+      `Redis ACL apply deferred for ${app.slug}; re-apply when redis is up`,
+    );
+  }
+
+  return { mysqlApplied, redisApplied, deferredNotes };
 }
 
 export function getAppOrThrow(state: DesiredState, slug: string): AppState {

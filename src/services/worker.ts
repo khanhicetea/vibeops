@@ -95,3 +95,107 @@ export function listWorkers(state: DesiredState, appSlug?: string): Worker[] {
 export function workerProgramName(appSlug: string, workerName: string): string {
   return `worker-${appSlug}-${workerName}`;
 }
+
+/** Runner compose service for the app's PHP version. */
+export function workerRunnerService(app: { phpService: string }): string {
+  return `${app.phpService}-runner`;
+}
+
+export type WorkerControlAction = "start" | "stop" | "restart" | "status";
+
+export type WorkerControlPlan = {
+  app: string;
+  name: string;
+  program: string;
+  runnerService: string;
+  action: WorkerControlAction;
+  /** Host argv for supervisorctl; targets only this program. */
+  command: string[];
+};
+
+/**
+ * Build a supervisorctl plan that controls exactly one flat worker program.
+ * Changing one worker must not restart siblings or unrelated schedulers (F-15).
+ */
+export function buildWorkerControlPlan(
+  state: DesiredState,
+  appSlug: string,
+  name: string,
+  action: WorkerControlAction,
+): WorkerControlPlan {
+  const app = state.apps[appSlug];
+  if (!app) throw notFoundError(`app not found: ${appSlug}`);
+  const worker = state.workers.find((w) => w.app === appSlug && w.name === name);
+  if (!worker) throw notFoundError(`worker ${name} not found for app ${appSlug}`);
+
+  const program = workerProgramName(appSlug, name);
+  const runnerService = workerRunnerService(app);
+  const supervisorAction = action === "status" ? "status" : action;
+
+  return {
+    app: appSlug,
+    name,
+    program,
+    runnerService,
+    action,
+    command: [
+      "docker",
+      "compose",
+      "exec",
+      "-T",
+      runnerService,
+      "supervisorctl",
+      supervisorAction,
+      program,
+    ],
+  };
+}
+
+/** Execute a worker control plan via the platform process runner. */
+export async function controlWorker(
+  platform: Platform,
+  plan: WorkerControlPlan,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const result = await platform.process.run(plan.command, {
+    cwd: platform.paths.paths.root,
+    timeoutMs: 30_000,
+  });
+  return result;
+}
+
+/**
+ * Inspect a worker: supervisor status for its program only.
+ */
+export async function inspectWorker(
+  platform: Platform,
+  state: DesiredState,
+  appSlug: string,
+  name: string,
+): Promise<{
+  plan: WorkerControlPlan;
+  stdout: string;
+  stderr: string;
+  code: number;
+  worker: Worker;
+}> {
+  const worker = state.workers.find((w) => w.app === appSlug && w.name === name);
+  if (!worker) throw notFoundError(`worker ${name} not found for app ${appSlug}`);
+  const plan = buildWorkerControlPlan(state, appSlug, name, "status");
+  const result = await controlWorker(platform, plan);
+  return { plan, worker, ...result };
+}
+
+/** True when a command list targets only the given program (no sibling names). */
+export function isScopedWorkerCommand(
+  command: string[],
+  program: string,
+  siblingPrograms: string[],
+): boolean {
+  const joined = command.join(" ");
+  if (!command.includes(program)) return false;
+  if (!command.includes("supervisorctl")) return false;
+  for (const sibling of siblingPrograms) {
+    if (sibling !== program && joined.includes(sibling)) return false;
+  }
+  return true;
+}

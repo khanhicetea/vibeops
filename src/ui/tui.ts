@@ -175,7 +175,9 @@ export class WizardUI {
   /** Section / screen header. */
   header(title: string, subtitle?: string): void {
     this.io.writeLine();
-    this.io.writeLine(pc.bold(pc.cyan(`╔════════════════════════════════════════════════════════════╗`)));
+    this.io.writeLine(
+      pc.bold(pc.cyan(`╔════════════════════════════════════════════════════════════╗`)),
+    );
     const pad = (s: string, w: number) => {
       const bare = s.length > w ? s.slice(0, w) : s;
       return bare + " ".repeat(Math.max(0, w - bare.length));
@@ -184,7 +186,9 @@ export class WizardUI {
     if (subtitle) {
       this.io.writeLine(pc.cyan(`║ `) + pc.dim(pad(subtitle, 58)) + pc.cyan(` ║`));
     }
-    this.io.writeLine(pc.bold(pc.cyan(`╚════════════════════════════════════════════════════════════╝`)));
+    this.io.writeLine(
+      pc.bold(pc.cyan(`╚════════════════════════════════════════════════════════════╝`)),
+    );
     this.io.writeLine();
   }
 
