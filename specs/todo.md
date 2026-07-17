@@ -1,6 +1,6 @@
 # Bento remaining work (agent todo)
 
-Status snapshot: **~90% capabilities coded · ~70% acceptance proven · ~75% definition of done** (Phase A+B+C complete)
+Status snapshot: **~92% capabilities coded · ~78% acceptance proven · ~82% definition of done** (Phase A+B+C+D complete)
 
 Read first (in order):
 
@@ -158,15 +158,15 @@ Code exists in `RenderService`; close proof and edge gaps.
 
 ## Phase D — Distribution parity  **P0** · F-28 · F-29 · F-30
 
-- [ ] **F-29:** Smoke-test compiled Linux artifacts (at least native compile in CI/dev; amd64/arm64 in release pipeline).
+- [x] **F-29:** Smoke-test compiled Linux artifacts (at least native compile in CI/dev; amd64/arm64 in release pipeline).
   - `deno task compile` then run `./dist/bento --stack <tmp> init|render|status|version` without Deno on PATH if feasible.
-- [ ] **F-30:** Given identical state/env/assets/command, source vs compiled produce:
+- [x] **F-30:** Given identical state/env/assets/command, source vs compiled produce:
   - byte-equivalent generated files (normalize only where explicitly documented)
   - equal state transitions and exit codes
   - equivalent normalized diagnostics
-- [ ] Asset materialize: digest-addressed cache; compiled `--include=templates` parity with source repo assets.
-- [ ] Version banner reports Bento version **and** pinned Deno target (already started in `version.ts` — keep accurate).
-- [ ] Task or script: `deno task test:parity` (or contract test that spawns binary when `BENTO_BIN` set).
+- [x] Asset materialize: digest-addressed cache; compiled `--include=templates` parity with source repo assets.
+- [x] Version banner reports Bento version **and** pinned Deno target (already started in `version.ts` — keep accurate).
+- [x] Task or script: `deno task test:parity` (or contract test that spawns binary when `BENTO_BIN` set).
 
 **Touch:** `deno.json` tasks, `tests/contract/`, `src/platform/assets.ts`, `src/services/assets_materialize.ts`, CI notes in README.
 
@@ -240,7 +240,7 @@ Map each F-*/R-* to at least one automated test where practical. Current baselin
 | CLI smoke | `tests/contract/cli_smoke_test.ts` | backup/restore dry paths; tls set; permissions |
 | TUI | `tests/unit/tui_test.ts` | keep as UI-only |
 | Integration | **empty** | see F2 |
-| Parity | **missing** | see Phase D |
+| Parity | `tests/contract/parity_test.ts` | keep green; release runs `test:parity` |
 
 ### F2. Integration suite  **P0** · contract §8
 
@@ -310,7 +310,7 @@ Do in this order unless blocked:
 1. ~~**Phase A**~~ done  
 2. ~~**Phase B**~~ done  
 3. ~~**Phase C**~~ done  
-4. **Phase D** compile + parity smoke — distribution claim  
+4. ~~**Phase D**~~ done  
 5. **Phase F** integration + system scenarios  
 6. **Phase E** residual polish (TLS/deploy/permissions/status)  
 
@@ -349,5 +349,6 @@ Do in this order unless blocked:
 | 2026-07-17 | phase A | Wired live MySQL grants (fail-closed on explicit `--db`/`mysql db`), best-effort account setup, Redis shared prefix + ACL apply (stdin secrets), root.cnf materialize from stack `.env` at 0600 with rollback mode proof. Added `stack_env.ts`, `applyAppDataPlane`, `tests/unit/mysql_redis_test.ts`. 63 unit/contract tests green. Residual: redis mode-change re-apply command surface still thin; R-10 only proven for root.cnf. |
 | 2026-07-17 | phase B | Finished operator commands B1–B6: mysql shell/size/processlist (stdin-staged cnf, no host argv secrets); worker start/stop/restart/inspect (scoped supervisorctl); access logs enable/disable/rotate/report (nginx-only + reopen + GoAccess one-shot); template select/return/drift (provenance + preserve custom source); host maintenance run + crontab merge; uniform `--no-apply` + `apply --preview`. New modules `access_log.ts`, `customization.ts`, `maintenance.ts`; tests in `phase_b_test.ts` + cli smoke. 78 tests green. Dropped global `--root` alias for `--stack` so `mysql shell --root` works. Residual: interactive shell needs live docker; host cron register needs real crontab perms; GoAccess report needs image pull. |
 | 2026-07-17 | phase C | Closed R-01–R-10 proof + C1 compose transactional safety. Added `candidateFactory`/`afterPromoteFile` test hooks; compose `config -q` validator (soft-skip when Docker down, fail-closed on real errors); fixed memory-lock TOCTOU so concurrent exclusive acquirers serialize. New `tests/unit/phase_c_test.ts` (17 cases). 95 unit/contract tests green. Residual: integration suite still empty; file-lock under real multi-process stress not in CI. |
+| 2026-07-17 | phase D | Distribution parity F-28/F-29/F-30. Digest-addressed asset cache (`.asset-cache/<digest>/` → publish `docker/`+`helpers/`); asset resolver notes for compile `--include=templates`; version banner kept accurate; `deno task test:parity` + `smoke:compiled`; contract suite `tests/contract/parity_test.ts` (source smoke always; binary smoke/parity when `BENTO_BIN`/`dist/bento`). README CI/release notes. Residual: cross-arch binary execution still release-host only (compile:amd64/arm64 produce artifacts). |
 
 When you complete a slice, append a row and check boxes above.

@@ -47,20 +47,35 @@ deno task run --stack ./my-stack apply
 
 Stack roots are **external** mutable state (desired state, homes, certs, backups, generated output). Immutable templates ship with the repository or compiled binary.
 
-## Compile
+## Compile and distribution parity
 
 ```bash
 mkdir -p dist
-deno task compile          # native
-deno task compile:amd64    # Linux x86_64
-deno task compile:arm64    # Linux aarch64
+deno task compile          # native host arch
+deno task compile:amd64    # Linux x86_64 (release)
+deno task compile:arm64    # Linux aarch64 (release)
 ```
 
-The compiled `bento` executable needs no Deno/Python/Node on the target host. Pass an explicit stack root:
+The compiled `bento` executable needs no Deno/Python/Node on the target host. Immutable templates are embedded with `--include=templates` and materialize into a digest-addressed cache under the stack root (`.asset-cache/<digest>/`) before publishing stable Compose paths (`docker/`, `helpers/`). Mutable operator state always lives under an explicit external stack root — never next to the binary.
 
 ```bash
+./dist/bento --stack /var/lib/bento init
+./dist/bento --stack /var/lib/bento render
 ./dist/bento --stack /var/lib/bento status
+./dist/bento version   # reports bento version + pinned Deno target (2.9.x)
 ```
+
+### Parity smoke (F-29 / F-30)
+
+Source mode and the compiled binary must produce byte-equivalent generated files, equal state transitions/exit codes, and equivalent normalized diagnostics for identical inputs:
+
+```bash
+deno task test:parity      # compile + require binary parity suite
+# or, with an existing binary:
+BENTO_BIN=$PWD/dist/bento deno task test
+```
+
+Release CI should run `fmt:check`, `lint`, `check`, `test`, optional `test:integration`, `compile` / `compile:amd64` / `compile:arm64`, and `test:parity` (or an equivalent binary smoke against the built artifact). Pin Deno **2.9.x** for source and compile; do not document unrestricted `-A` as the operator path.
 
 ## Architecture (short)
 

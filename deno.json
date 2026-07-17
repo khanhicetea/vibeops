@@ -9,6 +9,8 @@
     "check": "deno check src/main.ts",
     "test": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys tests/unit tests/contract",
     "test:integration": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys tests/integration",
+    "test:parity": "deno task compile && BENTO_BIN=$PWD/dist/bento REQUIRE_BENTO_BIN=1 deno test --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys tests/contract/parity_test.ts",
+    "smoke:compiled": "deno task compile && dist/bento version && dist/bento --stack ${BENTO_SMOKE_STACK:-/tmp/bento-smoke-$$} init && dist/bento --stack ${BENTO_SMOKE_STACK:-/tmp/bento-smoke-$$} render && dist/bento --stack ${BENTO_SMOKE_STACK:-/tmp/bento-smoke-$$} status",
     "run": "deno run --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys src/main.ts",
     "compile": "deno compile --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys --include=templates --output=dist/bento src/main.ts",
     "compile:amd64": "deno compile --target=x86_64-unknown-linux-gnu --allow-read --allow-write --allow-env --allow-run --allow-net --allow-sys --include=templates --output=dist/bento-linux-amd64 src/main.ts",

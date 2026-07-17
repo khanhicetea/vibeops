@@ -6,13 +6,17 @@ import { platformError } from "../domain/errors.ts";
 /**
  * Resolve immutable assets from repository (source mode) or embedded compile includes.
  * Operator state always lives under the external stack root, never next to the binary.
+ *
+ * Compiled binaries built with `deno compile --include=templates` expose the same
+ * templates tree via Deno's embedded VFS. `import.meta.url` resolves into that VFS,
+ * so defaultRepoRoot() works for both distributions without reading the host CWD.
  */
 export function createAssetResolver(fs: FileSystem, repoRoot?: string): AssetResolver {
-  const root = repoRoot ?? defaultRepoRoot();
+  const root = resolveAssetRoot(repoRoot);
 
   async function resolveAsset(assetPath: string): Promise<string> {
     const clean = normalize(assetPath).replace(/^(\.\.(\/|\\|$))+/, "");
-    // Prefer templates/ tree
+    // Prefer templates/ tree (source repo layout and compile --include=templates)
     const candidates = [
       join(root, "templates", clean),
       join(root, clean),
@@ -40,7 +44,7 @@ export function createAssetResolver(fs: FileSystem, repoRoot?: string): AssetRes
       return dest;
     },
     async digest(): Promise<string> {
-      // Stable digest of templates tree for parity tracking.
+      // Stable digest of templates tree for parity tracking (source == compiled).
       const templatesRoot = join(root, "templates");
       const files: string[] = [];
       async function walk(dir: string, prefix: string) {
@@ -69,8 +73,28 @@ export function createAssetResolver(fs: FileSystem, repoRoot?: string): AssetRes
   };
 }
 
+/** True when running inside a `deno compile` executable with embedded VFS. */
+export function isCompiledDistribution(): boolean {
+  try {
+    const url = import.meta.url;
+    return url.includes("deno-compile") || url.startsWith("file:///tmp/deno-compile");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the immutable asset root.
+ * - Explicit repoRoot (tests / source overrides) wins when provided.
+ * - Otherwise walk from this module to the package root (source: repo; compiled: VFS root).
+ */
+export function resolveAssetRoot(repoRoot?: string): string {
+  if (repoRoot && repoRoot.length > 0) return repoRoot;
+  return defaultRepoRoot();
+}
+
 function defaultRepoRoot(): string {
-  // src/platform/assets.ts -> repo root
+  // src/platform/assets.ts -> package root (repository or compiled VFS root)
   try {
     const here = dirname(fromFileUrl(import.meta.url));
     return join(here, "..", "..");

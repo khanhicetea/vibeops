@@ -26,7 +26,7 @@ export { createRandom, createSeededRandom } from "./random.ts";
 export { createFileSystem } from "./fs.ts";
 export { createFileLock, createMemoryLock } from "./lock.ts";
 export { createProcessRunner, createRecordingProcessRunner } from "./process.ts";
-export { createAssetResolver } from "./assets.ts";
+export { createAssetResolver, isCompiledDistribution, resolveAssetRoot } from "./assets.ts";
 export { containerAppHome, createPathPolicy, resolveStackPaths } from "./paths.ts";
 
 /** Build the default production platform for a stack root. */
