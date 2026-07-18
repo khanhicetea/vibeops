@@ -4,7 +4,7 @@ set -euo pipefail
 ROLE="${BENTO_ROLE:-fpm}"
 
 # Ensure runtime dirs exist (volatile)
-mkdir -p /run/php-fpm /var/log/supervisor /tmp
+mkdir -p /run/php-fpm /var/log/bento /tmp
 
 # php-fpm only auto-includes php-fpm.d/*.conf (not subdirectories).
 # Ensure Bento pool directory is included even on older images that lack

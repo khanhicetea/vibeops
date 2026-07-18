@@ -1088,77 +1088,81 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
       skipValidate: true,
     });
     const service = state.apps[appSlug]!.phpService;
-    const conf = await platform.fs.readText(
-      join(opts.stackRoot, "generated", "runner", service, "supervisord.conf"),
-    );
     const prog = workerProgramName(appSlug, "print");
-    if (!conf.includes(`[program:${prog}]`)) {
-      return { ok: false, detail: `supervisord conf missing ${prog}` };
+    const run = await platform.fs.readText(
+      join(opts.stackRoot, "generated", "runner", service, "services", prog, "run"),
+    );
+    if (!run.includes("/command/s6-applyuidgid") || run.includes("setpriv")) {
+      return { ok: false, detail: `s6 service privilege drop missing ${prog}` };
     }
-    if (!conf.includes("unix_http_server")) {
-      return { ok: false, detail: "supervisord conf missing control socket section" };
-    }
-    return { ok: true, detail: `program=${prog}` };
+    return { ok: true, detail: `service=${prog}` };
   });
 
-  await record("runner-restart", "Restart PHP runner to load cron/worker programs", async () => {
-    state = await store.load();
-    const runner = `${state.apps[appSlug]!.phpService}-runner`;
-    // Full restart so new unix_http_server + programs are loaded
-    const out = await composeCmd(platform, state, ["restart", runner], 120_000);
-    if (out.code !== 0) {
-      // Fall back to up -d
-      const up = await composeCmd(platform, state, ["up", "-d", runner], 120_000);
+  await record(
+    "runner-reconcile",
+    "Reconcile s6 cron/worker services without restart",
+    async () => {
+      const runnerState = await store.load();
+      state = runnerState;
+      const runner = `${runnerState.apps[appSlug]!.phpService}-runner`;
+      // Ensure the singleton exists, but do not restart it to load new definitions.
+      const up = await composeCmd(platform, runnerState, ["up", "-d", runner], 120_000);
       if (up.code !== 0) {
-        return {
-          ok: false,
-          detail: (out.stderr || up.stderr || out.stdout).trim().slice(0, 300),
-        };
+        return { ok: false, detail: (up.stderr || up.stdout).trim().slice(0, 300) };
       }
-    }
-    // Wait for supervisor socket + our programs. Note: `supervisorctl status`
-    // exits non-zero when *any* program is STOPPED (e.g. system-logrotate),
-    // so we key off stdout content for the programs we care about.
-    const workerProg = workerProgramName(appSlug, "print");
-    const schedProg = `scheduler-${appSlug}`;
-    const ok = await waitFor(
-      "supervisor programs",
-      60_000,
-      async () => {
-        const sock = await runCapture(
+      await composeCmd(
+        platform,
+        runnerState,
+        ["exec", "-T", runner, "bento-s6-reconcile"],
+        10_000,
+      );
+      const workerProg = workerProgramName(appSlug, "print");
+      const schedProg = `scheduler-${appSlug}`;
+      const ok = await waitFor(
+        "s6 services",
+        60_000,
+        async () => {
+          const status = await composeCmd(
+            platform,
+            runnerState,
+            [
+              "exec",
+              "-T",
+              runner,
+              "/command/s6-svstat",
+              `/run/bento-s6/services/${workerProg}`,
+              `/run/bento-s6/services/${schedProg}`,
+            ],
+            10_000,
+          );
+          const text = status.stdout + status.stderr;
+          return status.code === 0 &&
+            text.split("\n").filter((line) => line.startsWith("up")).length >= 2;
+        },
+        log,
+      );
+      if (!ok) {
+        const st = await composeCmd(
+          platform,
+          runnerState,
           [
-            "docker",
-            "compose",
             "exec",
             "-T",
             runner,
-            "sh",
-            "-c",
-            "test -S /var/run/supervisor.sock && supervisorctl status",
+            "/command/s6-svstat",
+            `/run/bento-s6/services/${workerProg}`,
+            `/run/bento-s6/services/${schedProg}`,
           ],
-          { cwd: opts.stackRoot, timeoutMs: 10_000 },
+          10_000,
         );
-        const text = sock.stdout + sock.stderr;
-        if (!text.includes(workerProg) || !text.includes(schedProg)) return false;
-        // Double-escape: template string -> RegExp source needs \\s for whitespace.
-        const workerRunning = new RegExp(`${workerProg}\\s+RUNNING`).test(text);
-        const schedRunning = new RegExp(`${schedProg}\\s+RUNNING`).test(text);
-        return workerRunning && schedRunning;
-      },
-      log,
-    );
-    if (!ok) {
-      const st = await runCapture(
-        ["docker", "compose", "exec", "-T", runner, "supervisorctl", "status"],
-        { cwd: opts.stackRoot, timeoutMs: 10_000 },
-      );
-      return {
-        ok: false,
-        detail: `programs not running: ${(st.stdout + st.stderr).trim().slice(0, 400)}`,
-      };
-    }
-    return { ok: true, detail: `runner=${runner}; ${schedProg}+${workerProg} RUNNING` };
-  });
+        return {
+          ok: false,
+          detail: `services not running: ${(st.stdout + st.stderr).trim().slice(0, 400)}`,
+        };
+      }
+      return { ok: true, detail: `runner=${runner}; ${schedProg}+${workerProg} up` };
+    },
+  );
 
   await record(
     "schedule-wait",
@@ -1196,24 +1200,25 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     }
     const text = await platform.fs.readText(cronLog);
     if (!/cron-ok/.test(text)) {
-      // Also check supervisor scheduler log for clues
-      const runner = `${(await store.load()).apps[appSlug]!.phpService}-runner`;
-      const slog = await runCapture(
+      // Also check Supercronic's combined app-owned log for clues.
+      const current = await store.load();
+      const runner = `${current.apps[appSlug]!.phpService}-runner`;
+      const slog = await composeCmd(
+        platform,
+        current,
         [
-          "docker",
-          "compose",
           "exec",
           "-T",
           runner,
           "sh",
           "-c",
-          `tail -n 30 /var/log/supervisor/scheduler-${appSlug}.log /var/log/supervisor/scheduler-${appSlug}.err 2>/dev/null || true`,
+          `tail -n 30 /home/${appSlug}/logs/cron.log 2>/dev/null || true`,
         ],
-        { cwd: opts.stackRoot, timeoutMs: 10_000 },
+        10_000,
       );
       return {
         ok: false,
-        detail: `no cron-ok in log (bytes=${text.length}); supervisor: ${
+        detail: `no cron-ok in log (bytes=${text.length}); s6: ${
           (slog.stdout + slog.stderr).trim().slice(0, 300)
         }`,
       };
@@ -1234,11 +1239,20 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     }
     const text = await platform.fs.readText(workerLog);
     if (!/worker-ok/.test(text)) {
-      const runner = `${(await store.load()).apps[appSlug]!.phpService}-runner`;
+      const current = await store.load();
+      const runner = `${current.apps[appSlug]!.phpService}-runner`;
       const prog = workerProgramName(appSlug, "print");
-      const st = await runCapture(
-        ["docker", "compose", "exec", "-T", runner, "supervisorctl", "status", prog],
-        { cwd: opts.stackRoot, timeoutMs: 10_000 },
+      const st = await composeCmd(
+        platform,
+        current,
+        [
+          "exec",
+          "-T",
+          runner,
+          "/command/s6-svstat",
+          `/run/bento-s6/services/${prog}`,
+        ],
+        10_000,
       );
       return {
         ok: false,

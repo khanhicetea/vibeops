@@ -249,12 +249,16 @@ function renderPhpFragment(service: string, image: string, version: string): str
         restart: "unless-stopped",
         networks: ["private"],
         user: "root",
-        entrypoint: ["bento-runner-entrypoint"],
-        command: ["supervisord", "-c", "/etc/bento/supervisord.conf"],
+        // s6-overlay's /init is PID 1; its supervised CMD owns the dynamic app
+        // scheduler/worker scan tree.
+        entrypoint: ["/init"],
+        command: ["/usr/local/bin/bento-runner-entrypoint"],
         volumes: [
           "./homes:/home",
-          `./generated/runner/${service}/supervisord.conf:/etc/bento/supervisord.conf:ro`,
+          `./generated/runner/${service}/services:/etc/bento/services:ro`,
           `./generated/runner/${service}/cron:/etc/bento/cron:ro`,
+          "./docker/php/runner-entrypoint.sh:/usr/local/bin/bento-runner-entrypoint:ro",
+          "./docker/php/s6-reconcile.sh:/usr/local/bin/bento-s6-reconcile:ro",
           "./helpers:/opt/bento/helpers:ro",
           // The drain resets OPcache through the app's own FPM Unix socket.
           `./runtime/php-fpm/${service}:/run/php-fpm/${service}:ro`,
@@ -263,6 +267,8 @@ function renderPhpFragment(service: string, image: string, version: string): str
         environment: {
           BENTO_PHP_VERSION: version,
           BENTO_ROLE: "runner",
+          S6_BEHAVIOUR_IF_STAGE2_FAILS: "2",
+          S6_CMD_WAIT_FOR_SERVICES_MAXTIME: "0",
         },
       },
       // Ephemeral CLI profile (compose run --rm ${service}-cli ...)

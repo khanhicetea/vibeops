@@ -281,7 +281,7 @@ export class RenderService {
         if (!options.renderOnly && !reloadPlanIsEmpty(reloadPlan)) {
           journal.phase = "reloading";
           await this.writeJournal(journal);
-          const reloader = options.reloader ?? defaultReloader(this.platform);
+          const reloader = options.reloader ?? defaultReloader(this.platform, state);
           try {
             await reloader.reload(reloadPlan);
           } catch (cause) {
@@ -483,8 +483,8 @@ function generatedReloadPlan(state: DesiredState): ReloadPlan {
     plan.phpFpm.add(v.service);
     plan.phpRunner.add(runnerService);
 
-    // A full apply may follow one or more --no-apply cron mutations. Supervisor
-    // reread/update only notices supervisord.conf changes, not changes to the
+    // A full apply may follow one or more --no-apply cron mutations. s6 service
+    // reconciliation notices service-directory changes, not changes to the
     // separately mounted crontabs, so every live scheduler must also reload.
     const scheduledApps = Object.values(state.apps)
       .filter((app) =>
@@ -583,12 +583,15 @@ function defaultValidators(
   return validators;
 }
 
-function defaultReloader(platform: Platform): ServiceReloader {
+function defaultReloader(platform: Platform, state: DesiredState): ServiceReloader {
   return {
     reload: async (plan: ReloadPlan) => {
       const root = platform.paths.paths.root;
       const soft = async (command: string[]) => {
-        const r = await platform.process.run(command, {
+        const assembled = command[0] === "docker" && command[1] === "compose"
+          ? await composeArgs(platform, state, command.slice(2))
+          : command;
+        const r = await platform.process.run(assembled, {
           cwd: root,
           timeoutMs: 3_000,
         }).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
@@ -616,40 +619,41 @@ function defaultReloader(platform: Platform): ServiceReloader {
         await soft(["docker", "compose", "exec", "-T", svc, "kill", "-USR2", "1"]);
       }
       for (const svc of plan.phpRunner) {
-        await soft([
+        // Reconcile generated service directories into s6's mutable /run scan
+        // tree. New/removed/changed services are handled without restarting the
+        // runner container or unrelated app services.
+        const reconciled = await soft([
           "docker",
           "compose",
           "exec",
           "-T",
           svc,
-          "supervisorctl",
-          "reread",
+          "/usr/local/bin/bento-s6-reconcile",
         ]);
-        await soft([
-          "docker",
-          "compose",
-          "exec",
-          "-T",
-          svc,
-          "supervisorctl",
-          "update",
-        ]);
+        const reconcileDetail = `${reconciled.stderr}\n${reconciled.stdout}`;
+        if (
+          reconciled.code !== 0 && !isDockerUnavailable(reconcileDetail) &&
+          reconciled.code !== 124
+        ) {
+          throw platformError(
+            `s6 service reconciliation failed for ${svc}: ${
+              reconciled.stderr || reconciled.stdout
+            }`,
+          );
+        }
 
-        // reread/update adds and removes Supervisor programs, but it does not
-        // restart an unchanged scheduler when only its bind-mounted crontab was
-        // replaced. Supercronic handles USR2 as an in-place crontab reload.
+        // A crontab-only update leaves the scheduler service definition
+        // unchanged. Supercronic handles USR2 as an in-place crontab reload.
         for (const app of plan.cronSchedulers?.get(svc) ?? []) {
-          const program = `scheduler-${app}`;
           await soft([
             "docker",
             "compose",
             "exec",
             "-T",
             svc,
-            "supervisorctl",
-            "signal",
-            "USR2",
-            program,
+            "/command/s6-svc",
+            "-2",
+            `/run/bento-s6/services/scheduler-${app}`,
           ]);
         }
       }

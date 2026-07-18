@@ -1,8 +1,10 @@
-# Bento PHP runtime: FPM + CLI + runner (supervisord/supercronic) from one image.
+# Bento PHP runtime: FPM + CLI + runner (s6-overlay/supercronic) from one image.
 ARG PHP_VERSION=8.4
 FROM php:${PHP_VERSION}-fpm-bookworm
 
 ARG PHP_VERSION
+ARG TARGETARCH
+ARG S6_OVERLAY_VERSION=3.2.3.2
 ENV BENTO_PHP_VERSION=${PHP_VERSION}
 
 USER root
@@ -25,8 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzip-dev \
     openssh-client \
     procps \
-    supervisor \
+    logrotate \
     unzip \
+    xz-utils \
     zip \
     zstd \
     nodejs \
@@ -56,6 +59,22 @@ RUN (docker-php-ext-install opcache || docker-php-ext-enable opcache || true) \
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
+# s6-overlay v3 provides PID 1, signal handling, and the s6 supervision tools.
+# Keep the version explicit so builds are reproducible; update this ARG when a
+# newer upstream release is adopted.
+RUN set -eux; \
+  case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+    amd64|x86_64) s6_arch=x86_64 ;; \
+    arm64|aarch64) s6_arch=aarch64 ;; \
+    *) echo "unsupported s6-overlay architecture: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
+  esac; \
+  base="https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}"; \
+  curl -fsSLo /tmp/s6-overlay-noarch.tar.xz "$base/s6-overlay-noarch.tar.xz"; \
+  curl -fsSLo /tmp/s6-overlay-arch.tar.xz "$base/s6-overlay-${s6_arch}.tar.xz"; \
+  tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz; \
+  tar -C / -Jxpf /tmp/s6-overlay-arch.tar.xz; \
+  rm -f /tmp/s6-overlay-*.tar.xz
+
 # Supercronic for container-friendly cron
 RUN set -eux; \
   arch="$(uname -m)"; \
@@ -70,7 +89,7 @@ RUN set -eux; \
 
 # Shared socket group used by Nginx and FPM (gid 1500)
 RUN groupadd -g 1500 bento-web || true \
-  && mkdir -p /run/php-fpm /etc/bento/cron /opt/bento/helpers /var/log/supervisor \
+  && mkdir -p /run/php-fpm /etc/bento/cron /etc/bento/services /opt/bento/helpers /var/log/bento \
   && chown www-data:bento-web /run/php-fpm
 
 COPY conf/php-bento.ini /usr/local/etc/php/conf.d/zz-bento.ini
@@ -78,7 +97,9 @@ COPY conf/opcache.ini /usr/local/etc/php/conf.d/zz-opcache.ini
 COPY conf/www-docker.conf /usr/local/etc/php-fpm.d/zz-docker.conf
 COPY entrypoint.sh /usr/local/bin/bento-php-entrypoint
 COPY runner-entrypoint.sh /usr/local/bin/bento-runner-entrypoint
-RUN chmod +x /usr/local/bin/bento-php-entrypoint /usr/local/bin/bento-runner-entrypoint
+COPY s6-reconcile.sh /usr/local/bin/bento-s6-reconcile
+RUN chmod +x /usr/local/bin/bento-php-entrypoint /usr/local/bin/bento-runner-entrypoint \
+  /usr/local/bin/bento-s6-reconcile
 
 COPY helpers/ /opt/bento/helpers/
 RUN chmod +x /opt/bento/helpers/*.sh 2>/dev/null || true

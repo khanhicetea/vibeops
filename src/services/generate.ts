@@ -30,7 +30,7 @@ export async function generateAll(
   // PHP pools per app
   files.push(...await generatePhpPools(platform, state));
 
-  // Runner: supercronic + supervisord programs
+  // Runner: Supercronic and worker service directories supervised by s6
   files.push(...generateRunnerConfig(state));
 
   // MySQL root client option files (restricted; password from stack .env)
@@ -297,7 +297,7 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
           relPath: `runner/${v.service}/cron/jobs/${app.slug}/${job.name}.sh`,
           content: formatCronScript(job),
           // The crontab invokes this through `sh`; it only needs to be readable
-          // by the setpriv-dropped app identity.
+          // by the s6-applyuidgid-dropped app identity.
           mode: 0o644,
           managed: true,
         });
@@ -312,83 +312,122 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       });
     }
 
-    // Supervisord programs (flat). Control socket is required for supervisorctl
-    // reread/update and worker start|stop|restart|inspect.
-    const programBlocks: string[] = [
-      withManagedMarker(`[unix_http_server]
-file=/var/run/supervisor.sock
-chmod=0700
+    // A mutable /run scan tree is reconciled from these read-only service
+    // directories. This lets s6-svscan discover additions/removals without
+    // recycling the runner container or unrelated services.
+    files.push({
+      relPath: `runner/${v.service}/services/.keep`,
+      content: withManagedMarker("# s6 service definitions\n"),
+      mode: 0o644,
+      managed: true,
+    });
 
-[supervisord]
-nodaemon=true
-user=root
-logfile=/var/log/supervisor/supervisord.log
-pidfile=/var/run/supervisord.pid
-
-[rpcinterface:supervisor]
-supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
-
-[supervisorctl]
-serverurl=unix:///var/run/supervisor.sock
-`),
-    ];
-    // system log maintenance scheduler
-    programBlocks.push(`[program:system-logrotate]
-command=/usr/sbin/logrotate -v /etc/logrotate.conf
-autostart=false
-autorestart=false
-user=root
-`);
-
+    const logrotateLines: string[] = [];
     for (const app of appsOnVersion) {
+      // Keep rotation out of the app's own crontab: that scheduler intentionally
+      // runs without root, while PHP-FPM slow logs and captured worker logs can
+      // be root-owned. One root maintenance scheduler handles every app on this
+      // runner without an endless shell/sleep process.
+      const logrotateConfig = `/etc/bento/cron/logrotate/${app.slug}.conf`;
+      files.push({
+        relPath: `runner/${v.service}/cron/logrotate/${app.slug}.conf`,
+        content: withManagedMarker(
+          `"${app.home}/logs/*.log" "/var/log/bento/worker-${app.slug}-*.log" "/var/log/bento/worker-${app.slug}-*.err" {
+  size 10M
+  rotate 2
+  missingok
+  notifempty
+  nocompress
+  copytruncate
+}
+`,
+        ),
+        mode: 0o644,
+        managed: true,
+      });
+      logrotateLines.push(
+        `0 * * * * /usr/sbin/logrotate --state /run/bento-s6/logrotate-${app.slug}.status ${logrotateConfig}`,
+      );
+
       const appJobs = jobs.filter((j) => j.app === app.slug);
       if (appJobs.length > 0 || app.deploy.enabled) {
-        // App UIDs are not system accounts, so Supervisor cannot use `user=`
-        // directly. Launch through setpriv once; Supercronic and every job it
-        // starts then remain under the app identity.
-        const scheduler =
-          `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /usr/local/bin/supercronic /etc/bento/cron/${app.slug}.crontab`;
-        programBlocks.push(`[program:scheduler-${app.slug}]
-command=${scheduler}
-user=root
-environment=HOME="${app.home}",USER="${app.slug}",BENTO_APP="${app.slug}"
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/supervisor/scheduler-${app.slug}.log
-stderr_logfile=/var/log/supervisor/scheduler-${app.slug}.err
-`);
+        const service = `scheduler-${app.slug}`;
+        const supercronic = `/usr/local/bin/supercronic /etc/bento/cron/${app.slug}.crontab`;
+        // Open the app-owned log only after dropping privileges. Besides giving
+        // the app ownership of a newly created log, this avoids root following
+        // an app-controlled symlink during shell redirection.
+        const scheduler = `/command/s6-applyuidgid -u ${app.uid} -g ${app.gid} -G '' sh -c ${
+          shellQuote(
+            `exec ${supercronic} >>${shellQuote(`${app.home}/logs/cron.log`)} 2>&1`,
+          )
+        }`;
+        files.push({
+          relPath: `runner/${v.service}/services/${service}/run`,
+          content: `#!/bin/sh\n# bento-managed: true\nexport HOME=${shellQuote(app.home)} USER=${
+            shellQuote(String(app.slug))
+          } BENTO_APP=${shellQuote(String(app.slug))}\nexec ${scheduler}\n`,
+          mode: 0o755,
+          managed: true,
+        });
       }
+    }
+
+    if (logrotateLines.length > 0) {
+      files.push({
+        relPath: `runner/${v.service}/cron/logrotate.crontab`,
+        content: withManagedMarker(`${logrotateLines.join("\n")}\n`),
+        mode: 0o644,
+        managed: true,
+      });
+      files.push({
+        relPath: `runner/${v.service}/services/logrotate/run`,
+        content:
+          "#!/bin/sh\n# bento-managed: true\n# Root maintenance scheduler; app cron services remain unprivileged.\nexec /usr/local/bin/supercronic /etc/bento/cron/logrotate.crontab\n",
+        mode: 0o755,
+        managed: true,
+      });
     }
 
     for (const w of workers) {
       const app = state.apps[w.app];
       if (!app) continue;
+      const service = `worker-${app.slug}-${w.name}`;
       const cmd = w.command.map(shellQuote).join(" ");
-      // Supervisor requires a real /etc/passwd user for `user=`; app UIDs are not
-      // system accounts. Drop privileges with setpriv (same approach as cron).
-      const dropped = `setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- sh -c ${
-        shellQuote(`cd ${w.workdir} && ${cmd}`)
+      const dropped = `/command/s6-applyuidgid -u ${app.uid} -g ${app.gid} -G '' sh -c ${
+        shellQuote(`cd ${w.workdir} && exec ${cmd}`)
       }`;
-      programBlocks.push(`[program:worker-${app.slug}-${w.name}]
-command=${dropped}
-directory=${w.workdir}
-user=root
-environment=HOME="${app.home}",USER="${app.slug}",BENTO_APP="${app.slug}"
-autostart=true
-autorestart=${w.autorestart}
-stopsignal=${w.stopsignal}
-stopwaitsecs=${w.stopwaitsecs}
-stdout_logfile=/var/log/supervisor/worker-${app.slug}-${w.name}.log
-stderr_logfile=/var/log/supervisor/worker-${app.slug}-${w.name}.err
-`);
+      files.push({
+        relPath: `runner/${v.service}/services/${service}/run`,
+        content: `#!/bin/sh\n# bento-managed: true\nexport HOME=${shellQuote(app.home)} USER=${
+          shellQuote(String(app.slug))
+        } BENTO_APP=${
+          shellQuote(String(app.slug))
+        }\nexec ${dropped} >>/var/log/bento/${service}.log 2>>/var/log/bento/${service}.err\n`,
+        mode: 0o755,
+        managed: true,
+      });
+      files.push({
+        relPath: `runner/${v.service}/services/${service}/down-signal`,
+        content: `${s6SignalNumber(w.stopsignal)}\n`,
+        mode: 0o644,
+        managed: true,
+      });
+      files.push({
+        relPath: `runner/${v.service}/services/${service}/timeout-kill`,
+        content: `${w.stopwaitsecs * 1000}\n`,
+        mode: 0o644,
+        managed: true,
+      });
+      if (!w.autorestart) {
+        files.push({
+          relPath: `runner/${v.service}/services/${service}/finish`,
+          content:
+            "#!/bin/sh\n# bento-managed: true\n# Keep a one-shot worker down after it exits.\nexec /command/s6-svc -d .\n",
+          mode: 0o755,
+          managed: true,
+        });
+      }
     }
-
-    files.push({
-      relPath: `runner/${v.service}/supervisord.conf`,
-      content: programBlocks.join("\n"),
-      mode: 0o644,
-      managed: true,
-    });
   }
   return files;
 }
@@ -445,12 +484,33 @@ function formatCronScript(job: CronJob): string {
   const command = job.commandMode === "shell"
     ? job.command[0]!
     : `exec ${job.command.map(shellQuote).join(" ")}`;
-  return withManagedMarker(`cd ${shellQuote(job.workdir)} || exit 1\n${command}\n`);
+  return withManagedMarker(
+    `cd ${
+      shellQuote(job.workdir)
+    } || exit 1\nprintf '\\n= Run at %s =\\n\\n' "$(date '+%Y-%m-%d %H:%M:%S')"\n${command}\n`,
+  );
 }
 
 function shellQuote(s: string): string {
   if (/^[a-zA-Z0-9_./:@%+=,-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** s6's down-signal file contains a signal number, not a symbolic name. */
+function s6SignalNumber(signal: string): number {
+  const normalized = signal.trim().toUpperCase().replace(/^SIG/, "");
+  const numbers: Record<string, number> = {
+    HUP: 1,
+    INT: 2,
+    QUIT: 3,
+    KILL: 9,
+    USR1: 10,
+    USR2: 12,
+    TERM: 15,
+  };
+  if (numbers[normalized] !== undefined) return numbers[normalized];
+  if (/^[1-9][0-9]*$/.test(normalized)) return Number(normalized);
+  return 15;
 }
 
 async function readOrDefault(

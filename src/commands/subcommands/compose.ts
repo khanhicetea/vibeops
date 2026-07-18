@@ -1,4 +1,5 @@
 import { assertSafeComposeArgs, composeArgs, resolveComposeFiles } from "../../services/compose.ts";
+import { materializeDockerAssets } from "../../services/assets_materialize.ts";
 import type { CliContext } from "../context.ts";
 import type { CliArgs } from "../args.ts";
 import { bind, type RunState, trailing, type YargsBuilder } from "../shared.ts";
@@ -30,17 +31,11 @@ async function cmdCompose(argv: CliArgs, ctx: CliContext): Promise<number> {
   const printOnly = argv.print === true || trailing(argv, 1).includes("--print");
   assertSafeComposeArgs(command);
   const state = await ctx.store.load();
-  const { materializeDockerAssets } = await import("../services/assets_materialize.ts");
   await materializeDockerAssets(
     ctx.platform,
     state.phpVersions.map((v) => String(v.version)),
   );
-  const baseCompose = `${ctx.platform.paths.paths.composeDir}/docker-compose.base.yml`;
-  if (!(await ctx.platform.fs.exists(baseCompose))) {
-    await ctx.render.apply(state, { renderOnly: true, skipValidate: true });
-  } else {
-    await ctx.render.apply(state, { renderOnly: true, skipValidate: true });
-  }
+  await ctx.render.apply(state, { renderOnly: true, skipValidate: true });
   const full = await composeArgs(ctx.platform, state, command);
   if (printOnly) {
     ctx.log.out(full.join(" "));

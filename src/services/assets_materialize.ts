@@ -36,6 +36,7 @@ const DOCKER_PHP_FILES = [
   "docker/php/conf/www-docker.conf",
   "docker/php/entrypoint.sh",
   "docker/php/runner-entrypoint.sh",
+  "docker/php/s6-reconcile.sh",
   "docker/php/helpers/deploy-drain.sh",
 ] as const;
 

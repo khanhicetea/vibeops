@@ -16,7 +16,12 @@ import {
 import { generateAll } from "../../src/services/generate.ts";
 import { createAppDatabase, listRecentBackupFiles } from "../../src/services/mysql.ts";
 import { aclRules, redisConnectionEnv } from "../../src/services/redis.ts";
-import { addCronJob, editCronJob, removeCronJob } from "../../src/services/cron.ts";
+import {
+  addCronJob,
+  buildCronReloadCommand,
+  editCronJob,
+  removeCronJob,
+} from "../../src/services/cron.ts";
 import { RenderService } from "../../src/services/render.ts";
 import { addWorker, workerProgramName } from "../../src/services/worker.ts";
 import { describeReloadPlan } from "../../src/domain/reload.ts";
@@ -315,6 +320,9 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
       cron.reloadPlan.cronSchedulers?.get("php85-runner")?.has("alpha"),
       true,
     );
+    const cronReload = buildCronReloadCommand(state, "alpha");
+    assertEquals(cronReload.includes("-2"), true);
+    assertEquals(cronReload.some((arg) => arg.endsWith("/scheduler-alpha")), true);
 
     const worker = addWorker(state, {
       app: "alpha",
@@ -327,7 +335,7 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
 
     const files = await generateAll(platform, state, "digest");
     const runnerFiles = files.filter((f) =>
-      f.relPath.includes("runner") || f.relPath.includes("supervisor") ||
+      f.relPath.includes("runner") || f.relPath.includes("services") ||
       f.relPath.includes("cron") || f.relPath.includes("supercronic")
     );
     const blob = runnerFiles.map((f) => textContent(f.content)).join("\n");
@@ -339,22 +347,50 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
       true,
     );
 
-    const supervisor = textContent(
-      files.find((f) => f.relPath === "runner/php85/supervisord.conf")!.content,
+    const scheduler = textContent(
+      files.find((f) => f.relPath === "runner/php85/services/scheduler-alpha/run")!.content,
+    );
+    const workerRun = textContent(
+      files.find((f) => f.relPath === "runner/php85/services/worker-alpha-queue/run")!.content,
     );
     const crontab = textContent(
       files.find((f) => f.relPath === "runner/php85/cron/alpha.crontab")!.content,
     );
-    const app = state.apps.alpha!;
-    assertEquals(
-      supervisor.includes(
-        `command=setpriv --reuid=${app.uid} --regid=${app.gid} --clear-groups -- /usr/local/bin/supercronic`,
-      ),
-      true,
+    const cronScript = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/jobs/alpha/tick.sh")!.content,
     );
+    const logrotate = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/logrotate/alpha.conf")!.content,
+    );
+    const logrotateCrontab = textContent(
+      files.find((f) => f.relPath === "runner/php85/cron/logrotate.crontab")!.content,
+    );
+    const logrotateRun = textContent(
+      files.find((f) => f.relPath === "runner/php85/services/logrotate/run")!.content,
+    );
+    const app = state.apps.alpha!;
+    const applyUidGid = `/command/s6-applyuidgid -u ${app.uid} -g ${app.gid} -G ''`;
+    assertEquals(scheduler.includes(`${applyUidGid} sh -c`), true);
+    assertEquals(scheduler.includes("/usr/local/bin/supercronic"), true);
+    assertEquals(scheduler.includes(">>/home/alpha/logs/cron.log 2>&1"), true);
+    assertEquals(scheduler.includes("/var/log/bento"), false);
+    assertEquals(workerRun.includes(`${applyUidGid} sh -c`), true);
+    assertEquals(scheduler.includes("setpriv"), false);
+    assertEquals(workerRun.includes("setpriv"), false);
     assertEquals(crontab.includes("setpriv"), false);
     assertEquals(crontab.includes("sh -c"), false);
     assertEquals(crontab.includes("sh /etc/bento/cron/jobs/alpha/tick.sh"), true);
+    assertEquals(cronScript.includes("= Run at %s ="), true);
+    assertEquals(cronScript.includes("date '+%Y-%m-%d %H:%M:%S'"), true);
+    assertEquals(logrotate.includes('"/home/alpha/logs/*.log"'), true);
+    assertEquals(logrotate.includes("size 10M"), true);
+    assertEquals(logrotate.includes("rotate 2"), true);
+    assertEquals(logrotate.includes("copytruncate"), true);
+    assertEquals(crontab.includes("logrotate"), false);
+    assertEquals(logrotateCrontab.includes("0 * * * * /usr/sbin/logrotate"), true);
+    assertEquals(logrotateCrontab.includes("logrotate-alpha.status"), true);
+    assertEquals(logrotateRun.includes("/usr/local/bin/supercronic"), true);
+    assertEquals(logrotateRun.includes("sleep"), false);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -433,6 +469,7 @@ Deno.test("cron shell scripts preserve user redirects outside Bento's job log", 
       files.find((f) => f.relPath === "runner/php85/cron/alpha.crontab")!.content,
     );
     assertEquals(script.includes("echo 'Hello' >> public/abc.txt"), true);
+    assertEquals(script.includes("= Run at %s ="), true);
     assertEquals(crontab.includes("/etc/bento/cron/jobs/alpha/redirect.sh"), true);
     assertEquals(crontab.includes("public/abc.txt"), false);
     assertEquals(crontab.includes("logs/cron-redirect.log 2>&1"), true);
@@ -451,7 +488,12 @@ Deno.test("cron shell scripts preserve user redirects outside Bento's job log", 
     }).output();
     assertEquals(result.success, true);
     assertEquals(await Deno.readTextFile(join(workdir, "public/abc.txt")), "Hello\n");
-    assertEquals(await Deno.readTextFile(bentoLog), "");
+    assertEquals(
+      /^\n= Run at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} =\n\n$/.test(
+        await Deno.readTextFile(bentoLog),
+      ),
+      true,
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -477,8 +519,8 @@ Deno.test("cron add/remove renders crontab and reloads existing Supercronic", as
     state = first.state;
     await render.apply(state, { renderOnly: true, skipValidate: true });
 
-    // Adding another job leaves supervisord.conf unchanged, so reread/update
-    // alone is insufficient; the existing Supercronic process needs USR2.
+    // Adding another job leaves the s6 service definition unchanged, so
+    // reconciliation alone is insufficient; Supercronic still needs USR2.
     const second = addCronJob(state, {
       app: "alpha",
       name: "second",
@@ -502,11 +544,12 @@ Deno.test("cron add/remove renders crontab and reloads existing Supercronic", as
     assertEquals(secondScript.includes("exec echo second-job"), true);
     assertEquals(
       process.calls.some(({ command }) =>
-        command.includes("signal") && command.includes("USR2") &&
-        command.includes("scheduler-alpha")
+        command.includes("/command/s6-svc") && command.includes("-2") &&
+        command.some((arg) => arg.endsWith("/scheduler-alpha"))
       ),
       true,
     );
+    assertEquals(process.calls.some(({ command }) => command.includes("restart")), false);
 
     process.calls.length = 0;
     const removed = removeCronJob(
@@ -524,8 +567,8 @@ Deno.test("cron add/remove renders crontab and reloads existing Supercronic", as
     assertEquals(crontab.includes("/jobs/alpha/second.sh"), false);
     assertEquals(
       process.calls.some(({ command }) =>
-        command.includes("signal") && command.includes("USR2") &&
-        command.includes("scheduler-alpha")
+        command.includes("/command/s6-svc") && command.includes("-2") &&
+        command.some((arg) => arg.endsWith("/scheduler-alpha"))
       ),
       true,
     );

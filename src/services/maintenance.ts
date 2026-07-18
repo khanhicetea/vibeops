@@ -1,6 +1,6 @@
 /**
  * Stack maintenance: on-demand log retention and host cron registration (product §6.10).
- * In-runner logrotate (supervisord system-logrotate) is separate from host maintenance.
+ * In-runner service logs are separate from host maintenance.
  */
 
 import { join } from "@std/path";
@@ -42,7 +42,7 @@ export async function runStackMaintenance(
   const removed: string[] = [];
   const retained: string[] = [];
   const notes: string[] = [
-    "In-runner logrotate (supervisord program system-logrotate) is separate from host maintenance.",
+    "In-runner s6 service logs are separate from host maintenance.",
   ];
 
   const nginxLogDir = join(platform.paths.paths.logsDir, "nginx");

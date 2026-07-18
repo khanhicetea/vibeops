@@ -24,6 +24,7 @@ type StringArgName =
   | "repoRoot"
   | "schedule"
   | "service"
+  | "signal"
   | "slug"
   | "source"
   | "target"

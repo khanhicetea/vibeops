@@ -1,5 +1,5 @@
 /**
- * Long-running workers supervised as flat Supervisor programs.
+ * Long-running workers supervised as flat s6 services.
  */
 
 import type { DesiredState, Worker } from "../domain/state.ts";
@@ -7,6 +7,7 @@ import { asAppSlug, asWorkerName } from "../domain/types.ts";
 import { conflictError, notFoundError, validationError } from "../domain/errors.ts";
 import { parseAppSlug, parseStringArray, unwrap } from "../schemas/validators.ts";
 import type { Platform } from "../platform/mod.ts";
+import { composeArgs } from "./compose.ts";
 import { type ReloadPlan, reloadPlanForRunnerChange } from "../domain/reload.ts";
 
 export type AddWorkerInput = {
@@ -91,7 +92,7 @@ export function listWorkers(state: DesiredState, appSlug?: string): Worker[] {
     .sort((a, b) => `${a.app}:${a.name}`.localeCompare(`${b.app}:${b.name}`));
 }
 
-/** Supervisor program name for a worker (flat — independent restart). */
+/** s6 service name for a worker (flat — independent restart). */
 export function workerProgramName(appSlug: string, workerName: string): string {
   return `worker-${appSlug}-${workerName}`;
 }
@@ -101,7 +102,7 @@ export function workerRunnerService(app: { phpService: string }): string {
   return `${app.phpService}-runner`;
 }
 
-export type WorkerControlAction = "start" | "stop" | "restart" | "status";
+export type WorkerControlAction = "start" | "stop" | "restart" | "status" | "signal";
 
 export type WorkerControlPlan = {
   app: string;
@@ -109,12 +110,16 @@ export type WorkerControlPlan = {
   program: string;
   runnerService: string;
   action: WorkerControlAction;
-  /** Host argv for supervisorctl; targets only this program. */
+  signal?: string;
+  /** Compose arguments after `docker compose`; used to assemble all -f files. */
+  composeCommand: string[];
+  /** Inspectable shorthand argv for diagnostics and scoped-command tests. */
   command: string[];
+  desiredState: DesiredState;
 };
 
 /**
- * Build a supervisorctl plan that controls exactly one flat worker program.
+ * Build an s6 plan that controls exactly one flat worker service.
  * Changing one worker must not restart siblings or unrelated schedulers (F-15).
  */
 export function buildWorkerControlPlan(
@@ -130,7 +135,21 @@ export function buildWorkerControlPlan(
 
   const program = workerProgramName(appSlug, name);
   const runnerService = workerRunnerService(app);
-  const supervisorAction = action === "status" ? "status" : action;
+  if (action === "signal") {
+    throw validationError("use buildWorkerSignalPlan for signal actions");
+  }
+  const servicePath = `/run/bento-s6/services/${program}`;
+  const composeCommand = action === "status"
+    ? ["exec", "-T", runnerService, "/command/s6-svstat", servicePath]
+    : [
+      "exec",
+      "-T",
+      runnerService,
+      "/command/s6-svc",
+      action === "start" ? "-u" : action === "stop" ? "-d" : "-r",
+      servicePath,
+    ];
+  const command = ["docker", "compose", ...composeCommand];
 
   return {
     app: appSlug,
@@ -138,16 +157,51 @@ export function buildWorkerControlPlan(
     program,
     runnerService,
     action,
-    command: [
-      "docker",
-      "compose",
-      "exec",
-      "-T",
-      runnerService,
-      "supervisorctl",
-      supervisorAction,
-      program,
-    ],
+    composeCommand,
+    command,
+    desiredState: state,
+  };
+}
+
+/** Build a scoped signal command for one worker service. */
+export function buildWorkerSignalPlan(
+  state: DesiredState,
+  appSlug: string,
+  name: string,
+  signal: string,
+): WorkerControlPlan {
+  const base = buildWorkerControlPlan(state, appSlug, name, "status");
+  const normalized = signal.trim().toUpperCase().replace(/^SIG/, "");
+  const flags: Record<string, string> = {
+    HUP: "-h",
+    ALRM: "-a",
+    INT: "-i",
+    QUIT: "-q",
+    USR1: "-1",
+    USR2: "-2",
+    TERM: "-t",
+    KILL: "-k",
+  };
+  const flag = flags[normalized];
+  if (!flag) {
+    throw validationError(
+      "signal must be one of HUP, ALRM, INT, QUIT, USR1, USR2, TERM, KILL",
+    );
+  }
+  const composeCommand = [
+    "exec",
+    "-T",
+    base.runnerService,
+    "/command/s6-svc",
+    flag,
+    `/run/bento-s6/services/${base.program}`,
+  ];
+  return {
+    ...base,
+    action: "signal",
+    signal: normalized,
+    composeCommand,
+    command: ["docker", "compose", ...composeCommand],
   };
 }
 
@@ -156,7 +210,8 @@ export async function controlWorker(
   platform: Platform,
   plan: WorkerControlPlan,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const result = await platform.process.run(plan.command, {
+  const command = await composeArgs(platform, plan.desiredState, plan.composeCommand);
+  const result = await platform.process.run(command, {
     cwd: platform.paths.paths.root,
     timeoutMs: 30_000,
   });
@@ -164,7 +219,7 @@ export async function controlWorker(
 }
 
 /**
- * Inspect a worker: supervisor status for its program only.
+ * Inspect a worker: s6 status for its service only.
  */
 export async function inspectWorker(
   platform: Platform,
@@ -192,8 +247,10 @@ export function isScopedWorkerCommand(
   siblingPrograms: string[],
 ): boolean {
   const joined = command.join(" ");
-  if (!command.includes(program)) return false;
-  if (!command.includes("supervisorctl")) return false;
+  if (!command.some((arg) => arg === program || arg.endsWith(`/${program}`))) return false;
+  if (!command.some((arg) => arg.endsWith("/s6-svc") || arg.endsWith("/s6-svstat"))) {
+    return false;
+  }
   for (const sibling of siblingPrograms) {
     if (sibling !== program && joined.includes(sibling)) return false;
   }

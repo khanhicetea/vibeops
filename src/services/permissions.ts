@@ -316,7 +316,7 @@ export async function applyAppPermissionPolicy(
   actions.push("wrote permission-policy metadata");
 
   // Atomic control-plane rewrites create new inodes. Re-assert ownership on the
-  // app-readable runtime files after all writes so the setpriv runner can drain.
+  // app-readable runtime files after all writes so the privilege-dropped runner can drain.
   for (
     const p of [
       join(home, "credentials", "app.env"),

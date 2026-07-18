@@ -114,7 +114,7 @@ An app is a logical tenant inside version-shared infrastructure.
 | PHP filesystem access | Per-pool `open_basedir` rooted in the app home, plus required runtime libraries/log paths |
 | MySQL | Same-name user with grants restricted to the app database namespace on one service |
 | Redis | Mandatory app key prefix in shared mode; per-app user/key/channel ACL in ACL mode |
-| Background work | Supervisor and scheduler switch to the app user and constrain working directory to the app home |
+| Background work | s6-managed workers and schedulers switch to the app user and constrain working directory to the app home |
 | Deployment | Authenticated per-app queue; deploy command runs as the app user with one active job |
 
 This is not a hostile multi-tenant sandbox. Apps on the same PHP version share an image, container namespace, network access, CPU/memory envelope, FPM global process cap, and runner container. The design protects ordinary application ownership and operational mistakes; it is not equivalent to one container or VM per untrusted tenant.
@@ -259,13 +259,12 @@ Stopped services are not treated as fatal solely because they cannot be signaled
 
 ### 7.5 Schedules and workers
 
-Each PHP runner uses Supervisord as PID 1. It owns:
+Each PHP runner uses s6-overlay as PID 1. A dynamic s6 scan tree owns:
 
-- one root-owned system scheduler for runtime log maintenance;
-- one Supercronic child per app that has schedules;
-- one flat Supervisor program per enabled worker.
+- one Supercronic service per app that has schedules or deploy draining enabled;
+- one flat s6 service per enabled worker.
 
-Flat programs prevent a change to one worker from restarting a process group. Scheduler files are validated before an existing scheduler receives a reload signal. Cron locks live in volatile per-app runtime directories and cover the whole command duration.
+Generated service directories are reconciled into the live scan tree, so services can be added or removed without restarting the runner container. Flat services prevent a worker change from restarting siblings. Scheduler files are validated before an existing scheduler receives USR2. Cron locks live in volatile per-app runtime directories and cover the whole command duration.
 
 ### 7.6 Webhook deployment
 
@@ -319,7 +318,7 @@ Restore makes the selected dump available through the same writable backup bind 
 
 ### 8.1 Public surface
 
-Only Nginx is public. The stack may expose app sites, proxy sites, ACME HTTP challenges, and an opt-in authenticated app-internal endpoint. Management, FPM, MySQL, Redis, Supervisor, and status endpoints remain local/private.
+Only Nginx is public. The stack may expose app sites, proxy sites, ACME HTTP challenges, and an opt-in authenticated app-internal endpoint. Management, FPM, MySQL, Redis, s6 control paths, and status endpoints remain local/private.
 
 ### 8.2 Secrets
 
@@ -377,7 +376,7 @@ The replacement must use these target choices unless the product owner explicitl
 | Compression | Pinned Nginx Zstandard modules plus gzip | Modern compression with compatibility fallback and reproducible module build |
 | PHP | Official Debian-based versioned PHP-FPM images | Multiple concurrent runtimes with consistent FPM/CLI/runner toolchain |
 | PHP capabilities | Common web extensions, OPcache, Redis extension, Composer, Node.js, Git, SSH client | Supports typical modern and legacy PHP deployment workflows |
-| Process supervision | Supervisord | Persistent per-version runner with individually controllable programs |
+| Process supervision | s6-overlay 3.x | PID 1 plus a dynamic scan tree with individually controllable services |
 | Scheduling | Supercronic | Container-friendly cron parsing, validation, reload, and logs |
 | Relational data | Versioned MySQL services with named volumes | App assignment to one durable engine version; matching client tools |
 | Cache/queue | Redis with AOF persistence and optional ACL mode | Shared internal service with compatibility and stronger isolation modes |

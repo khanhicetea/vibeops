@@ -1,6 +1,7 @@
 import {
   addWorker,
   buildWorkerControlPlan,
+  buildWorkerSignalPlan,
   controlWorker,
   inspectWorker,
   listWorkers,
@@ -22,6 +23,7 @@ export async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string)
       { label: "Start worker", value: "start" },
       { label: "Stop worker", value: "stop" },
       { label: "Restart worker", value: "restart" },
+      { label: "Signal worker", value: "signal" },
       { label: "Inspect worker", value: "inspect" },
     ]);
     if (!action) return;
@@ -96,7 +98,7 @@ export async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string)
       await ui.pause();
     } else if (
       action === "start" || action === "stop" || action === "restart" ||
-      action === "inspect"
+      action === "signal" || action === "inspect"
     ) {
       const state = await ctx.store.load();
       const workers = listWorkers(state, slug);
@@ -125,12 +127,18 @@ export async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string)
             ].join("\n"),
           );
         } else {
-          const plan = buildWorkerControlPlan(
-            state,
-            slug,
-            picked,
-            action as WorkerControlAction,
-          );
+          const signal = action === "signal"
+            ? await ui.prompt("Signal", { required: true, default: "HUP" })
+            : undefined;
+          if (action === "signal" && !signal) continue;
+          const plan = action === "signal"
+            ? buildWorkerSignalPlan(state, slug, picked, signal!)
+            : buildWorkerControlPlan(
+              state,
+              slug,
+              picked,
+              action as WorkerControlAction,
+            );
           const result = await controlWorker(ctx.platform, plan);
           if (result.code === 0) {
             ui.success(`${action} ${plan.program}`);

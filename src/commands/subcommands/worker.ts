@@ -1,6 +1,7 @@
 import {
   addWorker,
   buildWorkerControlPlan,
+  buildWorkerSignalPlan,
   controlWorker,
   inspectWorker,
   listWorkers,
@@ -57,7 +58,7 @@ export function registerWorkerCommands(parser: YargsBuilder, state: RunState): Y
         )
         .command(
           "start <app> <name>",
-          "Start one worker (scoped supervisorctl)",
+          "Start one worker (scoped s6 service)",
           (y2: YargsBuilder) =>
             y2
               .positional("app", { type: "string", demandOption: true })
@@ -66,7 +67,7 @@ export function registerWorkerCommands(parser: YargsBuilder, state: RunState): Y
         )
         .command(
           "stop <app> <name>",
-          "Stop one worker (scoped supervisorctl)",
+          "Stop one worker (scoped s6 service)",
           (y2: YargsBuilder) =>
             y2
               .positional("app", { type: "string", demandOption: true })
@@ -75,7 +76,7 @@ export function registerWorkerCommands(parser: YargsBuilder, state: RunState): Y
         )
         .command(
           "restart <app> <name>",
-          "Restart one worker (scoped supervisorctl)",
+          "Restart one worker (scoped s6 service)",
           (y2: YargsBuilder) =>
             y2
               .positional("app", { type: "string", demandOption: true })
@@ -83,8 +84,22 @@ export function registerWorkerCommands(parser: YargsBuilder, state: RunState): Y
           bind(state, cmdWorkerRestart),
         )
         .command(
+          "signal <app> <name>",
+          "Send one signal to one worker service",
+          (y2: YargsBuilder) =>
+            y2
+              .positional("app", { type: "string", demandOption: true })
+              .positional("name", { type: "string", demandOption: true })
+              .option("signal", {
+                type: "string",
+                demandOption: true,
+                describe: "HUP|ALRM|INT|QUIT|USR1|USR2|TERM|KILL",
+              }),
+          bind(state, cmdWorkerSignal),
+        )
+        .command(
           "inspect <app> <name>",
-          "Inspect one worker (supervisor status)",
+          "Inspect one worker (s6 status)",
           (y2: YargsBuilder) =>
             y2
               .positional("app", { type: "string", demandOption: true })
@@ -93,7 +108,7 @@ export function registerWorkerCommands(parser: YargsBuilder, state: RunState): Y
         )
         .demandCommand(
           1,
-          "Specify a worker subcommand: add|remove|list|start|stop|restart|inspect",
+          "Specify a worker subcommand: add|remove|list|start|stop|restart|signal|inspect",
         )
         .recommendCommands());
 }
@@ -194,6 +209,21 @@ async function cmdWorkerStop(argv: ArgsWith<"app" | "name">, ctx: CliContext): P
 async function cmdWorkerRestart(argv: ArgsWith<"app" | "name">, ctx: CliContext): Promise<number> {
   return await cmdWorkerControl(argv, ctx, "restart");
 }
+async function cmdWorkerSignal(
+  argv: ArgsWith<"app" | "name" | "signal">,
+  ctx: CliContext,
+): Promise<number> {
+  const state = await ctx.store.load();
+  const plan = buildWorkerSignalPlan(state, argv.app, argv.name, argv.signal);
+  const result = await controlWorker(ctx.platform, plan);
+  if (result.stdout) ctx.log.out(result.stdout.trimEnd());
+  if (result.stderr && result.code !== 0) ctx.log.error(result.stderr.trim());
+  if (result.code === 0) {
+    ctx.log.info(`sent ${plan.signal} to ${plan.program} on ${plan.runnerService}`);
+  }
+  return result.code === 0 ? 0 : 8;
+}
+
 async function cmdWorkerInspect(
   argv: ArgsWith<"app" | "name">,
   ctx: CliContext,
@@ -210,7 +240,7 @@ async function cmdWorkerInspect(
         runner: result.plan.runnerService,
         command: result.worker.command,
         enabled: result.worker.enabled,
-        supervisor: result.stdout.trim(),
+        s6: result.stdout.trim(),
       },
       null,
       2,

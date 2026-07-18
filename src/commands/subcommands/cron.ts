@@ -1,4 +1,10 @@
-import { addCronJob, editCronJob, listCronJobs, removeCronJob } from "../../services/cron.ts";
+import {
+  addCronJob,
+  editCronJob,
+  listCronJobs,
+  reloadCronScheduler,
+  removeCronJob,
+} from "../../services/cron.ts";
 import { printTable } from "../../ui/output.ts";
 import type { CliContext } from "../context.ts";
 import type { ArgsWith, CliArgs } from "../args.ts";
@@ -64,6 +70,12 @@ export function registerCronCommands(parser: YargsBuilder, state: RunState): Yar
           bind(state, cmdCronEdit),
         )
         .command(
+          "reload <app>",
+          "Signal one app's Supercronic service to reread its crontab",
+          (y2: YargsBuilder) => y2.positional("app", { type: "string", demandOption: true }),
+          bind(state, cmdCronReload),
+        )
+        .command(
           "remove <app> <name>",
           "Remove a cron job",
           (y2: YargsBuilder) =>
@@ -74,8 +86,17 @@ export function registerCronCommands(parser: YargsBuilder, state: RunState): Yar
             ),
           bind(state, cmdCronRemove),
         )
-        .demandCommand(1, "Specify a cron subcommand: add|edit|remove|list")
+        .demandCommand(1, "Specify a cron subcommand: add|edit|reload|remove|list")
         .recommendCommands());
+}
+
+async function cmdCronReload(argv: ArgsWith<"app">, ctx: CliContext): Promise<number> {
+  const state = await ctx.store.load();
+  const result = await reloadCronScheduler(ctx.platform, state, argv.app);
+  if (result.stdout) ctx.log.out(result.stdout.trimEnd());
+  if (result.stderr && result.code !== 0) ctx.log.error(result.stderr.trim());
+  if (result.code === 0) ctx.log.info(`reloaded scheduler-${argv.app}`);
+  return result.code === 0 ? 0 : 8;
 }
 
 async function cmdCronList(argv: CliArgs, ctx: CliContext): Promise<number> {

@@ -108,7 +108,7 @@ Operator CLI (Deno/TS)
 Internet -> host-network Nginx -> per-app PHP-FPM sockets
                                  -> private MySQL / Redis
 
-PHP runner (one per version) -> per-app supercronic + flat Supervisor workers
+PHP runner (one per version) -> s6-overlay PID 1 -> per-app Supercronic + flat s6 workers
                              -> local deploy drain -> hook -> app FPM OPcache reset
 ```
 
@@ -126,12 +126,29 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | MySQL        | `mysql add\|list\|db\|shell\|size\|processlist` (version removal blocked; password rotation unsupported)                                                                                                                                   |
 | Proxy        | `proxy create\|list` (delete/remove blocked)                                                                                                                                                                                               |
 | TLS          | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below)                                                                                                                                                                 |
-| Background   | `cron …`, `worker …`                                                                                                                                                                                                                       |
+| Background   | `cron …` (`cron reload <app>`), `worker …` (`worker signal <app> <name> --signal HUP`)                                                                                                                                                                                                                       |
 | Deploy       | `deploy enable\|disable\|rotate\|status\|drain\|instructions`                                                                                                                                                                              |
 | Access logs  | `logs access enable\|disable\|rotate\|report --app <app>`; add `--attach` for the interactive GoAccess terminal (TUI: Applications → Access logs)                                                                                          |
 | Exec / shell | `app shell <app>`, `exec <app> [-- <cmd>]` — ephemeral PHP CLI as app UID (TUI: Applications → Open CLI shell)                                                                                                                             |
 | Compose      | `compose files`, `compose -- <args>` (refuses `down -v`)                                                                                                                                                                                   |
 | Safety       | `permissions check\|repair [--shallow\|--recursive] [--dry-run]`, `backup`, `restore`                                                                                                                                                      |
+
+### Runner service supervision
+
+Runner containers use **s6-overlay 3.2.3.2** as PID 1. Applying cron or worker changes reconciles generated service directories into the live s6 scan tree; adding/removing a scheduler or worker does not restart the runner container or sibling services. Crontab-only changes send USR2 only to `scheduler-<app>`.
+
+Each PHP runner also has an s6-supervised root maintenance scheduler. Supercronic runs per-app logrotate entries hourly, rotates app and captured worker logs at 10 MiB, and keeps two rotations. This is separate from each app's unprivileged crontab because PHP-FPM slow logs and captured worker logs can be root-owned. Rotation uses `copytruncate`, so Supercronic, PHP-FPM, workers, and application processes do not need reopen signals or restarts (with the usual small copy/truncate race window).
+
+Scoped controls are available through `worker start|stop|restart|signal|inspect`. For diagnostics, the same service can be addressed inside its runner, for example:
+
+```sh
+bento compose -- exec -T php85-runner /command/s6-svstat \
+  /run/bento-s6/services/worker-demo-queue
+bento compose -- exec -T php85-runner /command/s6-svc -2 \
+  /run/bento-s6/services/scheduler-demo
+```
+
+Migrating an existing stack requires one planned runner recreation. First run `bento render` to materialize the new image assets, then rebuild each PHP image and recreate its runner (for example, `bento compose -- build php85` followed by `bento compose -- up -d --force-recreate php85-runner`). Run `bento apply` afterward. Later cron/worker additions are live-reconciled without container restarts.
 
 ### TLS modes (F-12)
 

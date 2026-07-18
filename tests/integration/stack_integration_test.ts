@@ -527,7 +527,7 @@ Deno.test("F2 cron/worker config generation + scoped reload plan", async () => {
     }
     await walk(gen(h, "runner"));
     await walk(gen(h, "php"));
-    // Flat supervisor program name stability
+    // Flat s6 service name stability
     assertEquals(
       blob.includes("alpha__queue") || blob.includes("queue:work") ||
         blob.includes("schedule:run") || blob.includes("tick"),

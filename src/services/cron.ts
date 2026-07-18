@@ -12,6 +12,7 @@ import {
   unwrap,
 } from "../schemas/validators.ts";
 import type { Platform } from "../platform/mod.ts";
+import { composeArgs } from "./compose.ts";
 import {
   type ReloadPlan,
   reloadPlanForCronChange,
@@ -175,9 +176,9 @@ export function removeCronJob(
     throw notFoundError(`cron job ${name} not found for app ${appSlug}`);
   }
   const runnerService = `${app.phpService}-runner`;
-  // If another schedule (or deploy drain) remains, Supervisor's program config
+  // If another schedule (or deploy drain) remains, the s6 service definition
   // is unchanged and Supercronic itself must reread the mounted crontab. When
-  // the final schedule is removed, supervisorctl update stops the program.
+  // the final schedule is removed, s6 reconciliation stops the service.
   const schedulerRemains = app.deploy.enabled ||
     cronJobs.some((j) => j.app === appSlug && j.enabled);
   return {
@@ -186,6 +187,38 @@ export function removeCronJob(
       ? reloadPlanForCronChange(runnerService, appSlug)
       : reloadPlanForRunnerChange(runnerService),
   };
+}
+
+/** Build a scoped USR2 command that makes one app's Supercronic reread its crontab. */
+export function buildCronReloadCommand(state: DesiredState, appSlug: string): string[] {
+  const app = state.apps[appSlug];
+  if (!app) throw notFoundError(`app not found: ${appSlug}`);
+  const hasScheduler = app.deploy.enabled ||
+    state.cronJobs.some((job) => job.app === appSlug && job.enabled);
+  if (!hasScheduler) throw notFoundError(`no scheduler service for app ${appSlug}`);
+  return [
+    "docker",
+    "compose",
+    "exec",
+    "-T",
+    `${app.phpService}-runner`,
+    "/command/s6-svc",
+    "-2",
+    `/run/bento-s6/services/scheduler-${appSlug}`,
+  ];
+}
+
+export async function reloadCronScheduler(
+  platform: Platform,
+  state: DesiredState,
+  appSlug: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const shorthand = buildCronReloadCommand(state, appSlug);
+  const command = await composeArgs(platform, state, shorthand.slice(2));
+  return await platform.process.run(command, {
+    cwd: platform.paths.paths.root,
+    timeoutMs: 30_000,
+  });
 }
 
 export function listCronJobs(state: DesiredState, appSlug?: string): CronJob[] {

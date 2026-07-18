@@ -18,6 +18,7 @@ import {
 import {
   addWorker,
   buildWorkerControlPlan,
+  buildWorkerSignalPlan,
   isScopedWorkerCommand,
   workerProgramName,
 } from "../../src/services/worker.ts";
@@ -196,9 +197,12 @@ Deno.test("worker program names are stable and flat", async () => {
     const restart = buildWorkerControlPlan(state, "demo", "queue", "restart");
     assertEquals(restart.program, "worker-demo-queue");
     assertEquals(restart.runnerService, "php85-runner");
-    assertEquals(restart.command.includes("supervisorctl"), true);
-    assertEquals(restart.command.includes("restart"), true);
-    assertEquals(restart.command.includes("worker-demo-queue"), true);
+    assertEquals(restart.command.includes("/command/s6-svc"), true);
+    assertEquals(restart.command.includes("-r"), true);
+    assertEquals(restart.command.some((arg) => arg.endsWith("/worker-demo-queue")), true);
+    const hup = buildWorkerSignalPlan(state, "demo", "queue", "HUP");
+    assertEquals(hup.command.includes("-h"), true);
+    assertEquals(hup.command.some((arg) => arg.endsWith("/worker-demo-queue")), true);
     // Sibling not targeted
     assertEquals(restart.command.includes("worker-demo-mail"), false);
     assertEquals(
@@ -442,7 +446,7 @@ Deno.test("maintenance prunes old rotated logs and keeps active", async () => {
     );
 
     const result = await runStackMaintenance(platform, { retainDays: 14 });
-    assertEquals(result.notes.some((n) => n.includes("In-runner logrotate")), true);
+    assertEquals(result.notes.some((n) => n.includes("In-runner s6 service logs")), true);
     assertEquals(await platform.fs.exists(join(dir, "demo.access.log")), true);
     assertEquals(
       await platform.fs.exists(join(dir, "demo.access.log.2020-01-01T00-00-00-000Z")),

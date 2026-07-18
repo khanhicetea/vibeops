@@ -1,16 +1,9 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-mkdir -p /var/log/supervisor /run/bento /etc/bento/cron
+# /init from s6-overlay is PID 1. This command runs as its supervised CMD and
+# owns a dynamic nested scan tree for generated app schedulers and workers.
+mkdir -p /var/log/bento /run/bento /run/bento-s6 /etc/bento/cron /etc/bento/services
 
-CONF="${BENTO_SUPERVISORD_CONF:-/etc/bento/supervisord.conf}"
-if [ ! -f "$CONF" ]; then
-  cat > /tmp/supervisord-fallback.conf <<'EOF'
-[supervisord]
-nodaemon=true
-logfile=/var/log/supervisor/supervisord.log
-EOF
-  CONF=/tmp/supervisord-fallback.conf
-fi
-
-exec supervisord -c "$CONF"
+/usr/local/bin/bento-s6-reconcile --initial
+exec /command/s6-svscan /run/bento-s6/services

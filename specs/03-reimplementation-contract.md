@@ -157,7 +157,7 @@ These guarantees are independently testable and are release blockers.
 - Ordinary domain/TLS/log changes do not reload FPM or runners.
 - Cron/worker/deploy-drain changes do not reload Nginx or FPM.
 - Database administration does not reload web/runtime services.
-- A worker definition change affects the smallest practical Supervisor child set.
+- A worker definition change affects only its matching s6 service.
 - Nginx and PHP-FPM reloads must be graceful rather than container restarts when supported.
 
 ### 5.5 Durability

@@ -164,6 +164,11 @@ Deno.test("cli init render status app create", async () => {
     assertEquals(await runCli([...base, "deploy", "enable", "demo"]), 0);
     assertEquals(await runCli([...base, "deploy", "status", "demo"]), 0);
 
+    // compose wrapper materializes assets and renders before assembling argv
+    assertEquals(
+      await runCli([...base, "compose", "--print", "--", "build", "php85"]),
+      0,
+    );
     // compose safety
     assertEquals(
       (await runCli([...base, "compose", "--", "down", "-v"])) !== 0,
