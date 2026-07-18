@@ -64,6 +64,8 @@ export type ServiceReloader = {
   reload: (plan: ReloadPlan) => Promise<void>;
 };
 
+export type ReloadPlanExecutedReporter = (plan: ReloadPlan) => void;
+
 type JournalEntry = {
   path: string;
   existed: boolean;
@@ -112,7 +114,10 @@ export function isManagedMarker(head: string): boolean {
 }
 
 export class RenderService {
-  constructor(private readonly platform: Platform) {}
+  constructor(
+    private readonly platform: Platform,
+    private readonly reportReloadPlanExecuted?: ReloadPlanExecutedReporter,
+  ) {}
 
   /** Render complete candidate without touching live generation. */
   async renderCandidate(state: DesiredState): Promise<RenderResult> {
@@ -293,6 +298,11 @@ export class RenderService {
               cause,
             );
           }
+          try {
+            this.reportReloadPlanExecuted?.(reloadPlan);
+          } catch {
+            // Operator-facing reporting must not turn a successful reload into a failed apply.
+          }
         }
 
         journal.phase = "finalizing";
@@ -319,7 +329,7 @@ export class RenderService {
           0o644,
         );
 
-        return candidate;
+        return { ...candidate, reloadPlan };
       } catch (cause) {
         if (cause instanceof Error && cause.message.includes("validation failed")) {
           throw cause;

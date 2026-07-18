@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
+import { describeReloadPlan, reloadPlanForPoolChange } from "../../src/domain/reload.ts";
 import { createEmptyState } from "../../src/domain/state.ts";
 import { materializeAppHome, provisionApp } from "../../src/services/app.ts";
 import { RenderService } from "../../src/services/render.ts";
@@ -77,6 +78,31 @@ Deno.test("render-only does not call reloader", async () => {
       },
     });
     assertEquals(reloads, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("successful reload reports the services in the executed plan", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const store = new StateStore(platform);
+    const reported: string[][] = [];
+    const render = new RenderService(platform, (plan) => {
+      reported.push(describeReloadPlan(plan));
+    });
+    await store.init();
+    const reloadPlan = reloadPlanForPoolChange("php85");
+
+    const result = await render.apply(await store.load(), {
+      skipValidate: true,
+      reloadPlan,
+      reloader: { reload: async () => {} },
+    });
+
+    assertEquals(reported, [["nginx", "php-fpm:php85"]]);
+    assertEquals(describeReloadPlan(result.reloadPlan), ["nginx", "php-fpm:php85"]);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

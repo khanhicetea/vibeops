@@ -5,6 +5,7 @@ import pc from "picocolors";
 
 export type Logger = {
   info: (msg: string) => void;
+  success: (title: string, detail?: string) => void;
   warn: (msg: string) => void;
   error: (msg: string) => void;
   out: (msg: string) => void;
@@ -15,6 +16,17 @@ export function createLogger(opts?: { json?: boolean }): Logger {
     info(msg: string) {
       if (opts?.json) console.error(JSON.stringify({ level: "info", msg }));
       else console.error(pc.dim(msg));
+    },
+    success(title: string, detail?: string) {
+      if (opts?.json) {
+        console.error(JSON.stringify({ level: "success", msg: title, detail }));
+        return;
+      }
+      console.error(pc.green(`┌─ OK: ${title}`));
+      if (detail) {
+        for (const line of detail.split("\n")) console.error(pc.green(`│  ${line}`));
+      }
+      console.error(pc.green(`└${"─".repeat(Math.min(48, title.length + 10))}`));
     },
     warn(msg: string) {
       if (opts?.json) console.error(JSON.stringify({ level: "warn", msg }));
