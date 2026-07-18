@@ -126,6 +126,26 @@ Deno.test("cli init render status app create", async () => {
     assertEquals(
       await runCli([
         ...base,
+        "cron",
+        "edit",
+        "demo",
+        "tick",
+        "--schedule",
+        "0 * * * *",
+        "--cmd",
+        "php artisan schedule:run >> logs/scheduler.log",
+        "--no-apply",
+      ]),
+      0,
+    );
+    const cronState = JSON.parse(await Deno.readTextFile(join(stack, "state.json")));
+    assertEquals(cronState.cronJobs[0].schedule, "0 * * * *");
+    assertEquals(cronState.cronJobs[0].timezone, "UTC");
+    assertEquals(cronState.cronJobs[0].commandMode, "shell");
+
+    assertEquals(
+      await runCli([
+        ...base,
         "worker",
         "add",
         "--app",

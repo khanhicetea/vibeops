@@ -16,7 +16,7 @@ import {
 import { generateAll } from "../../src/services/generate.ts";
 import { createAppDatabase, listRecentBackupFiles } from "../../src/services/mysql.ts";
 import { aclRules, redisConnectionEnv } from "../../src/services/redis.ts";
-import { addCronJob, removeCronJob } from "../../src/services/cron.ts";
+import { addCronJob, editCronJob, removeCronJob } from "../../src/services/cron.ts";
 import { RenderService } from "../../src/services/render.ts";
 import { addWorker, workerProgramName } from "../../src/services/worker.ts";
 import { describeReloadPlan } from "../../src/domain/reload.ts";
@@ -355,6 +355,55 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
     assertEquals(crontab.includes("setpriv"), false);
     assertEquals(crontab.includes("sh -c"), false);
     assertEquals(crontab.includes("sh /etc/bento/cron/jobs/alpha/tick.sh"), true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("cron edit changes supplied fields and preserves omitted fields", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-cron-edit-" });
+  try {
+    const platform = testPlatform(root);
+    const provisioned = provisionApp(platform, createEmptyState(), {
+      slug: "alpha",
+      domain: "a.test",
+    });
+    const added = addCronJob(provisioned.state, {
+      app: "alpha",
+      name: "tick",
+      schedule: "*/5 * * * *",
+      command: ["php", "artisan", "schedule:run"],
+      timezone: "UTC",
+      lock: "scheduler",
+      timeoutSec: 60,
+    }, platform);
+
+    const edited = editCronJob(added.state, {
+      app: "alpha",
+      name: "tick",
+      schedule: "0 * * * *",
+    }, platform);
+
+    assertEquals(edited.job.schedule, "0 * * * *");
+    assertEquals(edited.job.command, ["php", "artisan", "schedule:run"]);
+    assertEquals(edited.job.commandMode, "argv");
+    assertEquals(edited.job.timezone, "UTC");
+    assertEquals(edited.job.lock, "scheduler");
+    assertEquals(edited.job.timeoutSec, 60);
+    assertEquals(
+      edited.reloadPlan.cronSchedulers?.get("php85-runner")?.has("alpha"),
+      true,
+    );
+
+    const commandEdited = editCronJob(edited.state, {
+      app: "alpha",
+      name: "tick",
+      command: ["php artisan schedule:run >> logs/scheduler.log"],
+      commandMode: "shell",
+      timezone: "Europe/London",
+    }, platform);
+    assertEquals(commandEdited.job.commandMode, "shell");
+    assertEquals(commandEdited.job.timezone, "Europe/London");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

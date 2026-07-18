@@ -1,4 +1,4 @@
-import { addCronJob, listCronJobs, removeCronJob } from "../../services/cron.ts";
+import { addCronJob, editCronJob, listCronJobs, removeCronJob } from "../../services/cron.ts";
 import { printTable } from "../../ui/output.ts";
 import type { CliContext } from "../context.ts";
 import type { ArgsWith, CliArgs } from "../args.ts";
@@ -45,6 +45,25 @@ export function registerCronCommands(parser: YargsBuilder, state: RunState): Yar
           bind(state, cmdCronAdd),
         )
         .command(
+          "edit <app> <name>",
+          "Edit a cron job (omitted options stay unchanged)",
+          (y2: YargsBuilder) =>
+            noApplyOption(
+              y2
+                .positional("app", { type: "string", demandOption: true })
+                .positional("name", { type: "string", demandOption: true })
+                .option("schedule", { type: "string", describe: "Cron expression" })
+                .option("timezone", { type: "string" })
+                .option("lock", { type: "string" })
+                .option("timeout", { type: "number", describe: "Timeout seconds" })
+                .option("cmd", {
+                  type: "string",
+                  describe: "Shell command string (supports redirects and pipelines)",
+                }),
+            ),
+          bind(state, cmdCronEdit),
+        )
+        .command(
           "remove <app> <name>",
           "Remove a cron job",
           (y2: YargsBuilder) =>
@@ -55,7 +74,7 @@ export function registerCronCommands(parser: YargsBuilder, state: RunState): Yar
             ),
           bind(state, cmdCronRemove),
         )
-        .demandCommand(1, "Specify a cron subcommand: add|remove|list")
+        .demandCommand(1, "Specify a cron subcommand: add|edit|remove|list")
         .recommendCommands());
 }
 
@@ -109,6 +128,53 @@ async function cmdCronAdd(
   });
   ctx.log.info(`added cron ${name} for ${app}`);
   return 0;
+}
+
+async function cmdCronEdit(
+  argv: ArgsWith<"app" | "name">,
+  ctx: CliContext,
+): Promise<number> {
+  const { app, name } = argv;
+  const shellCommand = nonEmpty(argv.cmd);
+  const trailingCommand = trailing(argv, 2);
+  const command = shellCommand !== undefined
+    ? [shellCommand]
+    : trailingCommand.length > 0
+    ? trailingCommand
+    : undefined;
+  const noApply = wantsNoApply(argv);
+
+  await ctx.store.withExclusive(async (state) => {
+    const r = editCronJob(state, {
+      app,
+      name,
+      schedule: nonEmpty(argv.schedule),
+      command,
+      commandMode: shellCommand !== undefined
+        ? "shell"
+        : trailingCommand.length > 0
+        ? "argv"
+        : undefined,
+      timezone: nonEmpty(argv.timezone),
+      lock: nonEmpty(argv.lock),
+      timeoutSec: argv.timeout,
+    }, ctx.platform);
+    await ctx.store.save(r.state);
+    if (!noApply) {
+      await ctx.render.apply(r.state, {
+        reloadPlan: r.reloadPlan,
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+    }
+    return r;
+  });
+  ctx.log.info(`updated cron ${name} for ${app}`);
+  return 0;
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value !== undefined && value.trim() !== "" ? value : undefined;
 }
 
 async function cmdCronRemove(

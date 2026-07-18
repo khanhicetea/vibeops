@@ -31,6 +31,19 @@ export type AddCronInput = {
   lock?: string;
 };
 
+export type EditCronInput = {
+  app: string;
+  name: string;
+  schedule?: string;
+  command?: string[];
+  commandMode?: "argv" | "shell";
+  timezone?: string;
+  workdir?: string;
+  output?: "log" | "null" | "inherit";
+  timeoutSec?: number;
+  lock?: string;
+};
+
 export function addCronJob(
   state: DesiredState,
   input: AddCronInput,
@@ -84,6 +97,65 @@ export function addCronJob(
       cronJobs: [...state.cronJobs, job],
       updatedAt: platform.clock.nowIso(),
     },
+    job,
+    reloadPlan: reloadPlanForCronChange(`${app.phpService}-runner`, appSlug),
+  };
+}
+
+export function editCronJob(
+  state: DesiredState,
+  input: EditCronInput,
+  platform: Platform,
+): { state: DesiredState; job: CronJob; reloadPlan: ReloadPlan } {
+  const appSlug = unwrap(parseAppSlug(input.app), "app");
+  const app = state.apps[appSlug];
+  if (!app) throw notFoundError(`app not found: ${appSlug}`);
+
+  const index = state.cronJobs.findIndex((j) => j.app === appSlug && j.name === input.name);
+  if (index < 0) {
+    throw notFoundError(`cron job ${input.name} not found for app ${appSlug}`);
+  }
+  const current = state.cronJobs[index]!;
+
+  const schedule = input.schedule === undefined
+    ? current.schedule
+    : unwrap(parseCronSchedule(input.schedule), "schedule");
+  const command = input.command === undefined
+    ? current.command
+    : unwrap(parseStringArray(input.command, "command"), "command");
+  if (command.length === 0) throw validationError("command must not be empty");
+  const commandMode = input.commandMode ?? current.commandMode;
+  if (commandMode === "shell" && command.length !== 1) {
+    throw validationError("shell command must be supplied as one unparsed string");
+  }
+
+  const timezone = input.timezone === undefined ? current.timezone : input.timezone.trim();
+  if (timezone.length === 0) throw validationError("timezone must not be empty");
+  if (
+    input.timeoutSec !== undefined &&
+    (!Number.isInteger(input.timeoutSec) || input.timeoutSec <= 0)
+  ) {
+    throw validationError("timeout must be a positive integer");
+  }
+
+  const job: CronJob = {
+    ...current,
+    schedule,
+    command,
+    commandMode,
+    timezone,
+    workdir: input.workdir === undefined
+      ? current.workdir
+      : platform.paths.assertInsideHome(app.home, input.workdir),
+    output: input.output ?? current.output,
+    ...(input.timeoutSec !== undefined ? { timeoutSec: input.timeoutSec } : {}),
+    ...(input.lock !== undefined ? { lock: input.lock } : {}),
+  };
+  const cronJobs = [...state.cronJobs];
+  cronJobs[index] = job;
+
+  return {
+    state: { ...state, cronJobs, updatedAt: platform.clock.nowIso() },
     job,
     reloadPlan: reloadPlanForCronChange(`${app.phpService}-runner`, appSlug),
   };

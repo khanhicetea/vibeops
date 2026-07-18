@@ -45,7 +45,7 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
       ui.header(`App: ${slug}`, `${current.mainDomain} · php ${current.phpVersion}`);
       const action = await ui.menu("Manage application", [
         { label: "Databases", value: "databases", hint: "list · create · shell" },
-        { label: "Cron jobs", value: "cron", hint: "list · add · remove" },
+        { label: "Cron jobs", value: "cron", hint: "list · add · edit · remove" },
         { label: "Workers", value: "workers", hint: "list · add · control" },
         { label: "Domains", value: "domains", hint: "primary · aliases · TLS" },
         { label: "Access logs", value: "logs", hint: "enable · rotate · report" },
