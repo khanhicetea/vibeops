@@ -227,6 +227,8 @@ function renderPhpFragment(service: string, image: string, version: string): str
         restart: "unless-stopped",
         networks: ["private"],
         user: "root",
+        // FPM's slowlog implementation ptraces a slow worker to capture its PHP backtrace.
+        cap_add: ["SYS_PTRACE"],
         volumes: [
           "./homes:/home",
           // Pools directory is not matched by php-fpm.d/*.conf; include file below pulls it in.

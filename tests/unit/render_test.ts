@@ -297,6 +297,8 @@ Deno.test("app apply emits INI-safe pool marker, include file, and code/ docroot
       ),
       true,
     );
+    // PHP-FPM needs ptrace to write slow-request backtraces to each pool's slowlog.
+    assertEquals(phpCompose.includes("SYS_PTRACE"), true);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
