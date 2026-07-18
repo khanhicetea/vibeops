@@ -752,7 +752,7 @@ php_admin_value[open_basedir] = {{openBasedir}}
 php_admin_value[upload_tmp_dir] = {{home}}/tmp
 php_admin_value[session.save_path] = {{home}}/tmp/sessions
 slowlog = {{home}}/logs/php-slow.log
-request_slowlog_timeout = 5s
+request_slowlog_timeout = 15s
 `;
 
 // silence unused import lint for Worker if not used directly
