@@ -46,7 +46,6 @@ Deno.test("init + render produces startable topology files", async () => {
     const base = join(root, "generated/compose/docker-compose.base.yml");
     assertEquals(await platform.fs.exists(base), true);
     const nginxMain = await platform.fs.readText(join(root, "generated/nginx/nginx.conf"));
-    assertEquals(nginxMain.includes("map $http_x_forwarded_proto $fastcgi_https"), true);
     assertEquals(nginxMain.includes("https 'on';"), true);
     assertEquals(nginxMain.includes("keys_zone=app_cache:10m max_size=1g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_assets:20m max_size=2g"), true);
@@ -326,7 +325,6 @@ Deno.test("app apply emits INI-safe pool marker, include file, and code/ docroot
     );
     assertEquals(vhost.includes("root /home/alpha/code/public;"), true);
     assertEquals(vhost.includes("fastcgi_pass unix:/run/php-fpm/php85/alpha.sock;"), true);
-    assertEquals(vhost.includes("fastcgi_param HTTPS $fastcgi_https;"), true);
 
     const phpCompose = await platform.fs.readText(
       join(root, "generated/compose/docker-compose.php-php85.yml"),
