@@ -342,7 +342,7 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       files.push({
         relPath: `runner/${v.service}/cron/logrotate/${app.slug}.conf`,
         content: withManagedMarker(
-          `"${app.home}/logs/*.log" "/var/log/bento/worker-${app.slug}-*.log" "/var/log/bento/worker-${app.slug}-*.err" {
+          `"${app.home}/logs/cron/*.log" "${app.home}/logs/php/*.log" "${app.home}/logs/worker/*.log" "${app.home}/logs/worker/*.err" {
   size 10M
   rotate 2
   missingok
@@ -368,7 +368,7 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
         // an app-controlled symlink during shell redirection.
         const scheduler = `/command/s6-applyuidgid -u ${app.uid} -g ${app.gid} -G '' sh -c ${
           shellQuote(
-            `exec ${supercronic} >>${shellQuote(`${app.home}/logs/cron.log`)} 2>&1`,
+            `exec ${supercronic} >>${shellQuote(`${app.home}/logs/cron/scheduler.log`)} 2>&1`,
           )
         }`;
         files.push({
@@ -403,16 +403,22 @@ function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
       if (!app) continue;
       const service = `worker-${app.slug}-${w.name}`;
       const cmd = w.command.map(shellQuote).join(" ");
+      // Open worker logs after dropping privileges so newly created files are
+      // app-owned and root never follows an app-controlled symlink.
+      const workerLog = `${app.home}/logs/worker/${w.name}.log`;
+      const workerErrorLog = `${app.home}/logs/worker/${w.name}.err`;
       const dropped = `/command/s6-applyuidgid -u ${app.uid} -g ${app.gid} -G '' sh -c ${
-        shellQuote(`cd ${w.workdir} && exec ${cmd}`)
+        shellQuote(
+          `cd ${w.workdir} && exec ${cmd} >>${shellQuote(workerLog)} 2>>${
+            shellQuote(workerErrorLog)
+          }`,
+        )
       }`;
       files.push({
         relPath: `runner/${v.service}/services/${service}/run`,
         content: `#!/bin/sh\n# bento-managed: true\nexport HOME=${shellQuote(app.home)} USER=${
           shellQuote(String(app.slug))
-        } BENTO_APP=${
-          shellQuote(String(app.slug))
-        }\nexec ${dropped} >>/var/log/bento/${service}.log 2>>/var/log/bento/${service}.err\n`,
+        } BENTO_APP=${shellQuote(String(app.slug))}\nexec ${dropped}\n`,
         mode: 0o755,
         managed: true,
       });
@@ -483,7 +489,7 @@ function formatCronLine(job: CronJob, app: AppState): string {
   if (job.output === "null") {
     cmd = `${cmd} >/dev/null 2>&1`;
   } else if (job.output === "log") {
-    cmd = `${cmd} >> ${containerAppHome(app.slug)}/logs/cron-${job.name}.log 2>&1`;
+    cmd = `${cmd} >> ${containerAppHome(app.slug)}/logs/cron/${job.name}.log 2>&1`;
   }
   // Supercronic already executes the crontab command through /bin/sh, and its
   // process already runs as the app UID/GID. No additional shell is needed.
@@ -786,7 +792,7 @@ pm.process_idle_timeout = {{processIdleTimeout}}
 php_admin_value[open_basedir] = {{openBasedir}}
 php_admin_value[upload_tmp_dir] = {{home}}/tmp
 php_admin_value[session.save_path] = {{home}}/tmp/sessions
-slowlog = {{home}}/logs/php-slow.log
+slowlog = {{home}}/logs/php/slow.log
 request_slowlog_timeout = 15s
 `;
 

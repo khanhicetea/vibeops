@@ -289,7 +289,7 @@ Deno.test("E3 disabled deploy omits /_bento routes; enabled matches helpers", as
       true,
     );
     assertEquals(scheduler.includes("/usr/local/bin/supercronic"), true);
-    assertEquals(scheduler.includes(">>/home/alpha/logs/cron.log 2>&1"), true);
+    assertEquals(scheduler.includes(">>/home/alpha/logs/cron/scheduler.log 2>&1"), true);
     assertEquals(scheduler.includes("/var/log/bento"), false);
     assertEquals(scheduler.includes("setpriv"), false);
     const compose = textContent(

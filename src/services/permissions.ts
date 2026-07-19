@@ -151,6 +151,25 @@ export async function checkPermissions(
   return { app: slug, issues, checked };
 }
 
+/** Ensure category log directories exist for both new and previously provisioned apps. */
+export async function ensureAppLogDirs(
+  platform: Platform,
+  app: AppState,
+): Promise<void> {
+  const logs = join(platform.paths.appHome(app.slug), "logs");
+  // Render-only stacks and imported state may not have materialized app homes yet.
+  if (!(await platform.fs.exists(logs))) return;
+
+  for (const category of ["cron", "php", "worker"]) {
+    const path = join(logs, category);
+    if (await platform.fs.exists(path)) continue;
+    await platform.fs.mkdirp(path, 0o750);
+    await platform.process.run(["chown", `${app.uid}:${app.gid}`, path], {
+      timeoutMs: 10_000,
+    }).catch(() => undefined);
+  }
+}
+
 /**
  * Apply the product permission policy for an app home.
  * Used by app provision (initial) and `permissions repair`.
@@ -177,6 +196,7 @@ export async function applyAppPermissionPolicy(
   await ensureDir(home, 0o751);
   await ensureDir(join(home, "code"), 0o751);
   await ensureDir(join(home, "logs"), 0o750);
+  await ensureAppLogDirs(platform, app);
   await ensureDir(join(home, "tmp"), 0o750);
   await ensureDir(join(home, "tmp", "sessions"), 0o700);
   await ensureDir(join(home, ".bento"), 0o700);
@@ -251,6 +271,9 @@ export async function applyAppPermissionPolicy(
         home,
         join(home, "code"),
         join(home, "logs"),
+        join(home, "logs", "cron"),
+        join(home, "logs", "php"),
+        join(home, "logs", "worker"),
         join(home, "tmp"),
         join(home, "tmp", "sessions"),
         join(home, ".bento"),

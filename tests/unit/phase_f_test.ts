@@ -374,10 +374,12 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
     const applyUidGid = `/command/s6-applyuidgid -u ${app.uid} -g ${app.gid} -G ''`;
     assertEquals(scheduler.includes(`${applyUidGid} sh -c`), true);
     assertEquals(scheduler.includes("/usr/local/bin/supercronic"), true);
-    assertEquals(scheduler.includes(">>/home/alpha/logs/cron.log 2>&1"), true);
+    assertEquals(scheduler.includes(">>/home/alpha/logs/cron/scheduler.log 2>&1"), true);
     assertEquals(scheduler.includes("/var/log/bento"), false);
     assertEquals(workerRun.includes(`${applyUidGid} sh -c`), true);
     assertEquals(workerRun.includes("cd /home/alpha/code"), true);
+    assertEquals(workerRun.includes(">>/home/alpha/logs/worker/queue.log"), true);
+    assertEquals(workerRun.includes("2>>/home/alpha/logs/worker/queue.err"), true);
     assertEquals(scheduler.includes("setpriv"), false);
     assertEquals(workerRun.includes("setpriv"), false);
     assertEquals(crontab.includes("setpriv"), false);
@@ -386,7 +388,10 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
     assertEquals(cronScript.includes("cd /home/alpha/code"), true);
     assertEquals(cronScript.includes("= Run at %s ="), true);
     assertEquals(cronScript.includes("date '+%Y-%m-%d %H:%M:%S'"), true);
-    assertEquals(logrotate.includes('"/home/alpha/logs/*.log"'), true);
+    assertEquals(logrotate.includes('"/home/alpha/logs/cron/*.log"'), true);
+    assertEquals(logrotate.includes('"/home/alpha/logs/php/*.log"'), true);
+    assertEquals(logrotate.includes('"/home/alpha/logs/worker/*.log"'), true);
+    assertEquals(logrotate.includes('"/home/alpha/logs/worker/*.err"'), true);
     assertEquals(logrotate.includes("size 10M"), true);
     assertEquals(logrotate.includes("rotate 2"), true);
     assertEquals(logrotate.includes("copytruncate"), true);
@@ -476,7 +481,7 @@ Deno.test("cron shell scripts preserve user redirects outside Bento's job log", 
     assertEquals(script.includes("= Run at %s ="), true);
     assertEquals(crontab.includes("/etc/bento/cron/jobs/alpha/redirect.sh"), true);
     assertEquals(crontab.includes("public/abc.txt"), false);
-    assertEquals(crontab.includes("logs/cron-redirect.log 2>&1"), true);
+    assertEquals(crontab.includes("logs/cron/redirect.log 2>&1"), true);
 
     // Exercise the same parent-log/child-script redirect hierarchy locally.
     const workdir = join(root, "home", "code");

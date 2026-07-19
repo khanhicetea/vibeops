@@ -18,6 +18,6 @@ pm.process_idle_timeout = {{processIdleTimeout}}
 php_admin_value[open_basedir] = {{openBasedir}}
 php_admin_value[upload_tmp_dir] = {{home}}/tmp
 php_admin_value[session.save_path] = {{home}}/tmp/sessions
-slowlog = {{home}}/logs/php-slow.log
+slowlog = {{home}}/logs/php/slow.log
 request_slowlog_timeout = 5s
 catch_workers_output = yes

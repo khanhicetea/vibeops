@@ -14,6 +14,7 @@ import { ASSET_VERSION } from "../version.ts";
 import { generateAll } from "./generate.ts";
 import { materializeDockerAssets } from "./assets_materialize.ts";
 import { composeArgs } from "./compose.ts";
+import { ensureAppLogDirs } from "./permissions.ts";
 
 export type GeneratedFile = {
   /** Path relative to generatedDir */
@@ -144,6 +145,11 @@ export class RenderService {
       : await this.platform.lock.exclusive(this.platform.paths.paths.renderLock);
     try {
       await this.recoverAbandoned();
+      // Reconcile log category directories for apps created before the structured
+      // log layout was introduced. Runtime configs require these before reload.
+      for (const app of Object.values(state.apps)) {
+        await ensureAppLogDirs(this.platform, app);
+      }
       // Materialize docker build contexts + helpers for Compose (outside generated/)
       await materializeDockerAssets(
         this.platform,

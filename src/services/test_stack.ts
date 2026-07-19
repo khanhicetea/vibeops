@@ -1010,7 +1010,8 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
       platform.paths.paths.homesDir,
       appSlug,
       "logs",
-      "cron-print.log",
+      "cron",
+      "print.log",
     );
     await platform.fs.mkdirp(join(cronLog, ".."));
     await platform.fs.atomicWriteText(cronLog, "", 0o644);
@@ -1039,10 +1040,10 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     if (!ct.includes("* * * * *") || !ct.includes("/jobs/") || !jobScript.includes("cron-ok")) {
       return { ok: false, detail: `crontab or job script missing job: ${ct.slice(0, 200)}` };
     }
-    return { ok: true, detail: "schedule=* * * * * → logs/cron-print.log" };
+    return { ok: true, detail: "schedule=* * * * * → logs/cron/print.log" };
   });
 
-  await record("worker-add", "Add worker that prints to logs/worker-print.log", async () => {
+  await record("worker-add", "Add worker that prints to logs/worker/print.log", async () => {
     state = await store.load();
     if (state.workers.some((w) => w.app === appSlug && w.name === "print")) {
       const removed = removeWorker(
@@ -1058,7 +1059,8 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
       platform.paths.paths.homesDir,
       appSlug,
       "logs",
-      "worker-print.log",
+      "worker",
+      "print.log",
     );
     await platform.fs.mkdirp(join(workerLog, ".."));
     await platform.fs.atomicWriteText(workerLog, "", 0o644);
@@ -1077,7 +1079,7 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
       command: [
         "sh",
         "-c",
-        "while true; do echo worker-ok $(date -Iseconds) >> logs/worker-print.log; sleep 5; done",
+        "while true; do echo worker-ok $(date -Iseconds); sleep 5; done",
       ],
       workdir: state.apps[appSlug]!.home,
     }, platform);
@@ -1188,12 +1190,13 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     },
   );
 
-  await record("cron-verify", "Cron print wrote to logs/cron-print.log", async () => {
+  await record("cron-verify", "Cron print wrote to logs/cron/print.log", async () => {
     const cronLog = join(
       platform.paths.paths.homesDir,
       appSlug,
       "logs",
-      "cron-print.log",
+      "cron",
+      "print.log",
     );
     if (!(await platform.fs.exists(cronLog))) {
       return { ok: false, detail: `missing ${cronLog}` };
@@ -1212,7 +1215,7 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
           runner,
           "sh",
           "-c",
-          `tail -n 30 /home/${appSlug}/logs/cron.log 2>/dev/null || true`,
+          `tail -n 30 /home/${appSlug}/logs/cron/scheduler.log 2>/dev/null || true`,
         ],
         10_000,
       );
@@ -1227,12 +1230,13 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     return { ok: true, detail: `${lines} tick(s)` };
   });
 
-  await record("worker-verify", "Worker print wrote to logs/worker-print.log", async () => {
+  await record("worker-verify", "Worker print wrote to logs/worker/print.log", async () => {
     const workerLog = join(
       platform.paths.paths.homesDir,
       appSlug,
       "logs",
-      "worker-print.log",
+      "worker",
+      "print.log",
     );
     if (!(await platform.fs.exists(workerLog))) {
       return { ok: false, detail: `missing ${workerLog}` };

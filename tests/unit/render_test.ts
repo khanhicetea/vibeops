@@ -232,17 +232,29 @@ Deno.test("app provision materializes home without secrets in public tree", asyn
   try {
     const platform = testPlatform(root);
     const state = createEmptyState();
-    const { app } = provisionApp(platform, state, {
+    const provisioned = provisionApp(platform, state, {
       slug: "alpha",
       domain: "alpha.test",
       createDatabase: true,
     });
-    await materializeAppHome(platform, app);
+    await materializeAppHome(platform, provisioned.app);
     const home = platform.paths.appHome("alpha");
     assertEquals(await platform.fs.exists(join(home, "credentials", "app.env")), true);
     assertEquals(await platform.fs.exists(join(home, ".bento", "deploy.sh")), true);
     const queue = await platform.fs.readText(join(home, ".bento", "queue.json"));
     assertEquals(queue.includes("hmac"), false);
+
+    // Applying an app created before structured logs repairs missing categories.
+    await platform.fs.remove(join(home, "logs", "cron"), { recursive: true });
+    await platform.fs.remove(join(home, "logs", "php"), { recursive: true });
+    await platform.fs.remove(join(home, "logs", "worker"), { recursive: true });
+    await new RenderService(platform).apply(provisioned.state, {
+      renderOnly: true,
+      skipValidate: true,
+    });
+    for (const category of ["cron", "php", "worker"]) {
+      assertEquals(await platform.fs.exists(join(home, "logs", category)), true);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }
