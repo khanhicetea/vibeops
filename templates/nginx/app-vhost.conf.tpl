@@ -51,6 +51,11 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+    # Cache successful FastCGI responses for one day.
+    # fastcgi_cache app_cache;
+    # fastcgi_cache_valid 200 1d;
+    
     fastcgi_pass unix:{{socketPath}};
   }
   {{/frontController}}
@@ -63,6 +68,11 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+    # Cache successful FastCGI responses for one day.
+    # fastcgi_cache app_cache;
+    # fastcgi_cache_valid 200 1d;
+    
     fastcgi_pass unix:{{socketPath}};
   }
   {{/legacy}}
@@ -117,6 +127,11 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+    # Cache successful FastCGI responses for one day.
+    # fastcgi_cache app_cache;
+    # fastcgi_cache_valid 200 1d;
+    
     fastcgi_pass unix:{{socketPath}};
   }
   {{/frontController}}
@@ -129,6 +144,11 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+    # Cache successful FastCGI responses for one day.
+    # fastcgi_cache app_cache;
+    # fastcgi_cache_valid 200 1d;
+    
     fastcgi_pass unix:{{socketPath}};
   }
   {{/legacy}}

@@ -150,8 +150,11 @@ Deno.test("E1 proxy renders named multi-server upstream with keepalive", async (
     assertEquals(vhost.includes("server 127.0.0.1:3000;"), true);
     assertEquals(vhost.includes("server 10.0.0.2:3000;"), true);
     assertEquals(vhost.includes("keepalive 5;"), true);
-    assertEquals(vhost.match(/proxy_set_header Connection "";/g)?.length, 2);
-    assertEquals(vhost.match(/proxy_pass http:\/\/upstream_edge;/g)?.length, 2);
+    assertEquals(vhost.match(/proxy_set_header Connection "";/g)?.length, 4);
+    assertEquals(vhost.match(/proxy_pass http:\/\/upstream_edge;/g)?.length, 4);
+    assertEquals(vhost.match(/proxy_cache proxy_assets;/g)?.length, 2);
+    assertEquals(vhost.match(/proxy_cache proxy_cache;/g)?.length, 2);
+    assertEquals(vhost.match(/expires 30d;/g)?.length, 2);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -259,6 +262,11 @@ Deno.test("E2 front-controller rejects non-index PHP; legacy allows scripts", as
     // Legacy: existing PHP files may execute
     assertEquals(legacy.includes("try_files $uri =404;"), true);
     assertEquals(legacy.includes("if ($uri !~ ^/index\\.php$)"), false);
+
+    assertEquals(front.match(/fastcgi_cache app_cache;/g)?.length, 2);
+    assertEquals(front.match(/fastcgi_cache_valid 200 1d;/g)?.length, 2);
+    assertEquals(legacy.match(/fastcgi_cache app_cache;/g)?.length, 2);
+    assertEquals(legacy.match(/fastcgi_cache_valid 200 1d;/g)?.length, 2);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

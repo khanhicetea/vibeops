@@ -568,6 +568,11 @@ http {
   server_tokens off;
   client_max_body_size 64m;
 
+  # Shared cache zones (cache data is kept on disk; keys use bounded shared memory).
+  fastcgi_cache_path /var/cache/nginx/app_cache levels=1:2 keys_zone=app_cache:10m max_size=1g inactive=1d use_temp_path=off;
+  proxy_cache_path /var/cache/nginx/proxy_assets levels=1:2 keys_zone=proxy_assets:20m max_size=2g inactive=7d use_temp_path=off;
+  proxy_cache_path /var/cache/nginx/proxy_cache levels=1:2 keys_zone=proxy_cache:10m max_size=1g inactive=7d use_temp_path=off;
+
   # zstd with gzip fallback (modules loaded by image)
   gzip on;
   gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
@@ -634,6 +639,9 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    # Cache successful FastCGI responses for one day.
+    fastcgi_cache app_cache;
+    fastcgi_cache_valid 200 1d;
     fastcgi_pass unix:{{socketPath}};
   }
   {{/frontController}}
@@ -646,6 +654,9 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    # Cache successful FastCGI responses for one day.
+    fastcgi_cache app_cache;
+    fastcgi_cache_valid 200 1d;
     fastcgi_pass unix:{{socketPath}};
   }
   {{/legacy}}
@@ -700,6 +711,9 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    # Cache successful FastCGI responses for one day.
+    fastcgi_cache app_cache;
+    fastcgi_cache_valid 200 1d;
     fastcgi_pass unix:{{socketPath}};
   }
   {{/frontController}}
@@ -712,6 +726,9 @@ server {
     include fastcgi_params;
     fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    # Cache successful FastCGI responses for one day.
+    fastcgi_cache app_cache;
+    fastcgi_cache_valid 200 1d;
     fastcgi_pass unix:{{socketPath}};
   }
   {{/legacy}}
@@ -746,7 +763,21 @@ server {
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;
   {{/accessLog}}
+  location ~* \\.(?:css|js|mjs|jpg|jpeg|gif|png|svg|ico|webp|avif|woff|woff2|ttf|eot)$ {
+    expires 30d;
+    proxy_cache proxy_assets;
+    proxy_cache_valid 200 7d;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_pass {{upstreamScheme}}://{{upstreamName}}{{upstreamUri}};
+  }
   location / {
+    proxy_cache proxy_cache;
+    proxy_cache_valid 200 7d;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_set_header Host $host;
@@ -774,7 +805,21 @@ server {
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;
   {{/accessLog}}
+  location ~* \\.(?:css|js|mjs|jpg|jpeg|gif|png|svg|ico|webp|avif|woff|woff2|ttf|eot)$ {
+    expires 30d;
+    proxy_cache proxy_assets;
+    proxy_cache_valid 200 7d;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_pass {{upstreamScheme}}://{{upstreamName}}{{upstreamUri}};
+  }
   location / {
+    proxy_cache proxy_cache;
+    proxy_cache_valid 200 7d;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_set_header Host $host;

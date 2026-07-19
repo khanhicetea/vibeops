@@ -20,6 +20,11 @@ http {
   server_tokens off;
   client_max_body_size 64m;
 
+  # Shared cache zones (cache data is kept on disk; keys use bounded shared memory).
+  fastcgi_cache_path /var/cache/nginx/app_cache levels=1:2 keys_zone=app_cache:10m max_size=1g inactive=1d use_temp_path=off;
+  proxy_cache_path /var/cache/nginx/proxy_assets levels=1:2 keys_zone=proxy_assets:20m max_size=2g inactive=7d use_temp_path=off;
+  proxy_cache_path /var/cache/nginx/proxy_cache levels=1:2 keys_zone=proxy_cache:10m max_size=1g inactive=7d use_temp_path=off;
+
   log_format bento_timed '$remote_addr - $remote_user [$time_local] '
                          '"$request" $status $body_bytes_sent '
                          '"$http_referer" "$http_user_agent" '

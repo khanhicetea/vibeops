@@ -48,6 +48,9 @@ Deno.test("init + render produces startable topology files", async () => {
     const nginxMain = await platform.fs.readText(join(root, "generated/nginx/nginx.conf"));
     assertEquals(nginxMain.includes("map $http_x_forwarded_proto $fastcgi_https"), true);
     assertEquals(nginxMain.includes("https 'on';"), true);
+    assertEquals(nginxMain.includes("keys_zone=app_cache:10m max_size=1g"), true);
+    assertEquals(nginxMain.includes("keys_zone=proxy_assets:20m max_size=2g"), true);
+    assertEquals(nginxMain.includes("keys_zone=proxy_cache:10m max_size=1g"), true);
     // PHP and MySQL fragments
     assertEquals(
       await platform.fs.exists(join(root, "generated/compose/docker-compose.php-php85.yml")),
