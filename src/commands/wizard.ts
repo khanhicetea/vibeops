@@ -10,14 +10,16 @@ import { sectionApps } from "./wizard/apps.ts";
 import { sectionBootstrap } from "./wizard/bootstrap.ts";
 import { sectionMysql } from "./wizard/mysql.ts";
 import { sectionPhp } from "./wizard/php.ts";
+import { sectionProxies } from "./wizard/proxies.ts";
 import { handleError, pcDim } from "./wizard/shared.ts";
 import { sectionStatus } from "./wizard/status.ts";
 
-type WizardSection = "apps" | "mysql" | "php" | "status" | "bootstrap";
+type WizardSection = "apps" | "proxies" | "mysql" | "php" | "status" | "bootstrap";
 type SectionHandler = (ui: WizardUI, ctx: CliContext) => Promise<void>;
 
 const SECTION_HANDLERS: Record<WizardSection, SectionHandler> = {
   apps: sectionApps,
+  proxies: sectionProxies,
   mysql: sectionMysql,
   php: sectionPhp,
   status: sectionStatus,
@@ -42,6 +44,11 @@ export async function runWizard(ctx: CliContext): Promise<number> {
           label: "Manage app",
           value: "apps",
           hint: "shell · databases · cron jobs · workers · domains · logs · templates",
+        },
+        {
+          label: "Manage reverse proxies",
+          value: "proxies",
+          hint: "create · multiple upstreams · inspect",
         },
         {
           label: "Manage MySQL",
