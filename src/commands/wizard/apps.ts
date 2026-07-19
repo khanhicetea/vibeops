@@ -10,6 +10,7 @@ import { buildMysqlShellPlan, createAppDatabaseLive } from "../../services/mysql
 import { loadRedisPassword, requireMysqlRootPassword } from "../../services/stack_env.ts";
 import { type MenuChoice, WizardUI } from "../../ui/tui.ts";
 import type { CliContext } from "../context.ts";
+import { runCliExec } from "../subcommands/exec.ts";
 import { sectionCron } from "./cron.ts";
 import { sectionLogs } from "./logs.ts";
 import { ensureState, handleError, openMysqlShell, pcDim } from "./shared.ts";
@@ -44,6 +45,7 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
       ui.clear();
       ui.header(`App: ${slug}`, `${current.mainDomain} · php ${current.phpVersion}`);
       const action = await ui.menu("Manage application", [
+        { label: "Shell", value: "shell", hint: "enter app CLI shell" },
         { label: "Databases", value: "databases", hint: "list · create · shell" },
         { label: "Cron jobs", value: "cron", hint: "list · add · edit · remove" },
         { label: "Workers", value: "workers", hint: "list · add · control" },
@@ -53,7 +55,8 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
       ]);
       if (!action) break;
 
-      if (action === "databases") await sectionAppDatabases(ui, ctx, slug);
+      if (action === "shell") await openAppShell(ui, ctx, slug);
+      else if (action === "databases") await sectionAppDatabases(ui, ctx, slug);
       else if (action === "cron") await sectionCron(ui, ctx, slug);
       else if (action === "workers") await sectionWorker(ui, ctx, slug);
       else if (action === "domains") await sectionAppDomains(ui, ctx, slug);
@@ -61,6 +64,28 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
       else if (action === "templates") await sectionTemplate(ui, ctx, slug);
     }
   }
+}
+
+async function openAppShell(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
+  ui.blank();
+  ui.info(`Attaching app shell as ${slug}`);
+  ui.message(pcDim(`scriptable: bento app shell ${slug}`));
+  ui.message(pcDim("Exit the shell to return to the wizard."));
+  ui.blank();
+
+  try {
+    const exitCode = await runCliExec(ctx, {
+      slug,
+      argv: [],
+      printOnly: false,
+    });
+    ui.blank();
+    if (exitCode === 0) ui.success("App shell closed", slug);
+    else ui.warn(`App shell exited ${exitCode}`, slug);
+  } catch (err) {
+    handleError(ui, err);
+  }
+  await ui.pause();
 }
 
 /** Interactively create or update an application. */

@@ -41,9 +41,13 @@ export async function runWizard(ctx: CliContext): Promise<number> {
         {
           label: "Manage app",
           value: "apps",
-          hint: "databases · cron jobs · workers · domains · logs · templates",
+          hint: "shell · databases · cron jobs · workers · domains · logs · templates",
         },
-        { label: "Manage MySQL", value: "mysql", hint: "shell · add version · database sizes" },
+        {
+          label: "Manage MySQL",
+          value: "mysql",
+          hint: "shell · versions · sizes · backup · restore",
+        },
         { label: "Manage PHP", value: "php", hint: "add version · reload FPM" },
         { label: "Status / Diag", value: "status", hint: "stack · apps · capacity" },
         { label: "Bootstrap", value: "bootstrap", hint: "init · render · apply" },
