@@ -702,26 +702,19 @@ export function assertShellPlanSecretsOffArgv(
 
 /** SQL to report managed database sizes (no secrets). */
 export function databaseSizeSql(databases: string[]): string {
-  if (databases.length === 0) {
-    return [
-      "SELECT table_schema AS db_name,",
-      "  ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb,",
-      "  COUNT(*) AS tables",
-      "FROM information_schema.tables",
-      "WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')",
-      "GROUP BY table_schema",
-      "ORDER BY size_mb DESC;",
-    ].join("\n");
-  }
-  const list = databases.map((d) => mysqlStringLiteral(d)).join(", ");
+  const where = databases.length
+    ? `WHERE table_schema IN (${databases.map((d) => mysqlStringLiteral(d)).join(", ")})`
+    : "WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')";
   return [
     "SELECT table_schema AS db_name,",
-    "  ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb,",
-    "  COUNT(*) AS tables",
+    "  COUNT(*) AS tables,",
+    "  IFNULL(ROUND(SUM(data_length) / 1024 / 1024, 2), 0) AS data_size,",
+    "  IFNULL(ROUND(SUM(index_length) / 1024 / 1024, 2), 0) AS index_size,",
+    "  IFNULL(ROUND(SUM(data_length + index_length) / 1024 / 1024, 2), 0) AS total_size",
     "FROM information_schema.tables",
-    `WHERE table_schema IN (${list})`,
+    where,
     "GROUP BY table_schema",
-    "ORDER BY size_mb DESC;",
+    "ORDER BY total_size DESC;",
   ].join("\n");
 }
 
@@ -732,8 +725,10 @@ export function processlistSql(): string {
 
 export type MysqlSizeRow = {
   database: string;
-  sizeMb: string;
   tables: string;
+  dataSize: string;
+  indexSize: string;
+  totalSize: string;
 };
 
 /**
@@ -746,20 +741,7 @@ export async function queryDatabaseSizes(
   databases: string[] = [],
 ): Promise<{ stdout: string; rows: MysqlSizeRow[] }> {
   const sql = databaseSizeSql(databases);
-  // TSV header-less for easy parsing
-  const wrapped = [
-    "SELECT table_schema,",
-    "  IFNULL(ROUND(SUM(data_length + index_length) / 1024 / 1024, 2), 0),",
-    "  COUNT(*)",
-    "FROM information_schema.tables",
-    databases.length
-      ? `WHERE table_schema IN (${databases.map((d) => mysqlStringLiteral(d)).join(", ")})`
-      : "WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')",
-    "GROUP BY table_schema",
-    "ORDER BY 2 DESC;",
-  ].join("\n");
-  void sql;
-  const result = await execMysqlSql(platform, service, wrapped, rootPassword);
+  const result = await execMysqlSql(platform, service, sql, rootPassword);
   if (result.code !== 0) {
     throw serviceError(
       `MySQL size query failed on ${service}: ${
@@ -773,11 +755,18 @@ export async function queryDatabaseSizes(
     const trimmed = line.trim();
     if (!trimmed) continue;
     const parts = trimmed.split("\t");
-    if (parts.length < 3) continue;
+    if (parts.length < 5) continue;
+    // mysql prints column headings by default; they are metadata, not a database row.
+    if (
+      parts[0] === "db_name" && parts[1] === "tables" && parts[2] === "data_size" &&
+      parts[3] === "index_size" && parts[4] === "total_size"
+    ) continue;
     rows.push({
       database: parts[0] ?? "",
-      sizeMb: parts[1] ?? "0",
-      tables: parts[2] ?? "0",
+      tables: parts[1] ?? "0",
+      dataSize: parts[2] ?? "0",
+      indexSize: parts[3] ?? "0",
+      totalSize: parts[4] ?? "0",
     });
   }
   return { stdout: result.stdout, rows };

@@ -277,7 +277,14 @@ async function cmdMysqlSize(argv: CliArgs, ctx: CliContext): Promise<number> {
     service: argv.service,
     app: argv.app,
   });
-  const allRows: Array<{ service: string; database: string; sizeMb: string; tables: string }> = [];
+  const allRows: Array<{
+    service: string;
+    database: string;
+    tables: string;
+    dataSize: string;
+    indexSize: string;
+    totalSize: string;
+  }> = [];
   for (const service of services) {
     let databases: string[] = [];
     if (argv.app) {
@@ -294,8 +301,15 @@ async function cmdMysqlSize(argv: CliArgs, ctx: CliContext): Promise<number> {
   } else {
     ctx.log.out(
       printTable(
-        ["service", "database", "size_mb", "tables"],
-        allRows.map((r) => [r.service, r.database, r.sizeMb, r.tables]),
+        ["service", "database", "tables", "data_size", "index_size", "total_size"],
+        allRows.map((r) => [
+          r.service,
+          r.database,
+          r.tables,
+          r.dataSize,
+          r.indexSize,
+          r.totalSize,
+        ]),
       ),
     );
   }

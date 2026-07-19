@@ -63,10 +63,20 @@ export async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void>
         for (const service of resolveMysqlServices(state)) {
           const result = await queryDatabaseSizes(ctx.platform, service, rootPassword);
           for (const row of result.rows) {
-            rows.push([service, row.database, row.sizeMb, row.tables]);
+            rows.push([
+              service,
+              row.database,
+              row.tables,
+              row.dataSize,
+              row.indexSize,
+              row.totalSize,
+            ]);
           }
         }
-        ui.table(["service", "database", "size_mb", "tables"], rows);
+        ui.table(
+          ["service", "database", "tables", "data_size", "index_size", "total_size"],
+          rows,
+        );
       } else if (action === "backup") {
         await wizardBackup(ui, ctx);
       } else {

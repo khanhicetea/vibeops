@@ -140,13 +140,16 @@ Deno.test("queryDatabaseSizes uses stdin-staged password", async () => {
     const password = "root-pw-xyz";
     const platform = testPlatform(root, () => ({
       code: 0,
-      stdout: "demo\t1.25\t3\n",
+      stdout: "db_name\ttables\tdata_size\tindex_size\ttotal_size\ndemo\t3\t1.00\t0.25\t1.25\n",
       stderr: "",
     }));
     const { rows } = await queryDatabaseSizes(platform, "mysql84", password, ["demo"]);
     assertEquals(rows.length, 1);
     assertEquals(rows[0]?.database, "demo");
-    assertEquals(rows[0]?.sizeMb, "1.25");
+    assertEquals(rows[0]?.tables, "3");
+    assertEquals(rows[0]?.dataSize, "1.00");
+    assertEquals(rows[0]?.indexSize, "0.25");
+    assertEquals(rows[0]?.totalSize, "1.25");
     const call = platform.process.calls[0]!;
     assertEquals(call.command.join(" ").includes(password), false);
     assertEquals(String(call.options?.stdin ?? "").includes(password), true);
