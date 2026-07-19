@@ -74,7 +74,7 @@ RUN set -eux; \
 # this image initialization in one layer.
 RUN --mount=type=bind,source=.,target=/tmp/bento-build,ro \
   set -eux; \
-  getent group bento-web >/dev/null || groupadd -g 1500 bento-web; \
+  getent group bento-web >/dev/null || groupadd -g 5555 bento-web; \
   install -d -m 0755 -o www-data -g bento-web /run/php-fpm; \
   install -d -m 0755 /etc/bento/cron /etc/bento/services /opt/bento/helpers /var/log/bento; \
   install -D -m 0644 /tmp/bento-build/conf/php-bento.ini /usr/local/etc/php/conf.d/zz-bento.ini; \

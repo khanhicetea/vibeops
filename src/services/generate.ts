@@ -4,7 +4,7 @@
 
 import type { AppState, CronJob, DesiredState, ProxySite, Worker } from "../domain/state.ts";
 import type { Platform } from "../platform/mod.ts";
-import { FPM_PROFILES } from "../domain/types.ts";
+import { FPM_PROFILES, SHARED_SOCKET_GID } from "../domain/types.ts";
 import { ASSET_VERSION } from "../version.ts";
 import { renderTemplate } from "./template.ts";
 import { type GeneratedFile, withManagedMarker } from "./render.ts";
@@ -777,7 +777,7 @@ user = {{uid}}
 group = {{gid}}
 listen = {{socketPath}}
 listen.owner = {{uid}}
-listen.group = 1500
+listen.group = ${SHARED_SOCKET_GID}
 listen.mode = 0660
 pm = {{processManager}}
 pm.max_children = {{maxChildren}}

@@ -201,10 +201,10 @@ Deno.test("allocateIdentity skips used uids", () => {
       },
     },
   };
-  // just ensure function returns numbers
-  const id = allocateIdentity(state);
-  assertEquals(typeof id.uid, "number");
-  void withApp;
+  const first = allocateIdentity(state);
+  assertEquals(first, { uid: 10000, gid: 10000 });
+  const next = allocateIdentity(withApp);
+  assertEquals(next, { uid: 10001, gid: 10001 });
 });
 
 Deno.test("workdir escape rejected by path policy", async () => {

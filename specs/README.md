@@ -50,5 +50,3 @@ Bento has a small host-side control plane and a containerized data plane:
 - It promotes, validates, and narrowly reloads only affected services.
 - Durable application data, credentials, certificates, backups, and database volumes are kept separate from disposable generated configuration.
 - An application is isolated by Linux identity, filesystem policy, PHP-FPM pool/socket, database grants, and optional Redis ACL—not by receiving a dedicated container.
-
-That last point is essential. A reimplementation that creates one container per app is a different product architecture, even if its command surface looks similar.

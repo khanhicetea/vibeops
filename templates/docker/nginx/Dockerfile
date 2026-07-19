@@ -12,9 +12,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Runtime layout expected by generated mounts.
-# Shared group 1500 (bento-web) matches FPM listen.group so workers can connect to
+# Shared group 5555 (bento-web) matches FPM listen.group so workers can connect to
 # per-app Unix sockets and read public document trees without joining each app group.
-RUN groupadd -g 1500 bento-web || groupmod -g 1500 bento-web \
+RUN groupadd -g 5555 bento-web || groupmod -g 5555 bento-web \
   && usermod -aG bento-web nginx \
   && mkdir -p /etc/nginx/sites /etc/nginx/snippets /etc/nginx/certs /var/log/nginx /run/php-fpm \
   && rm -f /etc/nginx/conf.d/default.conf
