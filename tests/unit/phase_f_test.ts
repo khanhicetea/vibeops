@@ -309,6 +309,7 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
       command: ["php", "artisan", "schedule:run"],
     }, platform);
     state = cron.state;
+    assertEquals(cron.job.workdir, "/home/alpha/code");
     assertEquals(
       describeReloadPlan(cron.reloadPlan).includes("php-runner:php85-runner") ||
         describeReloadPlan(cron.reloadPlan).some((x) => x.startsWith("php-runner:")),
@@ -380,6 +381,7 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
     assertEquals(crontab.includes("setpriv"), false);
     assertEquals(crontab.includes("sh -c"), false);
     assertEquals(crontab.includes("sh /etc/bento/cron/jobs/alpha/tick.sh"), true);
+    assertEquals(cronScript.includes("cd /home/alpha/code"), true);
     assertEquals(cronScript.includes("= Run at %s ="), true);
     assertEquals(cronScript.includes("date '+%Y-%m-%d %H:%M:%S'"), true);
     assertEquals(logrotate.includes('"/home/alpha/logs/*.log"'), true);
@@ -475,9 +477,9 @@ Deno.test("cron shell scripts preserve user redirects outside Bento's job log", 
     assertEquals(crontab.includes("logs/cron-redirect.log 2>&1"), true);
 
     // Exercise the same parent-log/child-script redirect hierarchy locally.
-    const workdir = join(root, "home");
+    const workdir = join(root, "home", "code");
     await Deno.mkdir(join(workdir, "public"), { recursive: true });
-    const runnable = script.replace("cd /home/alpha", `cd ${workdir}`);
+    const runnable = script.replace("cd /home/alpha/code", `cd ${workdir}`);
     const scriptPath = join(root, "redirect.sh");
     const bentoLog = join(root, "cron-redirect.log");
     await Deno.writeTextFile(scriptPath, runnable);

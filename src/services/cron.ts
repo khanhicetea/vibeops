@@ -75,7 +75,7 @@ export function addCronJob(
 
   const workdir = platform.paths.assertInsideHome(
     app.home,
-    input.workdir ?? app.home,
+    input.workdir ?? `${app.home}/code`,
   );
 
   const job: CronJob = {
