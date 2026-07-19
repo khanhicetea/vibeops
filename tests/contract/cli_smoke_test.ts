@@ -96,9 +96,18 @@ Deno.test("cli init render status app create", async () => {
         "api.test",
         "--upstream",
         "http://127.0.0.1:3000",
+        "--upstream",
+        "http://127.0.0.1:3001",
       ]),
       0,
     );
+    const proxyVhost = await Deno.readTextFile(
+      join(stack, "generated/nginx/sites/proxy-api.conf"),
+    );
+    assertEquals(proxyVhost.includes("upstream upstream_api {"), true);
+    assertEquals(proxyVhost.includes("server 127.0.0.1:3000;"), true);
+    assertEquals(proxyVhost.includes("server 127.0.0.1:3001;"), true);
+    assertEquals(proxyVhost.includes("keepalive 5;"), true);
     assertEquals((await runCli([...base, "proxy", "delete", "api"])) !== 0, true);
     assertEquals((await runCli([...base, "proxy", "remove", "api"])) !== 0, true);
     // proxy still listed after blocked delete

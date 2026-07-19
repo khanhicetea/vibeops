@@ -177,7 +177,7 @@ Deno.test("G proxy create still works; delete never mutates", async () => {
     const created = createProxy(state, {
       name: "edge",
       domain: "edge.test",
-      upstream: "http://127.0.0.1:3000",
+      upstreams: ["http://127.0.0.1:3000"],
     }, platform.clock.nowIso());
     state = created.state;
     assertEquals(!!state.proxies["edge"], true);

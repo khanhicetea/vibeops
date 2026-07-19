@@ -12,7 +12,7 @@ export type CreateProxyInput = {
   name: string;
   domain: string;
   aliases?: string[];
-  upstream: string;
+  upstreams: string[];
   tls?: TlsMode;
   accessLog?: boolean;
 };
@@ -28,9 +28,7 @@ export function createProxy(
   }
   const domain = unwrap(parseDomainName(input.domain), "domain");
   const aliases = (input.aliases ?? []).map((a, i) => unwrap(parseDomainName(a), `aliases[${i}]`));
-  if (!input.upstream || !/^https?:\/\//.test(input.upstream)) {
-    throw validationError("upstream must be an http(s) URL reachable from the host");
-  }
+  validateUpstreams(input.upstreams);
 
   for (const d of [domain, ...aliases]) {
     const owner = state.domains[d];
@@ -47,7 +45,7 @@ export function createProxy(
     name: asProxySiteName(name),
     mainDomain: asDomainName(domain),
     aliases: aliases.map(asDomainName),
-    upstream: input.upstream,
+    upstreams: [...input.upstreams],
     tls: input.tls ?? { kind: "boot" },
     accessLog: input.accessLog ?? false,
     createdAt: now,
@@ -68,6 +66,58 @@ export function createProxy(
     },
     proxy,
     reloadPlan: reloadPlanForDomainChange(),
+  };
+}
+
+export type NginxUpstreamConfig = {
+  scheme: "http" | "https";
+  servers: string[];
+  uri: string;
+};
+
+/** Validate proxy targets and derive values safe for an Nginx upstream block. */
+export function validateUpstreams(upstreams: string[]): NginxUpstreamConfig {
+  if (upstreams.length === 0) {
+    throw validationError("at least one upstream is required");
+  }
+
+  const urls = upstreams.map((upstream, index) => {
+    let url: URL;
+    try {
+      url = new URL(upstream);
+    } catch {
+      throw validationError(`upstream[${index}] must be a valid http(s) URL`);
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw validationError(`upstream[${index}] must be an http(s) URL`);
+    }
+    if (url.username || url.password || url.hash) {
+      throw validationError(`upstream[${index}] must not contain credentials or a fragment`);
+    }
+    return url;
+  });
+
+  const first = urls[0]!;
+  const uri = `${first.pathname === "/" ? "" : first.pathname}${first.search}`;
+  if (/[\s;{}]/.test(uri)) {
+    throw validationError("upstream path/query contains characters unsafe for Nginx");
+  }
+  for (const [index, url] of urls.entries()) {
+    const candidateUri = `${url.pathname === "/" ? "" : url.pathname}${url.search}`;
+    if (url.protocol !== first.protocol) {
+      throw validationError(`upstream[${index}] must use the same protocol as upstream[0]`);
+    }
+    if (candidateUri !== uri) {
+      throw validationError(`upstream[${index}] must use the same path and query as upstream[0]`);
+    }
+  }
+
+  return {
+    scheme: first.protocol.slice(0, -1) as "http" | "https",
+    servers: urls.map((url) =>
+      url.port ? url.host : `${url.hostname}:${url.protocol === "https:" ? "443" : "80"}`
+    ),
+    uri,
   };
 }
 

@@ -29,7 +29,6 @@ type StringArgName =
   | "source"
   | "target"
   | "timezone"
-  | "upstream"
   | "version"
   | "workdir";
 
@@ -69,6 +68,7 @@ export type CliArgs =
     json: boolean;
     kind?: TemplateKind;
     mode?: TlsMode["kind"];
+    upstream?: string | string[];
   }
   & Partial<Record<StringArgName, string>>
   & Partial<Record<BooleanArgName, boolean>>

@@ -24,13 +24,12 @@ export type MigrationStep = {
  * Keep steps pure and deterministic.
  */
 export const MIGRATION_CHAIN: MigrationStep[] = [
-  // Example placeholder kept as documentation only — not registered until v2 exists:
-  // {
-  //   from: 1,
-  //   to: 2,
-  //   name: "migrateV1toV2",
-  //   migrate: migrateV1toV2,
-  // },
+  {
+    from: 1,
+    to: 2,
+    name: "proxy-multiple-upstreams",
+    migrate: migrateV1toV2,
+  },
 ];
 
 /**
@@ -83,16 +82,27 @@ export function migrateStateDocument(
   return { value, migrated, fromVersion: schemaVersion };
 }
 
-/**
- * Typed v1→v2 migration stub. Not in MIGRATION_CHAIN until STATE_SCHEMA_VERSION is 2.
- * Keeping the function ensures the pattern is tested and ready for the next bump.
- */
+/** Convert each v1 proxy's single upstream into the v2 upstream list. */
 export function migrateV1toV2(raw: Record<string, unknown>): Record<string, unknown> {
-  // When activating: copy fields, apply defaults for new required keys, never drop apps.
-  return {
-    ...raw,
-    schemaVersion: 2,
-  };
+  const proxies = raw.proxies && typeof raw.proxies === "object" && !Array.isArray(raw.proxies)
+    ? Object.fromEntries(
+      Object.entries(raw.proxies as Record<string, unknown>).map(([name, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [name, value];
+        const proxy = value as Record<string, unknown>;
+        const { upstream, ...rest } = proxy;
+        return [name, {
+          ...rest,
+          upstreams: Array.isArray(proxy.upstreams)
+            ? proxy.upstreams
+            : typeof upstream === "string"
+            ? [upstream]
+            : [],
+        }];
+      }),
+    )
+    : raw.proxies;
+
+  return { ...raw, proxies, schemaVersion: 2 };
 }
 
 /** Backup filename helper for pre-migration snapshots. */

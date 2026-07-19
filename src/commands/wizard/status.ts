@@ -59,7 +59,7 @@ export async function sectionStatus(ui: WizardUI, ctx: CliContext): Promise<void
     const rows = Object.values(state.proxies).map((p) => [
       p.name,
       p.mainDomain,
-      p.upstream,
+      p.upstreams.join(", "),
       p.tls.kind,
     ]);
     ui.table(["name", "domain", "upstream", "tls"], rows);

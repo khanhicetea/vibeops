@@ -12,6 +12,7 @@ import { containerAppHome } from "../platform/paths.ts";
 import { assembleComposeDocuments } from "./compose.ts";
 import { loadHttp3Enabled, loadMysqlRootPassword } from "./stack_env.ts";
 import { ACME_CHALLENGE_ROOT, resolveSslForSite } from "./tls.ts";
+import { validateUpstreams } from "./proxy.ts";
 
 export async function generateAll(
   platform: Platform,
@@ -183,10 +184,14 @@ async function generateProxyVhost(
   );
   const serverNames = [proxy.mainDomain, ...proxy.aliases].join(" ");
   const ssl = resolveSslForSite(proxy.tls, `proxy-${proxy.name}`, String(proxy.mainDomain));
+  const upstream = validateUpstreams(proxy.upstreams);
   const content = renderTemplate(tpl, {
     name: proxy.name,
     serverNames,
-    upstream: proxy.upstream,
+    upstreamName: `upstream_${proxy.name}`,
+    upstreamServers: upstream.servers,
+    upstreamScheme: upstream.scheme,
+    upstreamUri: upstream.uri,
     accessLog: proxy.accessLog,
     accessLogPath: `/var/log/nginx/proxy-${proxy.name}.access.log`,
     tlsKind: proxy.tls.kind,
@@ -714,6 +719,13 @@ server {
 `;
 
 const DEFAULT_PROXY_VHOST = `# proxy {{name}}
+upstream {{upstreamName}} {
+  {{#upstreamServers}}
+  server {{.}};
+  {{/upstreamServers}}
+  keepalive 5;
+}
+
 server {
   listen 80;
   listen [::]:80;
@@ -736,11 +748,12 @@ server {
   {{/accessLog}}
   location / {
     proxy_http_version 1.1;
+    proxy_set_header Connection "";
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_pass {{upstream}};
+    proxy_pass {{upstreamScheme}}://{{upstreamName}}{{upstreamUri}};
   }
   {{/redirectHttps}}
 }
@@ -763,11 +776,12 @@ server {
   {{/accessLog}}
   location / {
     proxy_http_version 1.1;
+    proxy_set_header Connection "";
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_pass {{upstream}};
+    proxy_pass {{upstreamScheme}}://{{upstreamName}}{{upstreamUri}};
   }
 }
 `;

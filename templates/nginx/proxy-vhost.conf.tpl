@@ -1,4 +1,11 @@
 # proxy {{name}}
+upstream {{upstreamName}} {
+  {{#upstreamServers}}
+  server {{.}};
+  {{/upstreamServers}}
+  keepalive 5;
+}
+
 server {
   listen 80;
   listen [::]:80;
@@ -21,11 +28,12 @@ server {
   {{/accessLog}}
   location / {
     proxy_http_version 1.1;
+    proxy_set_header Connection "";
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_pass {{upstream}};
+    proxy_pass {{upstreamScheme}}://{{upstreamName}}{{upstreamUri}};
   }
   {{/redirectHttps}}
 }
@@ -48,10 +56,11 @@ server {
   {{/accessLog}}
   location / {
     proxy_http_version 1.1;
+    proxy_set_header Connection "";
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_pass {{upstream}};
+    proxy_pass {{upstreamScheme}}://{{upstreamName}}{{upstreamUri}};
   }
 }

@@ -1,7 +1,7 @@
 /** Bento version and build metadata. */
 export const BENTO_VERSION = "0.1.0";
 export const DENO_TARGET_VERSION = "2.9.3";
-export const STATE_SCHEMA_VERSION = 1 as const;
+export const STATE_SCHEMA_VERSION = 2 as const;
 export const ASSET_VERSION = "0.1.0";
 
 export function versionBanner(): string {

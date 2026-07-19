@@ -109,7 +109,7 @@ export type ProxySite = {
   name: ProxySiteName;
   mainDomain: DomainName;
   aliases: DomainName[];
-  upstream: string;
+  upstreams: string[];
   tls: TlsMode;
   accessLog: boolean;
   createdAt: string;

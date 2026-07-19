@@ -132,6 +132,31 @@ Deno.test("E1 ACME TLS: redirect + challenge + ssl snippet paths", async () => {
   }
 });
 
+Deno.test("E1 proxy renders named multi-server upstream with keepalive", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-e1-proxy-" });
+  try {
+    const platform = testPlatform(root);
+    const state = createProxy(createEmptyState(), {
+      name: "edge",
+      domain: "edge.test",
+      upstreams: ["http://127.0.0.1:3000", "http://10.0.0.2:3000"],
+    }, platform.clock.nowIso()).state;
+
+    const files = await generateAll(platform, state, "digest");
+    const vhost = textContent(
+      files.find((f) => f.relPath === "nginx/sites/proxy-edge.conf")!.content,
+    );
+    assertEquals(vhost.includes("upstream upstream_edge {"), true);
+    assertEquals(vhost.includes("server 127.0.0.1:3000;"), true);
+    assertEquals(vhost.includes("server 10.0.0.2:3000;"), true);
+    assertEquals(vhost.includes("keepalive 5;"), true);
+    assertEquals(vhost.match(/proxy_set_header Connection "";/g)?.length, 2);
+    assertEquals(vhost.match(/proxy_pass http:\/\/upstream_edge;/g)?.length, 2);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("E1 HTTP/3 follows HTTP3 in the stack environment", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-e1-http3-" });
   try {
@@ -141,7 +166,7 @@ Deno.test("E1 HTTP/3 follows HTTP3 in the stack environment", async () => {
     state = createProxy(state, {
       name: "edge",
       domain: "edge.test",
-      upstream: "http://127.0.0.1:3000",
+      upstreams: ["http://127.0.0.1:3000"],
     }, platform.clock.nowIso()).state;
 
     await platform.fs.atomicWriteText(platform.paths.paths.envFile, "HTTP3=true\n");
@@ -537,9 +562,17 @@ Deno.test("E6 future schemaVersion rejected; load does not rewrite", async () =>
     const result = parseDesiredState(future);
     assertEquals(result.ok, false);
 
-    // migrateV1toV2 pure function shape
-    const v2 = migrateV1toV2({ schemaVersion: 1, apps: {} });
+    // migrateV1toV2 converts legacy proxy targets without mutating apps.
+    const v2 = migrateV1toV2({
+      schemaVersion: 1,
+      apps: {},
+      proxies: { edge: { upstream: "http://127.0.0.1:3000" } },
+    });
     assertEquals(v2.schemaVersion, 2);
+    assertEquals(
+      (v2.proxies as Record<string, { upstreams: string[] }>).edge!.upstreams,
+      ["http://127.0.0.1:3000"],
+    );
 
     // migrateStateDocument no-op at current version
     const m = migrateStateDocument(JSON.parse(original));

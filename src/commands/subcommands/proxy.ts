@@ -28,8 +28,9 @@ export function registerProxyCommands(parser: YargsBuilder, state: RunState): Ya
                 })
                 .option("upstream", {
                   type: "string",
+                  array: true,
                   demandOption: true,
-                  describe: "Upstream URL (e.g. http://127.0.0.1:3000)",
+                  describe: "Upstream URL; repeat for multiple servers",
                 })
                 .option("alias", {
                   type: "string",
@@ -59,7 +60,7 @@ async function cmdProxyList(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const rows = Object.values(state.proxies).map((p) => [
     p.name,
     p.mainDomain,
-    p.upstream,
+    p.upstreams.join(", "),
     p.tls.kind,
   ]);
   ctx.log.out(printTable(["name", "domain", "upstream", "tls"], rows));
@@ -71,12 +72,13 @@ async function cmdProxyCreate(
   ctx: CliContext,
 ): Promise<number> {
   const { name, domain, upstream } = argv;
+  const upstreams = Array.isArray(upstream) ? upstream : [upstream];
   const noApply = wantsNoApply(argv);
   await ctx.store.withExclusive(async (state) => {
     const result = createProxy(state, {
       name,
       domain,
-      upstream,
+      upstreams,
       aliases: argv.alias?.split(",") ?? [],
     }, ctx.platform.clock.nowIso());
     await ctx.store.save(result.state);

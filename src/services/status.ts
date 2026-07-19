@@ -62,7 +62,7 @@ export type StatusReport = {
   proxies: Array<{
     name: string;
     domain: string;
-    upstream: string;
+    upstreams: string[];
     tls: string;
   }>;
   domains: Array<{ domain: string; owner: string }>;
@@ -211,7 +211,7 @@ export async function buildStatus(
       .map((p) => ({
         name: p.name,
         domain: p.mainDomain,
-        upstream: p.upstream,
+        upstreams: [...p.upstreams],
         tls: p.tls.kind,
       })),
     domains: Object.entries(state.domains)
@@ -364,7 +364,7 @@ export function formatStatus(report: StatusReport): string {
   lines.push("Proxies:");
   if (report.proxies.length === 0) lines.push("  (none)");
   for (const p of report.proxies) {
-    lines.push(`  ${p.name}  ${p.domain} -> ${p.upstream}  tls=${p.tls}`);
+    lines.push(`  ${p.name}  ${p.domain} -> ${p.upstreams.join(", ")}  tls=${p.tls}`);
   }
   lines.push("");
   lines.push("Domains:");
