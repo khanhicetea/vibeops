@@ -231,16 +231,21 @@ async function generatePhpPools(
       tpl = await readOrDefault(platform, "php/pool.conf.tpl", DEFAULT_POOL);
     }
     const profile = FPM_PROFILES[app.fpmProfile] ?? FPM_PROFILES.small!;
+    const dynamic = profile.manager === "dynamic";
     const home = containerAppHome(app.slug);
     const content = renderTemplate(tpl, {
       slug: app.slug,
       uid: app.uid,
       gid: app.gid,
       home,
+      processManager: profile.manager,
+      dynamic,
+      ondemand: profile.manager === "ondemand",
       maxChildren: profile.maxChildren,
-      startServers: profile.startServers,
-      minSpare: profile.minSpare,
-      maxSpare: profile.maxSpare,
+      startServers: dynamic ? profile.startServers : 0,
+      minSpare: dynamic ? profile.minSpare : 0,
+      maxSpare: dynamic ? profile.maxSpare : 0,
+      processIdleTimeout: dynamic ? "" : profile.processIdleTimeout,
       socketPath: `/run/php-fpm/${app.slug}.sock`,
       openBasedir: `${home}:/usr/share/php:/tmp${app.deploy.enabled ? ":/opt/bento/helpers" : ""}`,
       deployEnabled: app.deploy.enabled,
@@ -759,11 +764,16 @@ listen = {{socketPath}}
 listen.owner = {{uid}}
 listen.group = 1500
 listen.mode = 0660
-pm = dynamic
+pm = {{processManager}}
 pm.max_children = {{maxChildren}}
+{{#dynamic}}
 pm.start_servers = {{startServers}}
 pm.min_spare_servers = {{minSpare}}
 pm.max_spare_servers = {{maxSpare}}
+{{/dynamic}}
+{{#ondemand}}
+pm.process_idle_timeout = {{processIdleTimeout}}
+{{/ondemand}}
 php_admin_value[open_basedir] = {{openBasedir}}
 php_admin_value[upload_tmp_dir] = {{home}}/tmp
 php_admin_value[session.save_path] = {{home}}/tmp/sessions

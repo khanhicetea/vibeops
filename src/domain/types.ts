@@ -83,14 +83,62 @@ export const SHARED_SOCKET_GID = 1500;
 export const APP_HOME_ROOT = "/home";
 
 /** Named FPM capacity profiles. */
-export const FPM_PROFILES: Readonly<
-  Record<string, { maxChildren: number; startServers: number; minSpare: number; maxSpare: number }>
-> = {
-  tiny: { maxChildren: 5, startServers: 1, minSpare: 1, maxSpare: 3 },
-  small: { maxChildren: 10, startServers: 2, minSpare: 1, maxSpare: 5 },
-  medium: { maxChildren: 25, startServers: 4, minSpare: 2, maxSpare: 10 },
-  large: { maxChildren: 50, startServers: 8, minSpare: 4, maxSpare: 20 },
-  xlarge: { maxChildren: 100, startServers: 16, minSpare: 8, maxSpare: 40 },
+export type FpmPoolProfile =
+  | {
+    manager: "dynamic";
+    maxChildren: number;
+    startServers: number;
+    minSpare: number;
+    maxSpare: number;
+  }
+  | {
+    manager: "ondemand";
+    maxChildren: number;
+    processIdleTimeout: string;
+  };
+
+export const FPM_PROFILES: Readonly<Record<string, FpmPoolProfile>> = {
+  tiny: {
+    manager: "dynamic",
+    maxChildren: 5,
+    startServers: 1,
+    minSpare: 1,
+    maxSpare: 3,
+  },
+  small: {
+    manager: "dynamic",
+    maxChildren: 10,
+    startServers: 2,
+    minSpare: 1,
+    maxSpare: 5,
+  },
+  medium: {
+    manager: "dynamic",
+    maxChildren: 25,
+    startServers: 4,
+    minSpare: 2,
+    maxSpare: 10,
+  },
+  large: {
+    manager: "dynamic",
+    maxChildren: 50,
+    startServers: 8,
+    minSpare: 4,
+    maxSpare: 20,
+  },
+  xlarge: {
+    manager: "dynamic",
+    maxChildren: 100,
+    startServers: 16,
+    minSpare: 8,
+    maxSpare: 40,
+  },
+  // Match the small pool's capacity but fork workers only for active requests.
+  ondemand: {
+    manager: "ondemand",
+    maxChildren: 10,
+    processIdleTimeout: "10s",
+  },
 };
 
 /** Global process cap per PHP version (pm.max_children aggregate warning threshold). */

@@ -246,6 +246,32 @@ Deno.test("app provision materializes home without secrets in public tree", asyn
   }
 });
 
+Deno.test("ondemand FPM profile renders only ondemand directives", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const platform = testPlatform(root);
+    const render = new RenderService(platform);
+    const state = provisionApp(platform, createEmptyState(), {
+      slug: "idle-app",
+      domain: "idle.example",
+      fpmProfile: "ondemand",
+    }).state;
+    await render.apply(state, { renderOnly: true, skipValidate: true });
+
+    const pool = await platform.fs.readText(
+      join(root, "generated/php/php85/pools/idle-app.conf"),
+    );
+    assertEquals(pool.includes("pm = ondemand"), true);
+    assertEquals(pool.includes("pm.max_children = 10"), true);
+    assertEquals(pool.includes("pm.process_idle_timeout = 10s"), true);
+    assertEquals(pool.includes("pm.start_servers"), false);
+    assertEquals(pool.includes("pm.min_spare_servers"), false);
+    assertEquals(pool.includes("pm.max_spare_servers"), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("app apply emits INI-safe pool marker, include file, and code/ docroot", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-test-" });
   try {
