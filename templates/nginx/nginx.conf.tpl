@@ -8,6 +8,11 @@ events {
 }
 
 http {
+  map $http_x_forwarded_proto $fastcgi_https {
+    default '';
+    https 'on';
+  }
+
   include /etc/nginx/mime.types;
   default_type application/octet-stream;
   sendfile on;

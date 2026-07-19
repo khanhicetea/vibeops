@@ -545,6 +545,11 @@ events {
 }
 
 http {
+  map $http_x_forwarded_proto $fastcgi_https {
+    default '';
+    https 'on';
+  }
+
   include /etc/nginx/mime.types;
   default_type application/octet-stream;
   sendfile on;
@@ -616,6 +621,7 @@ server {
   location ~ \\.php$ {
     if ($uri !~ ^/index\\.php$) { return 404; }
     include fastcgi_params;
+    fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     fastcgi_pass unix:{{socketPath}};
   }
@@ -627,6 +633,7 @@ server {
   location ~ \\.php$ {
     try_files $uri =404;
     include fastcgi_params;
+    fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     fastcgi_pass unix:{{socketPath}};
   }
@@ -680,6 +687,7 @@ server {
   location ~ \\.php$ {
     if ($uri !~ ^/index\\.php$) { return 404; }
     include fastcgi_params;
+    fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     fastcgi_pass unix:{{socketPath}};
   }
@@ -691,6 +699,7 @@ server {
   location ~ \\.php$ {
     try_files $uri =404;
     include fastcgi_params;
+    fastcgi_param HTTPS $fastcgi_https;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     fastcgi_pass unix:{{socketPath}};
   }
