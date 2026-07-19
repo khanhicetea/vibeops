@@ -146,7 +146,15 @@ function runDeployHook(array $argv, array $env, string $workdir, string $home, i
         1 => ['file', $logPath, 'a'],
         2 => ['file', $logPath, 'a'],
     ];
-    $process = @proc_open($argv, $descriptors, $pipes, $workdir, $env, ['bypass_shell' => true]);
+    // Queue and payload files use the drain's private umask (0077), but deploy
+    // hooks need normal public-file modes so newly checked-out assets remain
+    // readable by Nginx. Restore the private umask immediately after spawning.
+    $previousUmask = umask(0022);
+    try {
+        $process = @proc_open($argv, $descriptors, $pipes, $workdir, $env, ['bypass_shell' => true]);
+    } finally {
+        umask($previousUmask);
+    }
     if (!is_resource($process)) {
         throw new RuntimeException('unable to start deploy hook');
     }

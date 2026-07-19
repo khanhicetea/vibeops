@@ -142,6 +142,8 @@ Deno.test("materialize uses digest-addressed cache and skips republish", async (
     const drainPhp = await Deno.readTextFile(join(stack, "helpers/deploy-drain.php"));
     const drainSh = await Deno.readTextFile(join(stack, "helpers/deploy-drain.sh"));
     assertEquals(drainPhp.includes("resetOpcache"), true);
+    assertEquals(drainPhp.includes("$previousUmask = umask(0022);"), true);
+    assertEquals(drainPhp.includes("umask($previousUmask);"), true);
     assertEquals(drainSh.includes("deploy-drain.php"), true);
     assertEquals(drainSh.includes("bento deploy drain"), false);
     assertEquals(

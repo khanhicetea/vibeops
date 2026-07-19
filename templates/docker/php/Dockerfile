@@ -30,10 +30,12 @@ RUN set -eux; \
     libssl-dev \
     libxml2-dev \
     libzip-dev \
+    nano \
     openssh-client \
     procps \
     logrotate \
     unzip \
+    vim \
     xz-utils \
     zip \
     zstd; \
