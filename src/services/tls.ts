@@ -3,22 +3,34 @@
  *
  * Modes:
  * - boot: self-signed starter cert under stack certs/ (generated on materialize + nginx entrypoint)
- * - acme: operator-issued certs under certs/acme/<domain>/; HTTP-01 challenge webroot at certs/acme-www
+ * - acme: certificates issued and renewed automatically by Nginx's native ACME module
  * - external: operator-managed cert/key files under stack certs/ (never world-readable keys)
  *
  * HTTPS redirect is enabled only when mode !== boot (real certificate mode).
  */
 
-import { isAbsolute, join, relative, resolve } from "@std/path";
+import { isAbsolute, relative, resolve } from "@std/path";
 import type { TlsMode } from "../domain/state.ts";
 import { validationError } from "../domain/errors.ts";
 import type { Platform } from "../platform/mod.ts";
 
-/** Container path for ACME HTTP-01 challenge tokens. */
-export const ACME_CHALLENGE_ROOT = "/var/www/acme";
+export const DEFAULT_ACME_URL = "https://acme-v02.api.letsencrypt.org/directory";
+export const ACME_ISSUER = "bento_acme";
+export const ACME_STATE_ROOT = "/var/cache/nginx/acme";
 
-/** Host-relative webroot under the stack root for ACME challenges. */
-export const ACME_CHALLENGE_HOST_REL = "certs/acme-www";
+function nginxQuoted(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/\"/g, '\\"')}"`;
+}
+
+/** Render the single native Nginx ACME issuer shared by all ACME sites. */
+export function renderAcmeIssuer(url: string, email?: string): string {
+  const contact = email ? `  contact ${nginxQuoted(email)};\n` : "";
+  return `acme_issuer ${ACME_ISSUER} {
+  uri ${nginxQuoted(url)};
+${contact}  state_path ${ACME_STATE_ROOT}/${ACME_ISSUER};
+  accept_terms_of_service;
+}`;
+}
 
 export type ResolvedSsl = {
   /** nginx include path inside the container (absolute). */
@@ -28,8 +40,6 @@ export type ResolvedSsl = {
   snippetContent?: string;
   /** Whether HTTP→HTTPS redirect should be active. */
   redirectHttps: boolean;
-  /** Whether to expose ACME challenge location on :80. */
-  acmeChallenge: boolean;
   /** Operator-facing notes (DNS, issuance). */
   notes: string[];
 };
@@ -47,7 +57,6 @@ export function resolveSslForSite(
     return {
       includePath: "/etc/nginx/snippets/boot-ssl.conf",
       redirectHttps: false,
-      acmeChallenge: false,
       notes: [
         "Boot TLS uses a self-signed certificate so HTTPS can start before production certs exist.",
       ],
@@ -55,23 +64,13 @@ export function resolveSslForSite(
   }
 
   if (tls.kind === "acme") {
-    const snippetRelPath = `nginx/snippets/ssl-${siteId}.conf`;
-    const cert = `/etc/nginx/certs/acme/${mainDomain}/fullchain.pem`;
-    const key = `/etc/nginx/certs/acme/${mainDomain}/privkey.pem`;
     return {
-      includePath: `/etc/nginx/snippets/ssl-${siteId}.conf`,
-      snippetRelPath,
-      snippetContent: renderSslSnippet(cert, key),
+      includePath: "/etc/nginx/snippets/acme-ssl.conf",
       redirectHttps: true,
-      acmeChallenge: true,
       notes: [
         `Point DNS A/AAAA for ${mainDomain} (and aliases) to this host before issuance.`,
-        `Issue certs into stack certs/acme/${mainDomain}/ (fullchain.pem + privkey.pem).`,
-        `HTTP-01 webroot is ${ACME_CHALLENGE_HOST_REL} (container ${ACME_CHALLENGE_ROOT}).`,
-        "Example: certbot certonly --webroot -w ./certs/acme-www -d " + mainDomain,
-        tls.email
-          ? `ACME contact email recorded: ${tls.email}`
-          : "Optional: set ACME email via `tls set --mode acme --email you@example.com`.",
+        "Nginx will issue and renew the certificate automatically using HTTP-01.",
+        "Set the shared ACME contact with ACME_EMAIL in the stack .env.",
       ],
     };
   }
@@ -86,12 +85,23 @@ export function resolveSslForSite(
     snippetRelPath,
     snippetContent: renderSslSnippet(certContainer, keyContainer),
     redirectHttps: true,
-    acmeChallenge: false,
     notes: [
       "External TLS uses operator-managed certificate files under the stack certs/ directory.",
       "Private keys must not be world-readable (mode 0600 recommended).",
     ],
   };
+}
+
+export function renderAcmeSslSnippet(): string {
+  return `acme_certificate ${ACME_ISSUER};
+ssl_certificate     $acme_certificate;
+ssl_certificate_key $acme_certificate_key;
+ssl_certificate_cache max=10;
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+ssl_session_timeout 1d;
+ssl_session_cache shared:SSL:10m;
+`;
 }
 
 function renderSslSnippet(cert: string, key: string): string {
@@ -184,32 +194,14 @@ export async function validateExternalTlsPaths(
   }
 }
 
-/** Ensure ACME webroot directory exists on the host (challenge tokens). */
-export async function ensureAcmeWebroot(platform: Platform): Promise<string> {
-  const dir = join(platform.paths.paths.root, ACME_CHALLENGE_HOST_REL);
-  await platform.fs.mkdirp(dir, 0o755);
-  return dir;
-}
-
 /** Operator documentation for TLS modes (CLI / README snippets). */
 export function tlsOperatorDocs(): string {
   return [
     "TLS modes:",
     "  boot     Self-signed starter cert (default). No HTTP→HTTPS redirect.",
-    "  acme     Real certs under certs/acme/<domain>/; HTTP-01 at certs/acme-www.",
-    "           DNS A/AAAA for the site must point at this host before issuance.",
-    "           Example: certbot certonly --webroot -w ./certs/acme-www -d example.com",
+    "  acme     Nginx automatically issues and renews a Let's Encrypt certificate.",
+    "           DNS A/AAAA must point at this host and public port 80 must be reachable.",
     "  external Operator-managed cert+key under stack certs/ (key mode 0600).",
     "HTTPS redirect is enabled only for acme and external modes.",
   ].join("\n");
-}
-
-/** Nginx location block for ACME HTTP-01 (inserted on :80 when acmeChallenge). */
-export function acmeChallengeLocationBlock(): string {
-  return `  location ^~ /.well-known/acme-challenge/ {
-    root ${ACME_CHALLENGE_ROOT};
-    default_type "text/plain";
-    allow all;
-  }
-`;
 }

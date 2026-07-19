@@ -181,8 +181,8 @@ function renderBaseCompose(): string {
           // Generated snippets fully replace image defaults (boot-ssl, app-common, per-site ssl).
           "./generated/nginx/snippets:/etc/nginx/snippets:ro",
           "./certs:/etc/nginx/certs",
-          // ACME HTTP-01 webroot (writable for token placement by certbot/lego on host).
-          "./certs/acme-www:/var/www/acme",
+          // Native Nginx ACME account keys, certificates, and renewal state.
+          "./certs/acme-state:/var/cache/nginx/acme",
           "./homes:/home:ro",
           "./runtime/php-fpm:/run/php-fpm:ro",
           "./logs/nginx:/var/log/nginx",

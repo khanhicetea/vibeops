@@ -1,3 +1,5 @@
+load_module /usr/lib/nginx/modules/ngx_http_acme_module.so;
+
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
 pid /var/run/nginx.pid;
@@ -8,6 +10,12 @@ events {
 }
 
 http {
+  resolver 1.1.1.1 8.8.8.8 valid=300s ipv6=off;
+
+  acme_shared_zone zone=ngx_acme_shared:10M;
+
+  {{acmeIssuers}}
+
   map $http_x_forwarded_proto $fastcgi_https {
     default '';
     https 'on';

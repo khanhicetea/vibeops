@@ -31,7 +31,7 @@ import { STATE_SCHEMA_VERSION } from "../version.ts";
 
 export type TlsMode =
   | { kind: "boot" }
-  | { kind: "acme"; email?: string }
+  | { kind: "acme" }
   | { kind: "external"; certPath: string; keyPath: string };
 
 export type EntrypointMode = "front-controller" | "legacy";

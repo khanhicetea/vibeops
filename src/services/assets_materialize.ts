@@ -119,8 +119,8 @@ export async function materializeDockerAssets(
   }
 
   await ensureBootCert(platform);
-  // ACME HTTP-01 webroot (used when any site is in acme mode; safe empty dir otherwise).
-  await platform.fs.mkdirp(join(platform.paths.paths.certsDir, "acme-www"), 0o755);
+  // Persistent state for Nginx's native ACME module (permissions fixed by entrypoint).
+  await platform.fs.mkdirp(join(platform.paths.paths.certsDir, "acme-state"), 0o700);
 
   return {
     dockerRoot,

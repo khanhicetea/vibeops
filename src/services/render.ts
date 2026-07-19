@@ -616,8 +616,22 @@ function defaultReloader(platform: Platform, state: DesiredState): ServiceReload
           "reload",
         ]);
         const detail = `${r.stderr}\n${r.stdout}`;
-        // Stopped/unavailable services are not fatal; config is ready for next start.
-        if (r.code !== 0 && !isDockerUnavailable(detail) && r.code !== 124) {
+        // ngx_http_acme_module cannot add an issuer to an already-running master
+        // that started without it. Recover this one-time upgrade case by restarting
+        // only Nginx; subsequent changes use normal zero-downtime reloads.
+        if (r.code !== 0 && /issuer "[^"]+" is missing/.test(detail)) {
+          const restarted = await soft(["docker", "compose", "restart", "nginx"]);
+          const restartDetail = `${restarted.stderr}\n${restarted.stdout}`;
+          if (
+            restarted.code !== 0 && !isDockerUnavailable(restartDetail) &&
+            restarted.code !== 124
+          ) {
+            throw platformError(
+              `nginx ACME issuer migration restart failed: ${restarted.stderr || restarted.stdout}`,
+            );
+          }
+        } else if (r.code !== 0 && !isDockerUnavailable(detail) && r.code !== 124) {
+          // Stopped/unavailable services are not fatal; config is ready for next start.
           throw platformError(`nginx reload failed: ${r.stderr || r.stdout}`);
         }
       }

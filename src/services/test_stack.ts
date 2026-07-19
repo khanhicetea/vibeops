@@ -27,7 +27,6 @@ import { createAppDatabaseLive, isMysqlReachable } from "./mysql.ts";
 import { isRedisReachable } from "./redis.ts";
 import { loadRedisPassword, requireMysqlRootPassword } from "./stack_env.ts";
 import { parseDotEnv } from "./stack_env.ts";
-import { ensureAcmeWebroot } from "./tls.ts";
 import { addCronJob, removeCronJob } from "./cron.ts";
 import { addWorker, removeWorker, workerProgramName } from "./worker.ts";
 import { checkPermissions, repairPermissions } from "./permissions.ts";
@@ -448,7 +447,6 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     ) {
       await platform.fs.mkdirp(join(opts.stackRoot, d));
     }
-    await ensureAcmeWebroot(platform);
     return { ok: true, detail: exists ? "reused existing state" : "fresh state" };
   });
 

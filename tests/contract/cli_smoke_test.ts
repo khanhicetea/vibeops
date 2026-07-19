@@ -371,16 +371,18 @@ Deno.test("cli tls set + permissions + backup/restore dry paths", async () => {
         "demo",
         "--mode",
         "acme",
-        "--email",
-        "ops@example.test",
         "--no-apply",
       ]),
       0,
     );
     assertEquals(await runCli([...base, "apply", "--render-only", "--skip-validate"]), 0);
     const acmeVhost = await Deno.readTextFile(join(stack, "generated/nginx/sites/demo.conf"));
-    assertEquals(acmeVhost.includes("acme-challenge"), true);
+    const acmeMain = await Deno.readTextFile(join(stack, "generated/nginx/nginx.conf"));
+    const acmeSsl = await Deno.readTextFile(join(stack, "generated/nginx/snippets/acme-ssl.conf"));
+    assertEquals(acmeVhost.includes("acme-challenge"), false);
     assertEquals(acmeVhost.includes("return 301 https://"), true);
+    assertEquals(acmeMain.includes("acme_issuer bento_acme"), true);
+    assertEquals(acmeSsl.includes("acme_certificate bento_acme;"), true);
 
     // TLS external requires cert+key; missing paths fail closed
     assertEquals(

@@ -10,8 +10,8 @@ import { renderTemplate } from "./template.ts";
 import { type GeneratedFile, withManagedMarker } from "./render.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { assembleComposeDocuments } from "./compose.ts";
-import { loadHttp3Enabled, loadMysqlRootPassword } from "./stack_env.ts";
-import { ACME_CHALLENGE_ROOT, resolveSslForSite } from "./tls.ts";
+import { loadAcmeEnvironment, loadHttp3Enabled, loadMysqlRootPassword } from "./stack_env.ts";
+import { renderAcmeIssuer, renderAcmeSslSnippet, resolveSslForSite } from "./tls.ts";
 import { validateUpstreams } from "./proxy.ts";
 
 export async function generateAll(
@@ -70,19 +70,31 @@ async function generateNginx(
   } catch {
     mainTpl = DEFAULT_NGINX_MAIN;
   }
+  // Keep the shared issuer present from the first Nginx start. The ACME module
+  // cannot introduce a previously absent issuer with a worker reload alone.
+  const acme = await loadAcmeEnvironment(platform);
+  const acmeIssuers = renderAcmeIssuer(acme.url, acme.email);
   files.push({
     relPath: "nginx/nginx.conf",
     content: withManagedMarker(renderTemplate(mainTpl, {
       workerConnections: 4096,
+      acmeIssuers,
     })),
     mode: 0o644,
     managed: true,
   });
 
-  // Boot cert placeholder note
+  // Shared TLS snippets. ACME identifiers are inferred independently from each
+  // including server block's server_name values.
   files.push({
     relPath: "nginx/snippets/boot-ssl.conf",
     content: withManagedMarker(DEFAULT_BOOT_SSL),
+    mode: 0o644,
+    managed: true,
+  });
+  files.push({
+    relPath: "nginx/snippets/acme-ssl.conf",
+    content: withManagedMarker(renderAcmeSslSnippet()),
     mode: 0o644,
     managed: true,
   });
@@ -144,8 +156,6 @@ async function generateAppVhost(
     tlsKind: app.tls.kind,
     realTls: app.tls.kind !== "boot",
     redirectHttps: ssl.redirectHttps,
-    acmeChallenge: ssl.acmeChallenge,
-    acmeChallengeRoot: ACME_CHALLENGE_ROOT,
     sslInclude: ssl.includePath,
     http3,
     deployEnabled: app.deploy.enabled,
@@ -197,8 +207,6 @@ async function generateProxyVhost(
     tlsKind: proxy.tls.kind,
     realTls: proxy.tls.kind !== "boot",
     redirectHttps: ssl.redirectHttps,
-    acmeChallenge: ssl.acmeChallenge,
-    acmeChallengeRoot: ACME_CHALLENGE_ROOT,
     sslInclude: ssl.includePath,
     http3,
   });
@@ -546,7 +554,9 @@ async function readOrDefault(
   }
 }
 
-const DEFAULT_NGINX_MAIN = `worker_processes auto;
+const DEFAULT_NGINX_MAIN = `load_module /usr/lib/nginx/modules/ngx_http_acme_module.so;
+
+worker_processes auto;
 error_log /var/log/nginx/error.log warn;
 pid /var/run/nginx.pid;
 
@@ -556,6 +566,12 @@ events {
 }
 
 http {
+  resolver 1.1.1.1 8.8.8.8 valid=300s ipv6=off;
+
+  acme_shared_zone zone=ngx_acme_shared:10M;
+
+  {{acmeIssuers}}
+
   map $http_x_forwarded_proto $fastcgi_https {
     default '';
     https 'on';
@@ -591,14 +607,6 @@ server {
   listen 80;
   listen [::]:80;
   server_name {{serverNames}};
-
-  {{#acmeChallenge}}
-  location ^~ /.well-known/acme-challenge/ {
-    root {{acmeChallengeRoot}};
-    default_type "text/plain";
-    allow all;
-  }
-  {{/acmeChallenge}}
 
   {{#redirectHttps}}
   location / {
@@ -747,13 +755,6 @@ server {
   listen 80;
   listen [::]:80;
   server_name {{serverNames}};
-  {{#acmeChallenge}}
-  location ^~ /.well-known/acme-challenge/ {
-    root {{acmeChallengeRoot}};
-    default_type "text/plain";
-    allow all;
-  }
-  {{/acmeChallenge}}
   {{#redirectHttps}}
   location / {
     return 301 https://$host$request_uri;

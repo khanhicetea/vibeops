@@ -1,9 +1,5 @@
 import type { TlsMode } from "../../domain/state.ts";
-import {
-  ensureAcmeWebroot,
-  tlsOperatorDocs,
-  validateExternalTlsPaths,
-} from "../../services/tls.ts";
+import { tlsOperatorDocs, validateExternalTlsPaths } from "../../services/tls.ts";
 import type { CliContext } from "../context.ts";
 import type { ArgsWith } from "../args.ts";
 import { bind, noApplyOption, type RunState, wantsNoApply, type YargsBuilder } from "../shared.ts";
@@ -25,7 +21,6 @@ export function registerTlsCommands(parser: YargsBuilder, state: RunState): Yarg
                   demandOption: true,
                   choices: ["boot", "acme", "external"] as const,
                 })
-                .option("email", { type: "string", describe: "ACME contact email" })
                 .option("cert", { type: "string", describe: "External certificate path" })
                 .option("key", { type: "string", describe: "External private key path" }),
             ),
@@ -40,8 +35,7 @@ async function cmdTlsSet(argv: ArgsWith<"mode">, ctx: CliContext): Promise<numbe
   let tls: TlsMode;
   if (mode === "boot") tls = { kind: "boot" };
   else if (mode === "acme") {
-    tls = { kind: "acme", ...(argv.email ? { email: argv.email } : {}) };
-    await ensureAcmeWebroot(ctx.platform);
+    tls = { kind: "acme" };
   } else if (mode === "external") {
     if (!argv.cert || !argv.key) {
       ctx.log.error("external TLS requires --cert and --key");
@@ -108,7 +102,7 @@ async function cmdTlsSet(argv: ArgsWith<"mode">, ctx: CliContext): Promise<numbe
   );
   if (mode === "acme") {
     ctx.log.info(
-      "ACME: point DNS A/AAAA at this host; place certs under certs/acme/<domain>/; HTTP-01 webroot is certs/acme-www.",
+      "ACME: configure shared ACME_EMAIL/ACME_URL in the stack .env, point DNS at this host, and expose port 80.",
     );
   }
   return 0;

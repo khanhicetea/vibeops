@@ -62,6 +62,11 @@ Deno.test("stack init generates the MySQL root password only once", async () => 
     await store.init();
     const initialEnv = await platform.fs.readText(platform.paths.paths.envFile);
     assertEquals(initialEnv.includes("HTTP3=false"), true);
+    assertEquals(initialEnv.includes("ACME_EMAIL="), true);
+    assertEquals(
+      initialEnv.includes("ACME_URL=https://acme-v02.api.letsencrypt.org/directory"),
+      true,
+    );
 
     await store.init(true);
     const forcedInitEnv = await platform.fs.readText(platform.paths.paths.envFile);

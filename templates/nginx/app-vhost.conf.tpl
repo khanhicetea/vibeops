@@ -4,14 +4,6 @@ server {
   listen [::]:80;
   server_name {{serverNames}};
 
-  {{#acmeChallenge}}
-  location ^~ /.well-known/acme-challenge/ {
-    root {{acmeChallengeRoot}};
-    default_type "text/plain";
-    allow all;
-  }
-  {{/acmeChallenge}}
-
   {{#redirectHttps}}
   location / {
     return 301 https://$host$request_uri;

@@ -1,3 +1,4 @@
+import type { TlsMode } from "../../domain/state.ts";
 import { createProxy } from "../../services/proxy.ts";
 import { type MenuChoice, WizardUI } from "../../ui/tui.ts";
 import type { CliContext } from "../context.ts";
@@ -42,8 +43,57 @@ export async function sectionProxies(ui: WizardUI, ctx: CliContext): Promise<voi
         ["access-log", proxy.accessLog ? "enabled" : "disabled"],
       ],
     );
-    await ui.pause();
+    const action = await ui.menu("Reverse proxy actions", [
+      { label: "Configure TLS", value: "tls", hint: "boot · ACME · external" },
+    ]);
+    if (action === "tls") await wizardProxyTls(ui, ctx, name);
   }
+}
+
+async function wizardProxyTls(ui: WizardUI, ctx: CliContext, name: string): Promise<void> {
+  const mode = await ui.menu<"boot" | "acme" | "external">("TLS mode", [
+    { label: "Boot (self-signed starter)", value: "boot" },
+    { label: "ACME (automatic certificate)", value: "acme" },
+    { label: "External certificate files", value: "external" },
+  ]);
+  if (!mode) return;
+
+  let tls: TlsMode;
+  if (mode === "boot") {
+    tls = { kind: "boot" };
+  } else if (mode === "acme") {
+    tls = { kind: "acme" };
+  } else {
+    const cert = await ui.prompt("Certificate path", { required: true });
+    if (!cert) return;
+    const key = await ui.prompt("Private key path", { required: true });
+    if (!key) return;
+    tls = { kind: "external", certPath: cert, keyPath: key };
+  }
+
+  try {
+    await ctx.store.withExclusive(async (state) => {
+      const current = state.proxies[name];
+      if (!current) throw new Error(`proxy not found: ${name}`);
+      const now = ctx.platform.clock.nowIso();
+      const next = {
+        ...state,
+        proxies: { ...state.proxies, [name]: { ...current, tls, updatedAt: now } },
+        updatedAt: now,
+      };
+      await ctx.store.save(next);
+      await ctx.render.apply(next, {
+        reloadPlan: { nginx: true, phpFpm: new Set(), phpRunner: new Set() },
+        skipValidate: true,
+        alreadyLocked: true,
+      });
+      return next;
+    });
+    ui.success(`TLS mode set to ${mode}`, `proxy:${name}`);
+  } catch (err) {
+    handleError(ui, err);
+  }
+  await ui.pause();
 }
 
 async function wizardProxyCreate(ui: WizardUI, ctx: CliContext): Promise<void> {

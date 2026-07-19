@@ -67,10 +67,7 @@ import {
 
 const tlsModeSchema: z.ZodType<TlsMode> = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("boot") }),
-  z.object({
-    kind: z.literal("acme"),
-    email: nonEmptyStringSchema.optional(),
-  }),
+  z.object({ kind: z.literal("acme") }),
   z.object({
     kind: z.literal("external"),
     certPath: nonEmptyStringSchema,

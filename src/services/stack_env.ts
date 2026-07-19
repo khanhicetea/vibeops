@@ -3,7 +3,8 @@
  */
 
 import type { Platform } from "../platform/mod.ts";
-import { secretError } from "../domain/errors.ts";
+import { secretError, validationError } from "../domain/errors.ts";
+import { DEFAULT_ACME_URL } from "./tls.ts";
 
 /** Parse a dotenv-style document into a flat string map. */
 export function parseDotEnv(text: string): Record<string, string> {
@@ -61,6 +62,25 @@ export async function requireMysqlRootPassword(platform: Platform): Promise<stri
 export async function loadRedisPassword(platform: Platform): Promise<string> {
   const env = await loadStackEnv(platform);
   return env.REDIS_PASSWORD ?? "";
+}
+
+export type AcmeEnvironment = { email?: string; url: string };
+
+/** Shared native Nginx ACME issuer settings from the stack environment. */
+export async function loadAcmeEnvironment(platform: Platform): Promise<AcmeEnvironment> {
+  const env = await loadStackEnv(platform);
+  const url = env.ACME_URL?.trim() || DEFAULT_ACME_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw validationError(`ACME_URL is not a valid URL: ${url}`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw validationError("ACME_URL must use http or https");
+  }
+  const email = env.ACME_EMAIL?.trim();
+  return { url, ...(email ? { email } : {}) };
 }
 
 /** Whether generated TLS virtual hosts should enable HTTP/3 (HTTP3=true). */

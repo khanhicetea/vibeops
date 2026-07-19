@@ -9,6 +9,7 @@ RUN apt-get update \
     curl \
     openssl \
     libzstd1 \
+    nginx-module-acme \
   && rm -rf /var/lib/apt/lists/*
 
 # Runtime layout expected by generated mounts.
@@ -16,7 +17,7 @@ RUN apt-get update \
 # per-app Unix sockets and read public document trees without joining each app group.
 RUN groupadd -g 5555 bento-web || groupmod -g 5555 bento-web \
   && usermod -aG bento-web nginx \
-  && mkdir -p /etc/nginx/sites /etc/nginx/snippets /etc/nginx/certs /var/log/nginx /run/php-fpm \
+  && mkdir -p /etc/nginx/sites /etc/nginx/snippets /etc/nginx/certs /var/cache/nginx/acme /var/log/nginx /run/php-fpm \
   && rm -f /etc/nginx/conf.d/default.conf
 
 COPY snippets/ /etc/nginx/snippets/

@@ -10,7 +10,6 @@ type StringArgName =
   | "database"
   | "docroot"
   | "domain"
-  | "email"
   | "file"
   | "fpm"
   | "key"

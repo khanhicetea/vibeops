@@ -96,7 +96,7 @@ Deno.test("E1 boot TLS: no HTTPS redirect, boot ssl include", async () => {
   }
 });
 
-Deno.test("E1 ACME TLS: redirect + challenge + ssl snippet paths", async () => {
+Deno.test("E1 ACME TLS: native issuer + managed certificate variables", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-e1-" });
   try {
     const platform = testPlatform(root);
@@ -107,26 +107,65 @@ Deno.test("E1 ACME TLS: redirect + challenge + ssl snippet paths", async () => {
       apps: {
         alpha: {
           ...p.app,
-          tls: { kind: "acme", email: "ops@example.com" },
+          tls: { kind: "acme" },
         },
       },
     };
+    await platform.fs.atomicWriteText(
+      platform.paths.paths.envFile,
+      "ACME_EMAIL=ops@example.com\nACME_URL=https://acme.example.test/directory\n",
+    );
     const files = await generateAll(platform, state, "digest");
     const vhost = textContent(files.find((f) => f.relPath === "nginx/sites/alpha.conf")!.content);
+    const nginxMain = textContent(files.find((f) => f.relPath === "nginx/nginx.conf")!.content);
     assertEquals(vhost.includes("return 301 https://"), true);
-    assertEquals(vhost.includes(".well-known/acme-challenge"), true);
-    assertEquals(vhost.includes("/var/www/acme"), true);
-    assertEquals(vhost.includes("ssl-alpha.conf"), true);
+    assertEquals(vhost.includes(".well-known/acme-challenge"), false);
+    assertEquals(vhost.includes("acme-ssl.conf"), true);
+    assertEquals(nginxMain.match(/acme_issuer /g)?.length, 1);
+    assertEquals(nginxMain.includes("acme_issuer bento_acme {"), true);
+    assertEquals(nginxMain.includes('uri "https://acme.example.test/directory";'), true);
+    assertEquals(nginxMain.includes('contact "ops@example.com";'), true);
+    assertEquals(nginxMain.includes("state_path /var/cache/nginx/acme/bento_acme;"), true);
     const snippet = textContent(
-      files.find((f) => f.relPath === "nginx/snippets/ssl-alpha.conf")!.content,
+      files.find((f) => f.relPath === "nginx/snippets/acme-ssl.conf")!.content,
     );
-    assertEquals(snippet.includes("/etc/nginx/certs/acme/a.test/fullchain.pem"), true);
-    assertEquals(snippet.includes("privkey.pem"), true);
-    // Challenge location must appear even with redirect (not swallowed by return)
-    const httpBlock = vhost.split("listen 443")[0]!;
-    const challengeIdx = httpBlock.indexOf("acme-challenge");
-    const redirectIdx = httpBlock.indexOf("return 301");
-    assertEquals(challengeIdx >= 0 && redirectIdx > challengeIdx, true);
+    assertEquals(snippet.includes("acme_certificate bento_acme;"), true);
+    assertEquals(snippet.includes("ssl_certificate     $acme_certificate;"), true);
+    assertEquals(snippet.includes("ssl_certificate_key $acme_certificate_key;"), true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("E1 ACME TLS works for reverse proxies", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-e1-proxy-acme-" });
+  try {
+    const platform = testPlatform(root);
+    const created = createProxy(createEmptyState(), {
+      name: "edge",
+      domain: "edge.test",
+      aliases: ["www.edge.test"],
+      upstreams: ["http://127.0.0.1:3000"],
+    }, platform.clock.nowIso());
+    const state = {
+      ...created.state,
+      proxies: {
+        ...created.state.proxies,
+        edge: { ...created.proxy, tls: { kind: "acme" as const } },
+      },
+    };
+
+    const files = await generateAll(platform, state, "digest");
+    const vhost = textContent(
+      files.find((f) => f.relPath === "nginx/sites/proxy-edge.conf")!.content,
+    );
+    const snippet = textContent(
+      files.find((f) => f.relPath === "nginx/snippets/acme-ssl.conf")!.content,
+    );
+    assertEquals(vhost.includes("server_name edge.test www.edge.test;"), true);
+    assertEquals(vhost.includes("return 301 https://$host$request_uri;"), true);
+    assertEquals(vhost.includes("acme-ssl.conf"), true);
+    assertEquals(snippet.includes("acme_certificate bento_acme;"), true);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

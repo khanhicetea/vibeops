@@ -3,6 +3,12 @@ set -eu
 CERT_DIR="${BENTO_CERT_DIR:-/etc/nginx/certs}"
 CRT="$CERT_DIR/boot.crt"
 KEY="$CERT_DIR/boot.key"
+ACME_STATE_DIR="${BENTO_ACME_STATE_DIR:-/var/cache/nginx/acme}"
+
+# Native ngx_http_acme_module workers persist account keys and certificates here.
+mkdir -p "$ACME_STATE_DIR"
+chown nginx:nginx "$ACME_STATE_DIR" 2>/dev/null || true
+chmod 700 "$ACME_STATE_DIR" 2>/dev/null || true
 
 if [ -f "$CRT" ] && [ -f "$KEY" ]; then
   exit 0

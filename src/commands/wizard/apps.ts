@@ -334,9 +334,7 @@ async function sectionAppDomains(
         if (mode === "boot") {
           tls = { kind: "boot" };
         } else if (mode === "acme") {
-          const email = await ui.prompt("ACME contact email (optional)", { default: "" });
-          if (email === null) continue;
-          tls = { kind: "acme", ...(email ? { email } : {}) };
+          tls = { kind: "acme" };
         } else {
           const cert = await ui.prompt("Certificate path", { required: true });
           if (!cert) continue;
