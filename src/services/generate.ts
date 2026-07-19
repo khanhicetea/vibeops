@@ -10,7 +10,7 @@ import { renderTemplate } from "./template.ts";
 import { type GeneratedFile, withManagedMarker } from "./render.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { assembleComposeDocuments } from "./compose.ts";
-import { loadMysqlRootPassword } from "./stack_env.ts";
+import { loadHttp3Enabled, loadMysqlRootPassword } from "./stack_env.ts";
 import { ACME_CHALLENGE_ROOT, resolveSslForSite } from "./tls.ts";
 
 export async function generateAll(
@@ -62,6 +62,7 @@ async function generateNginx(
   state: DesiredState,
 ): Promise<GeneratedFile[]> {
   const files: GeneratedFile[] = [];
+  const http3 = await loadHttp3Enabled(platform);
   let mainTpl: string;
   try {
     mainTpl = await platform.assets.readText("nginx/nginx.conf.tpl");
@@ -95,10 +96,10 @@ index index.php index.html;
   });
 
   for (const app of Object.values(state.apps)) {
-    files.push(...await generateAppVhost(platform, state, app));
+    files.push(...await generateAppVhost(platform, state, app, http3));
   }
   for (const proxy of Object.values(state.proxies)) {
-    files.push(...await generateProxyVhost(platform, proxy));
+    files.push(...await generateProxyVhost(platform, proxy, http3));
   }
 
   return files;
@@ -108,6 +109,7 @@ async function generateAppVhost(
   platform: Platform,
   _state: DesiredState,
   app: AppState,
+  http3: boolean,
 ): Promise<GeneratedFile[]> {
   let tpl: string;
   if (app.vhostTemplate.kind === "custom") {
@@ -144,6 +146,7 @@ async function generateAppVhost(
     acmeChallenge: ssl.acmeChallenge,
     acmeChallengeRoot: ACME_CHALLENGE_ROOT,
     sslInclude: ssl.includePath,
+    http3,
     deployEnabled: app.deploy.enabled,
     deploySecret: app.deploy.hmacSecret ?? "",
     uid: app.uid,
@@ -171,6 +174,7 @@ async function generateAppVhost(
 async function generateProxyVhost(
   platform: Platform,
   proxy: ProxySite,
+  http3: boolean,
 ): Promise<GeneratedFile[]> {
   const tpl = await readOrDefault(
     platform,
@@ -191,6 +195,7 @@ async function generateProxyVhost(
     acmeChallenge: ssl.acmeChallenge,
     acmeChallengeRoot: ACME_CHALLENGE_ROOT,
     sslInclude: ssl.includePath,
+    http3,
   });
   const files: GeneratedFile[] = [{
     relPath: `nginx/sites/proxy-${proxy.name}.conf`,
@@ -627,13 +632,17 @@ server {
 server {
   listen 443 ssl;
   listen [::]:443 ssl;
-  listen 443 quic reuseport;
-  listen [::]:443 quic reuseport;
+  {{#http3}}
+  listen 443 quic;
+  listen [::]:443 quic;
+  {{/http3}}
   http2 on;
   server_name {{serverNames}};
 
   include {{sslInclude}};
+  {{#http3}}
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
+  {{/http3}}
 
   root {{docRoot}};
   include /etc/nginx/snippets/app-common.conf;
@@ -719,9 +728,16 @@ server {
 server {
   listen 443 ssl;
   listen [::]:443 ssl;
+  {{#http3}}
+  listen 443 quic;
+  listen [::]:443 quic;
+  {{/http3}}
   http2 on;
   server_name {{serverNames}};
   include {{sslInclude}};
+  {{#http3}}
+  add_header Alt-Svc 'h3=":443"; ma=86400' always;
+  {{/http3}}
   {{#accessLog}}
   access_log {{accessLogPath}} bento_timed;
   {{/accessLog}}

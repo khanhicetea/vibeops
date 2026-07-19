@@ -1,7 +1,6 @@
-# Bento Nginx ingress image: host-network ready, HTTP/2+3 capable base.
+# Bento Nginx ingress image: Nginx 1.30 stable on Debian Trixie.
 # Zstd modules are optional; gzip remains the compatibility fallback.
-ARG NGINX_VERSION=1.27.4
-FROM nginx:${NGINX_VERSION}-bookworm
+FROM nginx:stable-trixie
 
 USER root
 RUN apt-get update \

@@ -222,6 +222,7 @@ specs/                    # product specifications
 - Only Nginx is public in the base topology.
 - Database and webhook secrets are not printed in ordinary status output.
 - The MySQL root password is generated once when `init` first creates the stack `.env`; each app password is generated once during initial app provisioning.
+- Set `HTTP3=true` in the stack `.env` and render to enable HTTP/3/QUIC listeners and `Alt-Svc` headers; it is disabled by default.
 - Bento does not rotate MySQL passwords or reset existing MySQL accounts during reconciliation. Operators must coordinate any password change manually, including MySQL, Bento state/credential material, and dependent applications.
 - MySQL passwords are not passed on host process argv for admin SQL.
 - Deploy HMAC secrets live in desired state / FastCGI params, not app-writable secret files.

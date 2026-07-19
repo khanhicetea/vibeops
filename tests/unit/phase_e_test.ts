@@ -5,6 +5,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import { createEmptyState } from "../../src/domain/state.ts";
 import { provisionApp } from "../../src/services/app.ts";
+import { createProxy } from "../../src/services/proxy.ts";
 import { materializeAppHome } from "../../src/services/app.ts";
 import {
   type DeployJob,
@@ -126,6 +127,40 @@ Deno.test("E1 ACME TLS: redirect + challenge + ssl snippet paths", async () => {
     const challengeIdx = httpBlock.indexOf("acme-challenge");
     const redirectIdx = httpBlock.indexOf("return 301");
     assertEquals(challengeIdx >= 0 && redirectIdx > challengeIdx, true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("E1 HTTP/3 follows HTTP3 in the stack environment", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-e1-http3-" });
+  try {
+    const platform = testPlatform(root);
+    let state = createEmptyState();
+    state = provisionApp(platform, state, { slug: "alpha", domain: "a.test" }).state;
+    state = createProxy(state, {
+      name: "edge",
+      domain: "edge.test",
+      upstream: "http://127.0.0.1:3000",
+    }, platform.clock.nowIso()).state;
+
+    await platform.fs.atomicWriteText(platform.paths.paths.envFile, "HTTP3=true\n");
+    let files = await generateAll(platform, state, "digest");
+    for (const relPath of ["nginx/sites/alpha.conf", "nginx/sites/proxy-edge.conf"]) {
+      const vhost = textContent(files.find((f) => f.relPath === relPath)!.content);
+      assertEquals(vhost.includes("listen 443 quic;"), true);
+      assertEquals(vhost.includes("reuseport"), false);
+      assertEquals(vhost.includes("Alt-Svc 'h3=\":443\"; ma=86400'"), true);
+    }
+
+    await platform.fs.atomicWriteText(platform.paths.paths.envFile, "HTTP3=false\n");
+    files = await generateAll(platform, state, "digest");
+    for (const relPath of ["nginx/sites/alpha.conf", "nginx/sites/proxy-edge.conf"]) {
+      const vhost = textContent(files.find((f) => f.relPath === relPath)!.content);
+      assertEquals(vhost.includes(" quic;"), false);
+      assertEquals(vhost.includes("Alt-Svc"), false);
+      assertEquals(vhost.includes("http2 on;"), true);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }

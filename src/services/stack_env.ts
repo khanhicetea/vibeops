@@ -62,3 +62,9 @@ export async function loadRedisPassword(platform: Platform): Promise<string> {
   const env = await loadStackEnv(platform);
   return env.REDIS_PASSWORD ?? "";
 }
+
+/** Whether generated TLS virtual hosts should enable HTTP/3 (HTTP3=true). */
+export async function loadHttp3Enabled(platform: Platform): Promise<boolean> {
+  const env = await loadStackEnv(platform);
+  return env.HTTP3?.trim().toLowerCase() === "true";
+}

@@ -162,6 +162,8 @@ function defaultEnvContent(opts: {
     `MYSQL_ROOT_PASSWORD=${opts.mysqlRootPassword}`,
     `REDIS_PASSWORD=${opts.redisPassword}`,
     "TZ=UTC",
+    "# Enable HTTP/3/QUIC listeners and Alt-Svc headers in generated Nginx vhosts.",
+    "HTTP3=false",
     `COMPOSE_PROJECT_NAME=${opts.projectName}`,
     "",
   ].join("\n");

@@ -70,11 +70,17 @@ server {
 server {
   listen 443 ssl;
   listen [::]:443 ssl;
+  {{#http3}}
+  listen 443 quic;
+  listen [::]:443 quic;
+  {{/http3}}
   http2 on;
   server_name {{serverNames}};
 
   include {{sslInclude}};
+  {{#http3}}
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
+  {{/http3}}
 
   root {{docRoot}};
   include /etc/nginx/snippets/app-common.conf;
