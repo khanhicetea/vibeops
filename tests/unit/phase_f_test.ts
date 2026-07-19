@@ -331,6 +331,7 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
       command: ["php", "artisan", "queue:work"],
     }, platform);
     state = worker.state;
+    assertEquals(worker.worker.workdir, "/home/alpha/code");
     assertEquals(worker.reloadPlan.nginx, false);
     assertEquals(workerProgramName("alpha", "queue"), "worker-alpha-queue");
 
@@ -376,6 +377,7 @@ Deno.test("F1 cron/worker config generation + scoped runner reload", async () =>
     assertEquals(scheduler.includes(">>/home/alpha/logs/cron.log 2>&1"), true);
     assertEquals(scheduler.includes("/var/log/bento"), false);
     assertEquals(workerRun.includes(`${applyUidGid} sh -c`), true);
+    assertEquals(workerRun.includes("cd /home/alpha/code"), true);
     assertEquals(scheduler.includes("setpriv"), false);
     assertEquals(workerRun.includes("setpriv"), false);
     assertEquals(crontab.includes("setpriv"), false);
