@@ -1,15 +1,13 @@
 # syntax=docker/dockerfile:1.7
 # Bento PHP runtime: FPM + CLI + runner (s6-overlay/supercronic) from one image.
 ARG PHP_VERSION=8.4
-ARG COMPOSER_VERSION=2.8.9
-ARG COMPOSER_IMAGE_DIGEST=sha256:69d57c07ed077bc22d6e584202b6d9160f636abdb6df25c7c437ded589b3fa6c
-ARG NODE_VERSION=24.18.0
-ARG NODE_IMAGE_DIGEST=sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+ARG COMPOSER_VERSION=2
+ARG NODE_VERSION=24
 
 # Composer and Node come from versioned, digest-pinned official artifacts. Only
 # their runtime files are copied into the final image.
-FROM composer:${COMPOSER_VERSION}@${COMPOSER_IMAGE_DIGEST} AS composer-artifact
-FROM node:${NODE_VERSION}-bookworm-slim@${NODE_IMAGE_DIGEST} AS node-artifact
+FROM composer:${COMPOSER_VERSION} AS composer-artifact
+FROM node:${NODE_VERSION}-bookworm-slim AS node-artifact
 
 # Compile PHP extensions away from the runtime image. Development headers,
 # compilers, PEAR sources, and apt metadata remain in this stage.
