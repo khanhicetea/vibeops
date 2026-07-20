@@ -111,6 +111,32 @@ Deno.test("successful reload reports the services in the executed plan", async (
   }
 });
 
+Deno.test("default PHP-FPM reload uses the shell kill builtin", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-test-" });
+  try {
+    const process = createRecordingProcessRunner();
+    const platform = { ...testPlatform(root), process };
+    const store = new StateStore(platform);
+    const render = new RenderService(platform);
+    await store.init();
+
+    await render.apply(await store.load(), {
+      skipValidate: true,
+      reloadPlan: reloadPlanForPoolChange("php85"),
+    });
+
+    assertEquals(
+      process.calls.some(({ command }) =>
+        command.slice(-6).join(" ") ===
+          "exec -T php85 sh -c kill -USR2 1"
+      ),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("validation failure restores previous generation", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-test-" });
   try {

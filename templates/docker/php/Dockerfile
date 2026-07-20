@@ -1,25 +1,22 @@
 # syntax=docker/dockerfile:1.7
 # Bento PHP runtime: FPM + CLI + runner (s6-overlay/supercronic) from one image.
 ARG PHP_VERSION=8.4
-FROM php:${PHP_VERSION}-fpm-bookworm
+ARG COMPOSER_VERSION=2.8.9
+ARG COMPOSER_IMAGE_DIGEST=sha256:69d57c07ed077bc22d6e584202b6d9160f636abdb6df25c7c437ded589b3fa6c
+ARG NODE_VERSION=24.18.0
+ARG NODE_IMAGE_DIGEST=sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
 
-ARG PHP_VERSION
-ARG TARGETARCH
-ARG S6_OVERLAY_VERSION=3.2.3.2
-ENV BENTO_PHP_VERSION=${PHP_VERSION}
+# Composer and Node come from versioned, digest-pinned official artifacts. Only
+# their runtime files are copied into the final image.
+FROM composer:${COMPOSER_VERSION}@${COMPOSER_IMAGE_DIGEST} AS composer-artifact
+FROM node:${NODE_VERSION}-bookworm-slim@${NODE_IMAGE_DIGEST} AS node-artifact
 
-USER root
-
-# Build dependencies and all PHP extensions are installed together so they form
-# one cacheable image layer.
+# Compile PHP extensions away from the runtime image. Development headers,
+# compilers, PEAR sources, and apt metadata remain in this stage.
+FROM php:${PHP_VERSION}-fpm-bookworm AS php-extension-builder
 RUN set -eux; \
   apt-get update; \
   apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    git \
-    less \
     libcurl4-openssl-dev \
     libfreetype6-dev \
     libicu-dev \
@@ -29,47 +26,117 @@ RUN set -eux; \
     libsqlite3-dev \
     libssl-dev \
     libxml2-dev \
-    libzip-dev \
-    nano \
-    openssh-client \
-    procps \
-    logrotate \
-    unzip \
-    vim \
-    xz-utils \
-    zip \
-    zstd; \
+    libzip-dev; \
   docker-php-ext-configure gd --with-freetype --with-jpeg; \
-  docker-php-ext-install bcmath exif gd intl pcntl pdo_mysql pdo_sqlite soap sockets zip mysqli; \
-  (docker-php-ext-install opcache || docker-php-ext-enable opcache || true); \
+  docker-php-ext-install -j"$(nproc)" bcmath exif gd intl pcntl pdo_mysql pdo_sqlite soap sockets zip mysqli; \
+  (docker-php-ext-install -j"$(nproc)" opcache || docker-php-ext-enable opcache || true); \
   pecl install redis; \
-  docker-php-ext-enable redis; \
-  rm -rf /var/lib/apt/lists/*
+  docker-php-ext-enable redis
 
-# s6-overlay v3 provides PID 1, signal handling, and the s6 supervision tools.
-# Node.js LTS, Composer, and Supercronic are installed with it in one layer.
+# Export only the PHP runtime tree. The official PHP base intentionally ships
+# PHPIZE_DEPS; copying from this cleaned stage avoids inheriting those layers.
+FROM php-extension-builder AS php-runtime-artifact
+RUN rm -rf \
+    /usr/local/include/php \
+    /usr/local/lib/php/build \
+    /usr/local/bin/docker-php-ext-* \
+    /usr/local/bin/peardev \
+    /usr/local/bin/pecl \
+    /usr/local/bin/php-config \
+    /usr/local/bin/phpize \
+    /usr/src/php* \
+    /tmp/pear
+
+# Download and unpack process-management assets in an intermediate rootfs so
+# curl and xz used here do not add packages or archive layers to the runtime.
+FROM debian:bookworm-slim AS process-manager-artifacts
+ARG TARGETARCH
+ARG S6_OVERLAY_VERSION=3.2.3.2
+ARG S6_OVERLAY_NOARCH_SHA256=5379750ed30a84bbd2e2dd74847ba6b5bd29cd0b2e3ea2ec58049b57eb2eda12
+ARG S6_OVERLAY_AMD64_SHA256=e6befcc96a437a3831386ecfc51808c5d3e939dc5fe3c02ae9284599e8aa2408
+ARG S6_OVERLAY_ARM64_SHA256=b17f17a82e7a515c682a91edaf2ffdabb73f891981b6c1fd712115693a2f8b4c
+ARG SUPERCRONIC_VERSION=0.2.33
+ARG SUPERCRONIC_AMD64_SHA256=feefa310da569c81b99e1027b86b27b51e6ee9ab647747b49099645120cfc671
+ARG SUPERCRONIC_ARM64_SHA256=f1f8585c66de020fef494dd636058f99949d108f569fef00016a1c8b9eb145b3
 RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
   case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
-    amd64|x86_64) s6_arch=x86_64; sc_arch=amd64 ;; \
-    arm64|aarch64) s6_arch=aarch64; sc_arch=arm64 ;; \
+    amd64|x86_64) \
+      s6_arch=x86_64; \
+      s6_sha="${S6_OVERLAY_AMD64_SHA256}"; \
+      sc_arch=amd64; \
+      sc_sha="${SUPERCRONIC_AMD64_SHA256}" ;; \
+    arm64|aarch64) \
+      s6_arch=aarch64; \
+      s6_sha="${S6_OVERLAY_ARM64_SHA256}"; \
+      sc_arch=arm64; \
+      sc_sha="${SUPERCRONIC_ARM64_SHA256}" ;; \
     *) echo "unsupported architecture: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
   esac; \
-  base="https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}"; \
-  curl -fsSLo /tmp/s6-overlay-noarch.tar.xz "$base/s6-overlay-noarch.tar.xz"; \
-  curl -fsSLo /tmp/s6-overlay-arch.tar.xz "$base/s6-overlay-${s6_arch}.tar.xz"; \
-  tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz; \
-  tar -C / -Jxpf /tmp/s6-overlay-arch.tar.xz; \
-  rm -f /tmp/s6-overlay-*.tar.xz; \
-  curl -fsSLo /usr/local/bin/supercronic \
-    "https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-${sc_arch}"; \
-  chmod +x /usr/local/bin/supercronic; \
-  curl -fsSL https://deb.nodesource.com/setup_lts.x -o /tmp/nodesource-setup.sh; \
-  bash /tmp/nodesource-setup.sh; \
-  apt-get install -y --no-install-recommends nodejs; \
-  curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php; \
-  php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer; \
-  rm -f /tmp/nodesource-setup.sh /tmp/composer-setup.php; \
+  s6_base="https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}"; \
+  curl -fsSLo /tmp/s6-noarch.tar.xz "${s6_base}/s6-overlay-noarch.tar.xz"; \
+  curl -fsSLo /tmp/s6-arch.tar.xz "${s6_base}/s6-overlay-${s6_arch}.tar.xz"; \
+  echo "${S6_OVERLAY_NOARCH_SHA256}  /tmp/s6-noarch.tar.xz" | sha256sum -c -; \
+  echo "${s6_sha}  /tmp/s6-arch.tar.xz" | sha256sum -c -; \
+  install -d /rootfs; \
+  tar -C /rootfs -Jxpf /tmp/s6-noarch.tar.xz; \
+  tar -C /rootfs -Jxpf /tmp/s6-arch.tar.xz; \
+  install -d /rootfs/usr/local/bin; \
+  curl -fsSLo /rootfs/usr/local/bin/supercronic \
+    "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${sc_arch}"; \
+  echo "${sc_sha}  /rootfs/usr/local/bin/supercronic" | sha256sum -c -; \
+  chmod 0755 /rootfs/usr/local/bin/supercronic
+
+FROM debian:bookworm-slim
+ARG PHP_VERSION
+ENV BENTO_PHP_VERSION=${PHP_VERSION} \
+    PHP_INI_DIR=/usr/local/etc/php
+
+USER root
+
+# Runtime libraries and operational tools only. Compilers, development
+# headers, editors, pagers, and process-debugging packages are intentionally
+# excluded from the production image.
+RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    libargon2-1 \
+    libcurl4 \
+    libffi8 \
+    libfreetype6 \
+    libgmp10 \
+    libicu72 \
+    libjpeg62-turbo \
+    libldap-2.5-0 \
+    libonig5 \
+    libpng16-16 \
+    libreadline8 \
+    libsodium23 \
+    libsqlite3-0 \
+    libssl3 \
+    libstdc++6 \
+    libxml2 \
+    libzip4 \
+    logrotate \
+    openssh-client \
+    unzip \
+    zip \
+    zstd; \
   rm -rf /var/lib/apt/lists/*
+
+COPY --from=php-runtime-artifact /usr/local/ /usr/local/
+COPY --from=composer-artifact /usr/bin/composer /usr/local/bin/composer
+COPY --from=node-artifact /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-artifact /usr/local/lib/node_modules/npm/ /usr/local/lib/node_modules/npm/
+RUN ln -s node /usr/local/bin/nodejs \
+  && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+COPY --from=process-manager-artifacts /rootfs/ /
 
 # The bind mount is available only during the build. Copying from it while
 # creating the runtime user/group, directories, and permissions keeps all of

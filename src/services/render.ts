@@ -640,7 +640,9 @@ function defaultReloader(platform: Platform, state: DesiredState): ServiceReload
         }
       }
       for (const svc of plan.phpFpm) {
-        await soft(["docker", "compose", "exec", "-T", svc, "kill", "-USR2", "1"]);
+        // The PHP image does not provide a standalone `kill` executable; use
+        // the POSIX shell builtin so FPM actually reloads newly mounted pools.
+        await soft(["docker", "compose", "exec", "-T", svc, "sh", "-c", "kill -USR2 1"]);
       }
       for (const svc of plan.phpRunner) {
         // Reconcile generated service directories into s6's mutable /run scan
