@@ -26,6 +26,7 @@ const DOCKER_NGINX_FILES = [
   "docker/nginx/Dockerfile",
   "docker/nginx/snippets/app-common.conf",
   "docker/nginx/snippets/boot-ssl.conf",
+  "docker/nginx/snippets/ssl-common.conf",
   "docker/nginx/docker-entrypoint.d/10-bento-boot-cert.sh",
 ] as const;
 
@@ -306,7 +307,7 @@ async function ensureBootCert(platform: Platform): Promise<void> {
   if (result.code !== 0) {
     await platform.fs.atomicWriteText(
       join(certDir, "README.txt"),
-      "Boot TLS certificate missing. Install openssl or place boot.crt/boot.key here.\n",
+      "Shared self-signed TLS certificate missing. Install openssl or place boot.crt/boot.key here.\n",
     );
   } else {
     try {

@@ -66,7 +66,8 @@ import {
 // --- Zod schemas for state fragments ---------------------------------------
 
 const tlsModeSchema: z.ZodType<TlsMode> = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("boot") }),
+  z.object({ kind: z.literal("self-ca") }),
+  z.object({ kind: z.literal("shared") }),
   z.object({ kind: z.literal("acme") }),
   z.object({
     kind: z.literal("external"),

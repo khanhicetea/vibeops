@@ -11,7 +11,12 @@ import { type GeneratedFile, withManagedMarker } from "./render.ts";
 import { containerAppHome } from "../platform/paths.ts";
 import { assembleComposeDocuments } from "./compose.ts";
 import { loadAcmeEnvironment, loadHttp3Enabled, loadMysqlRootPassword } from "./stack_env.ts";
-import { renderAcmeIssuer, renderAcmeSslSnippet, resolveSslForSite } from "./tls.ts";
+import {
+  renderAcmeIssuer,
+  renderAcmeSslSnippet,
+  renderSslCommonSnippet,
+  resolveSslForSite,
+} from "./tls.ts";
 import { validateUpstreams } from "./proxy.ts";
 
 export async function generateAll(
@@ -87,6 +92,12 @@ async function generateNginx(
   // Shared TLS snippets. ACME identifiers are inferred independently from each
   // including server block's server_name values.
   files.push({
+    relPath: "nginx/snippets/ssl-common.conf",
+    content: withManagedMarker(renderSslCommonSnippet()),
+    mode: 0o644,
+    managed: true,
+  });
+  files.push({
     relPath: "nginx/snippets/boot-ssl.conf",
     content: withManagedMarker(DEFAULT_BOOT_SSL),
     mode: 0o644,
@@ -154,9 +165,11 @@ async function generateAppVhost(
     accessLog: app.accessLog,
     accessLogPath: `/var/log/nginx/${app.slug}.access.log`,
     tlsKind: app.tls.kind,
-    realTls: app.tls.kind !== "boot",
+    realTls: app.tls.kind !== "shared",
     redirectHttps: ssl.redirectHttps,
     sslInclude: ssl.includePath,
+    sslCertificate: ssl.certificatePath,
+    sslCertificateKey: ssl.certificateKeyPath,
     http3,
     deployEnabled: app.deploy.enabled,
     deploySecret: app.deploy.hmacSecret ?? "",
@@ -205,9 +218,11 @@ async function generateProxyVhost(
     accessLog: proxy.accessLog,
     accessLogPath: `/var/log/nginx/proxy-${proxy.name}.access.log`,
     tlsKind: proxy.tls.kind,
-    realTls: proxy.tls.kind !== "boot",
+    realTls: proxy.tls.kind !== "shared",
     redirectHttps: ssl.redirectHttps,
     sslInclude: ssl.includePath,
+    sslCertificate: ssl.certificatePath,
+    sslCertificateKey: ssl.certificateKeyPath,
     http3,
   });
   const files: GeneratedFile[] = [{
@@ -594,7 +609,7 @@ http {
 
 const DEFAULT_BOOT_SSL = `ssl_certificate     /etc/nginx/certs/boot.crt;
 ssl_certificate_key /etc/nginx/certs/boot.key;
-ssl_protocols       TLSv1.2 TLSv1.3;
+include /etc/nginx/snippets/ssl-common.conf;
 `;
 
 const DEFAULT_APP_VHOST = `# app {{slug}}
@@ -674,6 +689,10 @@ server {
   http2 on;
   server_name {{serverNames}};
 
+  {{#sslCertificate}}
+  ssl_certificate     {{sslCertificate}};
+  ssl_certificate_key {{sslCertificateKey}};
+  {{/sslCertificate}}
   include {{sslInclude}};
   {{#http3}}
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
@@ -790,6 +809,10 @@ server {
   {{/http3}}
   http2 on;
   server_name {{serverNames}};
+  {{#sslCertificate}}
+  ssl_certificate     {{sslCertificate}};
+  ssl_certificate_key {{sslCertificateKey}};
+  {{/sslCertificate}}
   include {{sslInclude}};
   {{#http3}}
   add_header Alt-Svc 'h3=":443"; ma=86400' always;

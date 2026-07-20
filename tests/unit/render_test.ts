@@ -46,7 +46,6 @@ Deno.test("init + render produces startable topology files", async () => {
     const base = join(root, "generated/compose/docker-compose.base.yml");
     assertEquals(await platform.fs.exists(base), true);
     const nginxMain = await platform.fs.readText(join(root, "generated/nginx/nginx.conf"));
-    assertEquals(nginxMain.includes("https 'on';"), true);
     assertEquals(nginxMain.includes("keys_zone=app_cache:10m max_size=1g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_assets:20m max_size=2g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_cache:10m max_size=1g"), true);

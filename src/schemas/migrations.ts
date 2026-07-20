@@ -30,6 +30,12 @@ export const MIGRATION_CHAIN: MigrationStep[] = [
     name: "proxy-multiple-upstreams",
     migrate: migrateV1toV2,
   },
+  {
+    from: 2,
+    to: 3,
+    name: "rename-boot-tls-to-shared",
+    migrate: migrateV2toV3,
+  },
 ];
 
 /**
@@ -103,6 +109,33 @@ export function migrateV1toV2(raw: Record<string, unknown>): Record<string, unkn
     : raw.proxies;
 
   return { ...raw, proxies, schemaVersion: 2 };
+}
+
+/** Rename the old shared boot certificate mode to its operator-facing name. */
+export function migrateV2toV3(raw: Record<string, unknown>): Record<string, unknown> {
+  const migrateSites = (value: unknown): unknown => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([name, site]) => {
+        if (!site || typeof site !== "object" || Array.isArray(site)) return [name, site];
+        const record = site as Record<string, unknown>;
+        const tls = record.tls;
+        if (!tls || typeof tls !== "object" || Array.isArray(tls)) return [name, site];
+        const tlsRecord = tls as Record<string, unknown>;
+        return [name, {
+          ...record,
+          tls: tlsRecord.kind === "boot" ? { kind: "shared" } : tls,
+        }];
+      }),
+    );
+  };
+
+  return {
+    ...raw,
+    apps: migrateSites(raw.apps),
+    proxies: migrateSites(raw.proxies),
+    schemaVersion: 3,
+  };
 }
 
 /** Backup filename helper for pre-migration snapshots. */

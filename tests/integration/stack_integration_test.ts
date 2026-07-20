@@ -287,10 +287,10 @@ Deno.test("F2 front-controller + legacy + reverse-proxy domains unique", async (
 });
 
 // ---------------------------------------------------------------------------
-// F2.5 TLS boot → external without runner reload (render plan)
+// F2.5 TLS shared → external without runner reload (render plan)
 // ---------------------------------------------------------------------------
 
-Deno.test("F2 TLS mode switch boot → external (files) nginx-only plan", async () => {
+Deno.test("F2 TLS mode switch shared → external (files) nginx-only plan", async () => {
   await withStack(async (h) => {
     await bootstrapStack(h);
     assertEquals(

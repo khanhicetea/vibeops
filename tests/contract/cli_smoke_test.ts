@@ -2,6 +2,15 @@ import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { runCli } from "../../src/main.ts";
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function withStack(fn: (stack: string) => Promise<void>) {
   const stack = await Deno.makeTempDir({ prefix: "bento-cli-" });
   try {
@@ -361,7 +370,44 @@ Deno.test("cli tls set + permissions + backup/restore dry paths", async () => {
       0,
     );
 
-    // TLS boot -> acme (no cert files needed for acme mode recording)
+    // Private CA mode creates a per-site SAN leaf and permits public-CA export.
+    assertEquals(
+      await runCli([
+        ...base,
+        "tls",
+        "set",
+        "--app",
+        "demo",
+        "--mode",
+        "self-ca",
+      ]),
+      0,
+    );
+    assertEquals(await fileExists(join(stack, "certs/private-ca/sites/demo.crt")), true);
+    const caExport = join(stack, "exported-ca.crt");
+    assertEquals(
+      await runCli([...base, "tls", "ca", "export", "--output", caExport]),
+      0,
+    );
+    assertEquals(await fileExists(caExport), true);
+    const caVhost = await Deno.readTextFile(join(stack, "generated/nginx/sites/demo.conf"));
+    assertEquals(
+      caVhost.includes(
+        "ssl_certificate     /etc/nginx/certs/private-ca/sites/demo.crt;",
+      ),
+      true,
+    );
+    assertEquals(
+      caVhost.includes(
+        "ssl_certificate_key /etc/nginx/certs/private-ca/sites/demo.key;",
+      ),
+      true,
+    );
+    assertEquals(caVhost.includes("ssl-common.conf"), true);
+    assertEquals(await fileExists(join(stack, "generated/nginx/snippets/ssl-demo.conf")), false);
+    assertEquals(caVhost.includes("return 301 https://"), true);
+
+    // Private CA -> ACME (no cert files needed for ACME mode recording)
     assertEquals(
       await runCli([
         ...base,

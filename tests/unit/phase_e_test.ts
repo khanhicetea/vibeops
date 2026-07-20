@@ -24,12 +24,15 @@ import { buildStatus, formatStatus, statusToJson } from "../../src/services/stat
 import { assertSafeComposeArgs, resolveComposeFiles } from "../../src/services/compose.ts";
 import {
   containerCertPath,
+  ensurePrivateCaSiteCertificate,
+  exportPrivateCaCertificate,
   resolveSslForSite,
   validateExternalTlsPaths,
 } from "../../src/services/tls.ts";
 import {
   migrateStateDocument,
   migrateV1toV2,
+  migrateV2toV3,
   migrationBackupName,
 } from "../../src/schemas/migrations.ts";
 import { loadStateFromJson, parseDesiredState, stateToJson } from "../../src/schemas/state.ts";
@@ -38,7 +41,7 @@ import { createFixedClock } from "../../src/platform/clock.ts";
 import { createSeededRandom } from "../../src/platform/random.ts";
 import { createFileSystem } from "../../src/platform/fs.ts";
 import { createMemoryLock } from "../../src/platform/lock.ts";
-import { createRecordingProcessRunner } from "../../src/platform/process.ts";
+import { createProcessRunner, createRecordingProcessRunner } from "../../src/platform/process.ts";
 import { createAssetResolver } from "../../src/platform/assets.ts";
 import { createPathPolicy } from "../../src/platform/paths.ts";
 import type { Platform } from "../../src/platform/mod.ts";
@@ -47,7 +50,7 @@ import { STATE_SCHEMA_VERSION } from "../../src/version.ts";
 
 function testPlatform(
   root: string,
-  process?: ReturnType<typeof createRecordingProcessRunner>,
+  process?: Platform["process"],
 ): Platform {
   const fs = createFileSystem();
   return {
@@ -79,7 +82,7 @@ async function hmacSha256(secret: string, body: Uint8Array): Promise<string> {
 
 // --- E1 TLS -----------------------------------------------------------------
 
-Deno.test("E1 boot TLS: no HTTPS redirect, boot ssl include", async () => {
+Deno.test("E1 shared TLS: no HTTPS redirect, shared ssl include", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-e1-" });
   try {
     const platform = testPlatform(root);
@@ -228,6 +231,76 @@ Deno.test("E1 HTTP/3 follows HTTP3 in the stack environment", async () => {
       assertEquals(vhost.includes("Alt-Svc"), false);
       assertEquals(vhost.includes("http2 on;"), true);
     }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("E1 self-CA TLS: manages SAN leaf and exports only public CA", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-e1-ca-" });
+  try {
+    const platform = testPlatform(root, createProcessRunner());
+    const leaf = await ensurePrivateCaSiteCertificate(platform, "alpha", [
+      "a.test",
+      "www.a.test",
+    ]);
+    assertEquals(await platform.fs.exists(leaf.certPath), true);
+    assertEquals((await platform.fs.stat(leaf.keyPath)).mode & 0o777, 0o600);
+    const originalLeaf = await platform.fs.readBytes(leaf.certPath);
+    await ensurePrivateCaSiteCertificate(platform, "alpha", ["www.a.test", "a.test"]);
+    assertEquals(await platform.fs.readBytes(leaf.certPath), originalLeaf);
+
+    const inspected = await platform.process.run([
+      "openssl",
+      "x509",
+      "-in",
+      leaf.certPath,
+      "-noout",
+      "-ext",
+      "subjectAltName",
+    ]);
+    assertEquals(inspected.code, 0);
+    assertEquals(inspected.stdout.includes("DNS:a.test"), true);
+    assertEquals(inspected.stdout.includes("DNS:www.a.test"), true);
+
+    const ssl = resolveSslForSite({ kind: "self-ca" }, "alpha", "a.test");
+    assertEquals(ssl.redirectHttps, true);
+    assertEquals(ssl.includePath, "/etc/nginx/snippets/ssl-common.conf");
+    assertEquals(ssl.certificatePath, "/etc/nginx/certs/private-ca/sites/alpha.crt");
+    assertEquals(ssl.certificateKeyPath, "/etc/nginx/certs/private-ca/sites/alpha.key");
+    assertEquals(ssl.snippetRelPath, undefined);
+
+    const provisioned = provisionApp(platform, createEmptyState(), {
+      slug: "alpha",
+      domain: "a.test",
+      tls: { kind: "self-ca" },
+    });
+    const files = await generateAll(platform, provisioned.state, "digest");
+    const vhost = textContent(
+      files.find((file) => file.relPath === "nginx/sites/alpha.conf")!.content,
+    );
+    assertEquals(
+      vhost.includes(
+        "ssl_certificate     /etc/nginx/certs/private-ca/sites/alpha.crt;",
+      ),
+      true,
+    );
+    assertEquals(
+      vhost.includes(
+        "ssl_certificate_key /etc/nginx/certs/private-ca/sites/alpha.key;",
+      ),
+      true,
+    );
+    assertEquals(vhost.includes("include /etc/nginx/snippets/ssl-common.conf;"), true);
+    assertEquals(
+      files.some((file) => file.relPath === "nginx/snippets/ssl-alpha.conf"),
+      false,
+    );
+
+    const exported = join(root, "export", "bento-ca.crt");
+    await exportPrivateCaCertificate(platform, exported);
+    assertEquals(await platform.fs.exists(exported), true);
+    assertEquals(await platform.fs.exists(join(root, "export", "ca.key")), false);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -570,7 +643,7 @@ Deno.test("E5 status covers roles, domains, TLS, capacity, redacts secrets", asy
 
     const report = await buildStatus(platform, state);
     assertEquals(report.roles.length >= 4, true); // nginx, redis, php, runner, mysql
-    assertEquals(report.apps[0]?.tls, "boot");
+    assertEquals(report.apps[0]?.tls, "shared");
     assertEquals(report.apps[0]?.entrypointMode, "front-controller");
     assertEquals(report.domains.some((d) => d.domain === "a.test"), true);
     assertEquals(report.warnings.some((w) => w.toLowerCase().includes("cap")), true);
@@ -619,6 +692,20 @@ Deno.test("E6 future schemaVersion rejected; load does not rewrite", async () =>
     assertEquals(
       (v2.proxies as Record<string, { upstreams: string[] }>).edge!.upstreams,
       ["http://127.0.0.1:3000"],
+    );
+
+    const v3 = migrateV2toV3({
+      schemaVersion: 2,
+      apps: { alpha: { tls: { kind: "boot" } } },
+      proxies: { edge: { tls: { kind: "boot" } } },
+    });
+    assertEquals(
+      (v3.apps as Record<string, { tls: { kind: string } }>).alpha!.tls.kind,
+      "shared",
+    );
+    assertEquals(
+      (v3.proxies as Record<string, { tls: { kind: string } }>).edge!.tls.kind,
+      "shared",
     );
 
     // migrateStateDocument no-op at current version

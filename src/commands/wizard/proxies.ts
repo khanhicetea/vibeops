@@ -44,23 +44,26 @@ export async function sectionProxies(ui: WizardUI, ctx: CliContext): Promise<voi
       ],
     );
     const action = await ui.menu("Reverse proxy actions", [
-      { label: "Configure TLS", value: "tls", hint: "boot · ACME · external" },
+      { label: "Configure TLS", value: "tls", hint: "self-CA · shared · ACME · external" },
     ]);
     if (action === "tls") await wizardProxyTls(ui, ctx, name);
   }
 }
 
 async function wizardProxyTls(ui: WizardUI, ctx: CliContext, name: string): Promise<void> {
-  const mode = await ui.menu<"boot" | "acme" | "external">("TLS mode", [
-    { label: "Boot (self-signed starter)", value: "boot" },
+  const mode = await ui.menu<"self-ca" | "shared" | "acme" | "external">("TLS mode", [
+    { label: "Self-CA (private CA, per-site certificate)", value: "self-ca" },
+    { label: "Shared self-signed starter", value: "shared" },
     { label: "ACME (automatic certificate)", value: "acme" },
     { label: "External certificate files", value: "external" },
   ]);
   if (!mode) return;
 
   let tls: TlsMode;
-  if (mode === "boot") {
-    tls = { kind: "boot" };
+  if (mode === "self-ca") {
+    tls = { kind: "self-ca" };
+  } else if (mode === "shared") {
+    tls = { kind: "shared" };
   } else if (mode === "acme") {
     tls = { kind: "acme" };
   } else {

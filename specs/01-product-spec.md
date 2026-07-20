@@ -106,7 +106,8 @@ Bento must provide a single public Nginx ingress that:
 - binds host HTTP and HTTPS directly, including UDP support for HTTP/3;
 - serves all app domains and proxy domains;
 - reaches PHP-FPM through per-app Unix sockets;
-- starts safely before production certificates exist by using a boot certificate;
+- starts safely before production certificates exist by using a shared self-signed certificate;
+- manages an optional stack-private CA and per-site SAN certificates, with public CA export for other trust stores;
 - supports state-selected ACME certificates and externally managed certificate files;
 - can redirect HTTP to HTTPS once a real certificate mode is enabled;
 - enables HTTP/2 and HTTP/3 on generated HTTPS sites;
@@ -275,7 +276,7 @@ The operator supplies stack secrets/defaults, renders the initial topology, star
 
 ### 7.2 Launch a framework application
 
-The operator creates an app with a `public` document root and front-controller routing, chooses PHP and MySQL versions, creates a database, deploys code through the app CLI role, runs migrations, points DNS, and switches the site from boot TLS to ACME. No database or cache port is made public.
+The operator creates an app with a `public` document root and front-controller routing, chooses PHP and MySQL versions, creates a database, deploys code through the app CLI role, runs migrations, points DNS, and switches the site from shared TLS to ACME. No database or cache port is made public.
 
 ### 7.3 Operate asynchronous work
 

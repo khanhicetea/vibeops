@@ -323,16 +323,22 @@ async function sectionAppDomains(
         });
         ui.success(`Updated domains for ${slug}`, [domain, ...aliases].join(", "));
       } else {
-        const mode = await ui.menu<"boot" | "acme" | "external">("TLS mode", [
-          { label: "Boot (self-signed starter)", value: "boot" },
-          { label: "ACME (Let's Encrypt)", value: "acme" },
-          { label: "External certificate files", value: "external" },
-        ]);
+        const mode = await ui.menu<"self-ca" | "shared" | "acme" | "external">(
+          "TLS mode",
+          [
+            { label: "Self-CA (private CA, per-site certificate)", value: "self-ca" },
+            { label: "Shared self-signed starter", value: "shared" },
+            { label: "ACME (Let's Encrypt)", value: "acme" },
+            { label: "External certificate files", value: "external" },
+          ],
+        );
         if (!mode) continue;
 
         let tls: TlsMode;
-        if (mode === "boot") {
-          tls = { kind: "boot" };
+        if (mode === "self-ca") {
+          tls = { kind: "self-ca" };
+        } else if (mode === "shared") {
+          tls = { kind: "shared" };
         } else if (mode === "acme") {
           tls = { kind: "acme" };
         } else {

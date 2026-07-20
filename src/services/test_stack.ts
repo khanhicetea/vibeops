@@ -8,7 +8,7 @@
  *   4. domain          add/remove aliases + nginx vhost proof
  *   5. cron-worker     * * * * * print cron + file worker, wait 61s
  *   6. permissions     break modes → repair → re-check
- *   7. http/tls/status boot TLS HTTP (ACME skipped)
+ *   7. http/tls/status shared self-signed TLS HTTP (ACME skipped)
  *   8. deploy          live webhook → queue → runner drain → hook → OPcache
  *
  * Invoked as: `bento test-stack [name]` (default name: testbento)
@@ -1355,11 +1355,11 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
   });
 
   // =========================================================================
-  // CHAIN 7 — HTTP / TLS boot / status (ACME skipped)
+  // CHAIN 7 — HTTP / shared TLS / status (ACME skipped)
   // =========================================================================
   chain("http-tls-status");
 
-  await record("http", "HTTP front-controller responds via host nginx (boot TLS)", async () => {
+  await record("http", "HTTP front-controller responds via host nginx (shared TLS)", async () => {
     if (opts.skipHttp) {
       return { ok: true, skipped: true, detail: "--skip-http set" };
     }
@@ -1492,11 +1492,11 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     return { ok: true, detail: `HTTP 200 Host:${domain}` };
   });
 
-  await record("tls-boot", "TLS boot mode configured (ACME issuance skipped)", async () => {
+  await record("tls-shared", "Shared TLS mode configured (ACME issuance skipped)", async () => {
     state = await store.load();
     const app = state.apps[appSlug];
     if (!app) return { ok: false, detail: "app missing" };
-    if (app.tls.kind !== "boot" && app.tls.kind !== "external") {
+    if (app.tls.kind === "acme") {
       log("warn", "ACME mode is configured but issuance is not exercised by test-stack");
     }
     const bootCrt = join(opts.stackRoot, "certs", "boot.crt");
@@ -1515,7 +1515,7 @@ export async function runTestStack(opts: TestStackOptions): Promise<TestStackRep
     return {
       ok: hasSsl,
       detail: hasSsl
-        ? `tls.kind=${app.tls.kind}; boot_cert=${
+        ? `tls.kind=${app.tls.kind}; shared_cert=${
           hasBoot ? "present" : "pending-entrypoint"
         }; ACME not tested`
         : "vhost missing 443 ssl listener",

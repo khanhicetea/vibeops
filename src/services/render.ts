@@ -15,6 +15,7 @@ import { generateAll } from "./generate.ts";
 import { materializeDockerAssets } from "./assets_materialize.ts";
 import { composeArgs } from "./compose.ts";
 import { ensureAppLogDirs } from "./permissions.ts";
+import { ensureManagedTlsCertificates } from "./tls.ts";
 
 export type GeneratedFile = {
   /** Path relative to generatedDir */
@@ -155,6 +156,9 @@ export class RenderService {
         this.platform,
         state.phpVersions.map((v) => String(v.version)),
       );
+      // Reconcile managed private-CA leaf certificates before Nginx validates the
+      // candidate. Domain/alias changes automatically rotate the affected leaf.
+      await ensureManagedTlsCertificates(this.platform, state);
       // Candidate generation happens before any live promote. Failure here must leave
       // the live generation byte-identical (R-02).
       const candidate = options.candidateFactory

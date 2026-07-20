@@ -46,7 +46,7 @@ export function createProxy(
     mainDomain: asDomainName(domain),
     aliases: aliases.map(asDomainName),
     upstreams: [...input.upstreams],
-    tls: input.tls ?? { kind: "boot" },
+    tls: input.tls ?? { kind: "shared" },
     accessLog: input.accessLog ?? false,
     createdAt: now,
     updatedAt: now,

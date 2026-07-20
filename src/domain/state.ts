@@ -30,7 +30,8 @@ import {
 import { STATE_SCHEMA_VERSION } from "../version.ts";
 
 export type TlsMode =
-  | { kind: "boot" }
+  | { kind: "self-ca" }
+  | { kind: "shared" }
   | { kind: "acme" }
   | { kind: "external"; certPath: string; keyPath: string };
 

@@ -79,6 +79,10 @@ server {
   http2 on;
   server_name {{serverNames}};
 
+  {{#sslCertificate}}
+  ssl_certificate     {{sslCertificate}};
+  ssl_certificate_key {{sslCertificateKey}};
+  {{/sslCertificate}}
   include {{sslInclude}};
   {{#http3}}
   add_header Alt-Svc 'h3=":443"; ma=86400' always;

@@ -144,7 +144,7 @@ export function provisionApp(
   const entrypointMode: EntrypointMode = input.entrypointMode ??
     existing?.entrypointMode ??
     "front-controller";
-  const tls: TlsMode = input.tls ?? existing?.tls ?? { kind: "boot" };
+  const tls: TlsMode = input.tls ?? existing?.tls ?? { kind: "shared" };
   const accessLog = input.accessLog ?? existing?.accessLog ?? false;
 
   // Stable UID/GID

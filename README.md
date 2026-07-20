@@ -120,12 +120,12 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Interactive  | `tui` (wizard: apps, reverse proxies with multiple upstreams, databases, and common ops)                                                                                                                                                   |
 | Bootstrap    | `init`, `render`, `apply`, `status`                                                                                                                                                                                                        |
-| Live proof   | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron + worker, permissions, HTTP boot TLS, signed webhook → runner hook → OPcache; ACME skipped |
+| Live proof   | `test-stack [name]` (or `--test-stack [name]`, default `testbento`) — multi-chain Docker harness: apps, db add/connect, domain add/remove, cron + worker, permissions, HTTP shared TLS, signed webhook → runner hook → OPcache; ACME skipped |
 | Apps         | `app create\|list\|show\|update\|shell` (delete/remove blocked)                                                                                                                                                                            |
 | PHP          | `php add\|remove\|list`                                                                                                                                                                                                                    |
 | MySQL        | `mysql add\|list\|db\|shell\|size\|processlist` (version removal blocked; password rotation unsupported)                                                                                                                                   |
 | Proxy        | `proxy create\|list` (repeat `--upstream URL` for multiple servers; delete/remove blocked)                                                                                                                                                 |
-| TLS          | `tls set --app\|--proxy --mode boot\|acme\|external` (see TLS notes below)                                                                                                                                                                 |
+| TLS          | `tls set --app\|--proxy --mode self-ca\|shared\|acme\|external`; `tls ca export --output PATH` (see TLS notes below)                                                                                                                      |
 | Background   | `cron …` (`cron reload <app>`), `worker …` (`worker signal <app> <name> --signal HUP`)                                                                                                                                                     |
 | Deploy       | `deploy enable\|disable\|rotate\|status\|drain\|instructions`                                                                                                                                                                              |
 | Access logs  | `logs access enable\|disable\|rotate\|report --app <app>`; add `--attach` for the interactive GoAccess terminal (TUI: Applications → Access logs)                                                                                          |
@@ -154,11 +154,28 @@ Migrating an existing stack requires one planned runner recreation. First run `b
 
 | Mode       | Behavior                                                                                                                                                                                                                                                                                                                                                                |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `boot`     | Self-signed starter cert under `certs/boot.{crt,key}` (created on materialize / nginx entrypoint). **No** HTTP→HTTPS redirect.                                                                                                                                                                                                                                          |
+| `self-ca`  | Bento manages one stack-private CA under `certs/private-ca/` and signs a separate SAN certificate for each app/proxy domain and its aliases. Certificates renew on apply when near expiry or when domains change. HTTPS redirect on. Clients must trust the exported CA.                                                                                                  |
+| `shared`   | One shared self-signed starter cert under `certs/boot.{crt,key}` (created on materialize / Nginx entrypoint). This is the default and has **no** HTTP→HTTPS redirect. It is convenient for startup but does not provide domain-name validation.                                                                                                                           |
 | `acme`     | Nginx's native `ngx_http_acme_module` automatically obtains and renews certificates using one shared `bento_acme` issuer. Configure `ACME_EMAIL` and `ACME_URL` in the stack `.env` (`ACME_URL` defaults to Let's Encrypt production). State persists under `certs/acme-state/`; no Certbot command is needed. HTTPS redirect is enabled. **DNS A/AAAA for every site domain must point at this host and public port 80 must be reachable before issuance.** |
 | `external` | Operator-managed cert+key under stack `certs/` (paths validated; private key must not be world-readable, mode `0600`). HTTPS redirect on.                                                                                                                                                                                                                               |
 
-TLS changes reload **Nginx only** (PHP/runners stay up).
+TLS changes reload **Nginx only** (PHP/runners stay up). Existing `boot` state migrates to `shared` automatically.
+
+Export and install the private CA's **public certificate** (never copy `ca.key`):
+
+```sh
+bento tls ca export --output ./bento-ca.crt
+
+# Debian/Ubuntu target
+sudo install -m 0644 bento-ca.crt /usr/local/share/ca-certificates/bento-ca.crt
+sudo update-ca-certificates
+
+# RHEL/Fedora target
+sudo install -m 0644 bento-ca.crt /etc/pki/ca-trust/source/anchors/bento-ca.crt
+sudo update-ca-trust
+```
+
+Applications on the target server may need their own CA bundle reload or service restart after trust-store changes. Back up `certs/private-ca/` securely: losing `ca.key` prevents renewal, while replacing the CA requires redistributing trust.
 
 ### Permissions (product §6.9)
 
