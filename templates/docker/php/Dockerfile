@@ -123,6 +123,7 @@ RUN set -eux; \
     logrotate \
     openssh-client \
     unzip \
+    vim \
     zip \
     zstd; \
   rm -rf /var/lib/apt/lists/*
