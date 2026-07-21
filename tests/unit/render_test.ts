@@ -2,7 +2,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { describeReloadPlan, reloadPlanForPoolChange } from "../../src/domain/reload.ts";
 import { createEmptyState } from "../../src/domain/state.ts";
-import { materializeAppHome, provisionApp } from "../../src/services/app.ts";
+import { materializeAppHome, provisionApp, setAppEnabled } from "../../src/services/app.ts";
 import { RenderService } from "../../src/services/render.ts";
 import { StateStore } from "../../src/services/state_store.ts";
 import { createFixedClock } from "../../src/platform/clock.ts";
@@ -308,6 +308,41 @@ Deno.test("ondemand FPM profile renders only ondemand directives", async () => {
     assertEquals(pool.includes("pm.start_servers"), false);
     assertEquals(pool.includes("pm.min_spare_servers"), false);
     assertEquals(pool.includes("pm.max_spare_servers"), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("disabled app retains data and emits no vhost, pool, or runner config", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-disabled-" });
+  try {
+    const platform = testPlatform(root);
+    const render = new RenderService(platform);
+    let state = provisionApp(platform, createEmptyState(), {
+      slug: "paused",
+      domain: "paused.test",
+    }).state;
+    await platform.fs.mkdirp(platform.paths.appHome("paused"));
+    await platform.fs.writeText(join(platform.paths.appHome("paused"), "keep.txt"), "data");
+    await render.apply(state, { renderOnly: true, skipValidate: true });
+    assertEquals(await platform.fs.exists(join(root, "generated/nginx/sites/paused.conf")), true);
+
+    state = setAppEnabled(state, "paused", false, platform.clock.nowIso()).state;
+    await render.apply(state, { renderOnly: true, skipValidate: true });
+    assertEquals(state.apps.paused?.enabled, false);
+    assertEquals(await platform.fs.exists(join(root, "generated/nginx/sites/paused.conf")), false);
+    assertEquals(
+      await platform.fs.exists(join(root, "generated/php/php85/pools/paused.conf")),
+      false,
+    );
+    assertEquals(
+      await platform.fs.exists(join(root, "generated/runner/php85/cron/paused.crontab")),
+      false,
+    );
+    assertEquals(
+      await platform.fs.readText(join(platform.paths.appHome("paused"), "keep.txt")),
+      "data",
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }

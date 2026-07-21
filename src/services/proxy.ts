@@ -127,14 +127,32 @@ export function getProxyOrThrow(state: DesiredState, name: string): ProxySite {
   return p;
 }
 
-/**
- * Automatic proxy teardown is an explicit non-goal (product §8 / Phase G).
- */
-export function deleteProxy(_state: DesiredState, _name: string): never {
-  throw safetyError(
-    "automatic proxy teardown is unsupported",
-    "Proxy site deletion is outside the product contract. Adjust routing manually only with an operator-owned procedure outside Bento if required.",
-  );
+/** Remove a reverse proxy after an exact typed confirmation. */
+export function deleteProxy(
+  state: DesiredState,
+  name: string,
+  confirmation?: string,
+  now: string = new Date().toISOString(),
+): { state: DesiredState; proxy: ProxySite; reloadPlan: ReloadPlan } {
+  const proxy = getProxyOrThrow(state, name);
+  const expected = `delete ${name}`;
+  if (confirmation !== expected) {
+    throw safetyError(
+      `refusing to remove proxy ${name}: confirmation must be exactly '${expected}'`,
+      `Retry with --confirm '${expected}'.`,
+    );
+  }
+  const proxies = { ...state.proxies };
+  delete proxies[name];
+  const domains = { ...state.domains };
+  for (const [domain, owner] of Object.entries(domains)) {
+    if (owner.kind === "proxy" && owner.name === name) delete domains[domain];
+  }
+  return {
+    state: { ...state, proxies, domains, updatedAt: now },
+    proxy,
+    reloadPlan: reloadPlanForDomainChange(),
+  };
 }
 
 export function setProxyTls(

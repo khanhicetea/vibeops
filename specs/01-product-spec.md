@@ -297,7 +297,7 @@ The operator creates compressed logical dumps, copies them off-host, and later r
 - One container per app or hard container-level isolation between apps sharing a PHP version.
 - General-purpose hosting for arbitrary language runtimes; non-PHP services are supported only through reverse proxying.
 - Automatic source-control checkout strategy, zero-downtime release directories, or application-specific rollback logic.
-- Automatic app teardown, proxy teardown, database migration between MySQL versions, MySQL service removal, volume destruction, or MySQL password rotation.
+- Unconfirmed app-home/database teardown, database migration between MySQL versions, MySQL service removal, volume destruction, or MySQL password rotation. App and proxy desired-state removal requires exact typed confirmation. The CLI-only app prune workflow must list each known retained home/database part and requires the operator to type the literal `delete`; it has no confirmation-bypass flag.
 - Automatic off-host backup replication.
 - Per-app CPU/memory quotas inside a shared PHP version container.
 - Real-time hosted analytics; access-log analysis is ad hoc.

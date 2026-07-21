@@ -45,6 +45,7 @@ export type StatusReport = {
   }>;
   apps: Array<{
     slug: string;
+    enabled: boolean;
     uid: number;
     gid: number;
     domain: string;
@@ -85,7 +86,7 @@ export async function buildStatus(
   const notes: string[] = [];
 
   const phpVersions = state.phpVersions.map((v) => {
-    const apps = Object.values(state.apps).filter((a) => a.phpVersion === v.version);
+    const apps = Object.values(state.apps).filter((a) => a.enabled && a.phpVersion === v.version);
     let poolMaxSum = 0;
     for (const a of apps) {
       poolMaxSum += FPM_PROFILES[a.fpmProfile]?.maxChildren ?? 0;
@@ -192,6 +193,7 @@ export async function buildStatus(
       .sort((a, b) => a.slug.localeCompare(b.slug))
       .map((a) => ({
         slug: a.slug,
+        enabled: a.enabled,
         uid: a.uid,
         gid: a.gid,
         domain: a.mainDomain,
@@ -355,7 +357,9 @@ export function formatStatus(report: StatusReport): string {
   if (report.apps.length === 0) lines.push("  (none)");
   for (const a of report.apps) {
     lines.push(
-      `  ${a.slug}  uid=${a.uid}  ${a.domain}  php=${a.php}/${a.fpmProfile}  tls=${a.tls}  entry=${a.entrypointMode}  db=${a.mysqlService}[${
+      `  ${a.slug}  ${
+        a.enabled ? "enabled" : "disabled"
+      }  uid=${a.uid}  ${a.domain}  php=${a.php}/${a.fpmProfile}  tls=${a.tls}  entry=${a.entrypointMode}  db=${a.mysqlService}[${
         a.databases.join(",") || "-"
       }]  redis=${a.redisMode}  deploy=${a.deploy ? "on" : "off"}`,
     );

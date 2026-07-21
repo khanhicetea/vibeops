@@ -504,7 +504,7 @@ export async function ensureManagedTlsCertificates(
   state: DesiredState,
 ): Promise<void> {
   for (const app of Object.values(state.apps)) {
-    if (app.tls.kind === "self-ca") {
+    if (app.enabled && app.tls.kind === "self-ca") {
       await ensurePrivateCaSiteCertificate(
         platform,
         String(app.slug),

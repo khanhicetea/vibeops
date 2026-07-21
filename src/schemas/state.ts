@@ -113,6 +113,7 @@ const databaseSchema = z.object({
 
 const appSchema = z.object({
   slug: appSlugSchema,
+  enabled: z.boolean().default(true),
   uid: uidGidSchema,
   gid: uidGidSchema,
   home: absolutePathSchema,
@@ -243,6 +244,7 @@ function brandRedis(r: z.infer<typeof redisSchema>): AppRedisIdentity {
 function brandApp(app: z.infer<typeof appSchema>): AppState {
   return {
     slug: asAppSlug(app.slug),
+    enabled: app.enabled,
     uid: asUid(app.uid),
     gid: asGid(app.gid),
     home: asAbsoluteAppPath(app.home),

@@ -498,7 +498,7 @@ function generatedReloadPlan(state: DesiredState): ReloadPlan {
     // separately mounted crontabs, so every live scheduler must also reload.
     const scheduledApps = Object.values(state.apps)
       .filter((app) =>
-        app.phpVersion === v.version &&
+        app.enabled && app.phpVersion === v.version &&
         (app.deploy.enabled || state.cronJobs.some((job) => job.app === app.slug && job.enabled))
       )
       .map((app) => String(app.slug));

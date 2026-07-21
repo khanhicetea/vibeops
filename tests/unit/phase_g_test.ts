@@ -5,10 +5,15 @@
  * or per-app CPU/memory quotas in shared PHP containers.
  */
 
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { createEmptyState } from "../../src/domain/state.ts";
 import { isBentoError } from "../../src/domain/errors.ts";
 import { deleteApp, provisionApp } from "../../src/services/app.ts";
+import {
+  executeAppPrune,
+  planAppPrune,
+  writeAppPruneManifest,
+} from "../../src/services/app_prune.ts";
 import { createProxy, deleteProxy } from "../../src/services/proxy.ts";
 import { removeMysqlVersion } from "../../src/services/mysql.ts";
 import { assembleComposeDocuments, assertSafeComposeArgs } from "../../src/services/compose.ts";
@@ -41,17 +46,70 @@ function assertSafety(fn: () => unknown, messagePart: string): void {
   assertEquals(isBentoError(err) ? err.exitCode : 0, 10);
 }
 
-Deno.test("G app delete is safety-blocked (no automatic teardown)", () => {
-  const state = createEmptyState();
-  assertSafety(() => deleteApp(state, "demo"), "app teardown");
-  // State unchanged even when slug is unknown — never mutates.
-  assertEquals(Object.keys(state.apps).length, 0);
+Deno.test("app delete requires exact typed confirmation", () => {
+  const platform = testPlatform("/tmp/bento-lifecycle-test");
+  const state = provisionApp(platform, createEmptyState(), {
+    slug: "demo",
+    domain: "demo.test",
+  }).state;
+  assertSafety(() => deleteApp(state, "demo"), "confirmation");
+  assertEquals(!!state.apps.demo, true);
+  const removed = deleteApp(state, "demo", "delete demo", platform.clock.nowIso());
+  assertEquals(!!removed.state.apps.demo, false);
+  assertEquals(!!removed.state.domains["demo.test"], false);
 });
 
-Deno.test("G proxy delete is safety-blocked (no automatic teardown)", () => {
-  const state = createEmptyState();
-  assertSafety(() => deleteProxy(state, "api"), "proxy teardown");
-  assertEquals(Object.keys(state.proxies).length, 0);
+Deno.test("app prune lists retained parts and requires literal delete", async () => {
+  const root = await Deno.makeTempDir({ prefix: "bento-prune-" });
+  try {
+    const platform = testPlatform(root);
+    await platform.fs.writeText(
+      platform.paths.paths.envFile,
+      "MYSQL_ROOT_PASSWORD=root-secret\n",
+      0o600,
+    );
+    const provisioned = provisionApp(platform, createEmptyState(), {
+      slug: "demo",
+      domain: "demo.test",
+      createDatabase: true,
+    });
+    await writeAppPruneManifest(platform, provisioned.app);
+    const removed = deleteApp(
+      provisioned.state,
+      "demo",
+      "delete demo",
+      platform.clock.nowIso(),
+    );
+    const plan = await planAppPrune(platform, removed.state, "demo");
+    assertEquals(plan.databases, ["demo"]);
+    assertEquals(plan.home, platform.paths.appHome("demo"));
+
+    await assertRejects(() => executeAppPrune(platform, plan, "DELETE"), Error, "exactly 'delete'");
+    assertEquals(await platform.fs.exists(plan.home), true);
+
+    const result = await executeAppPrune(platform, plan, "delete");
+    assertEquals(result.cleaned.includes("database demo"), true);
+    assertEquals(await platform.fs.exists(plan.home), false);
+    const calls = (platform.process as ReturnType<typeof createRecordingProcessRunner>).calls;
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0]!.command.join(" ").includes("root-secret"), false);
+    assertEquals(String(calls[0]!.options?.stdin).includes("DROP DATABASE IF EXISTS `demo`"), true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("proxy delete requires exact typed confirmation", () => {
+  const state = createProxy(createEmptyState(), {
+    name: "api",
+    domain: "api.test",
+    upstreams: ["http://127.0.0.1:3000"],
+  }, "2026-07-17T12:00:00.000Z").state;
+  assertSafety(() => deleteProxy(state, "api", "delete wrong"), "confirmation");
+  assertEquals(!!state.proxies.api, true);
+  const removed = deleteProxy(state, "api", "delete api", "2026-07-17T12:00:00.000Z");
+  assertEquals(!!removed.state.proxies.api, false);
+  assertEquals(!!removed.state.domains["api.test"], false);
 });
 
 Deno.test("G MySQL version/volume removal is safety-blocked", () => {
@@ -169,7 +227,7 @@ Deno.test("G backup paths stay on-host under stack backupsDir (no off-host repli
   }
 });
 
-Deno.test("G proxy create still works; delete never mutates", async () => {
+Deno.test("G proxy create and guarded delete work", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-g-proxy-" });
   try {
     const platform = testPlatform(root);
@@ -181,8 +239,10 @@ Deno.test("G proxy create still works; delete never mutates", async () => {
     }, platform.clock.nowIso());
     state = created.state;
     assertEquals(!!state.proxies["edge"], true);
-    assertSafety(() => deleteProxy(state, "edge"), "proxy teardown");
+    assertSafety(() => deleteProxy(state, "edge"), "confirmation");
     assertEquals(!!state.proxies["edge"], true);
+    const removed = deleteProxy(state, "edge", "delete edge", platform.clock.nowIso());
+    assertEquals(!!removed.state.proxies["edge"], false);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

@@ -3,8 +3,10 @@ import { FPM_PROFILES } from "../../domain/types.ts";
 import {
   applyAppDataPlane,
   capacityWarnings,
+  deleteApp,
   materializeAppHome,
   provisionApp,
+  setAppEnabled,
 } from "../../services/app.ts";
 import { buildMysqlShellPlan, createAppDatabaseLive } from "../../services/mysql.ts";
 import { loadRedisPassword, requireMysqlRootPassword } from "../../services/stack_env.ts";
@@ -28,7 +30,7 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
       .map((app) => ({
         label: app.slug,
         value: app.slug,
-        hint: `${app.mainDomain} · php ${app.phpVersion}`,
+        hint: `${app.enabled ? "enabled" : "disabled"} · ${app.mainDomain} · php ${app.phpVersion}`,
       }));
     choices.push({ label: "Create application…", value: "__create" });
 
@@ -52,6 +54,14 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
         { label: "Domains", value: "domains", hint: "primary · aliases · TLS" },
         { label: "Access logs", value: "logs", hint: "enable · rotate · report" },
         { label: "Templates", value: "templates", hint: "vhost · FPM pool · drift" },
+        current.enabled
+          ? {
+            label: "Disable application",
+            value: "disable",
+            hint: "stop pool, runner jobs, and vhost",
+          }
+          : { label: "Enable application", value: "enable", hint: "restore runtime configuration" },
+        { label: "Remove application", value: "remove", hint: "durable data is retained" },
       ]);
       if (!action) break;
 
@@ -62,7 +72,69 @@ export async function sectionApps(ui: WizardUI, ctx: CliContext): Promise<void> 
       else if (action === "domains") await sectionAppDomains(ui, ctx, slug);
       else if (action === "logs") await sectionLogs(ui, ctx, slug);
       else if (action === "templates") await sectionTemplate(ui, ctx, slug);
+      else if (action === "enable" || action === "disable") {
+        await wizardSetAppEnabled(ui, ctx, slug, action === "enable");
+      } else if (action === "remove") {
+        if (await wizardRemoveApp(ui, ctx, slug)) break;
+      }
     }
+  }
+}
+
+async function wizardSetAppEnabled(
+  ui: WizardUI,
+  ctx: CliContext,
+  slug: string,
+  enabled: boolean,
+): Promise<void> {
+  const verb = enabled ? "Enable" : "Disable";
+  if (!(await ui.confirm(`${verb} application ${slug}?`, { defaultYes: false }))) return;
+  try {
+    await ctx.store.withExclusive(async (state) => {
+      const changed = setAppEnabled(state, slug, enabled, ctx.platform.clock.nowIso());
+      await ctx.store.save(changed.state);
+      await ctx.render.apply(changed.state, {
+        reloadPlan: changed.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+      return changed;
+    });
+    ui.success(`${enabled ? "Enabled" : "Disabled"} app ${slug}`);
+  } catch (err) {
+    handleError(ui, err);
+  }
+  await ui.pause();
+}
+
+async function wizardRemoveApp(
+  ui: WizardUI,
+  ctx: CliContext,
+  slug: string,
+): Promise<boolean> {
+  const expected = `delete ${slug}`;
+  const confirmation = await ui.prompt(`Type '${expected}' to confirm removal`, {
+    required: true,
+  });
+  if (confirmation === null) return false;
+  try {
+    await ctx.store.withExclusive(async (state) => {
+      const removed = deleteApp(state, slug, confirmation, ctx.platform.clock.nowIso());
+      await ctx.store.save(removed.state);
+      await ctx.render.apply(removed.state, {
+        reloadPlan: removed.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+      return removed;
+    });
+    ui.success(`Removed app ${slug}`, "Durable home and database data were retained.");
+    await ui.pause();
+    return true;
+  } catch (err) {
+    handleError(ui, err);
+    await ui.pause();
+    return false;
   }
 }
 

@@ -1,5 +1,5 @@
 import type { TlsMode } from "../../domain/state.ts";
-import { createProxy } from "../../services/proxy.ts";
+import { createProxy, deleteProxy } from "../../services/proxy.ts";
 import { type MenuChoice, WizardUI } from "../../ui/tui.ts";
 import type { CliContext } from "../context.ts";
 import { ensureState, handleError, pcDim } from "./shared.ts";
@@ -45,9 +45,35 @@ export async function sectionProxies(ui: WizardUI, ctx: CliContext): Promise<voi
     );
     const action = await ui.menu("Reverse proxy actions", [
       { label: "Configure TLS", value: "tls", hint: "self-CA · shared · ACME · external" },
+      { label: "Remove reverse proxy", value: "remove" },
     ]);
     if (action === "tls") await wizardProxyTls(ui, ctx, name);
+    else if (action === "remove") await wizardProxyRemove(ui, ctx, name);
   }
+}
+
+async function wizardProxyRemove(ui: WizardUI, ctx: CliContext, name: string): Promise<void> {
+  const expected = `delete ${name}`;
+  const confirmation = await ui.prompt(`Type '${expected}' to confirm removal`, {
+    required: true,
+  });
+  if (confirmation === null) return;
+  try {
+    await ctx.store.withExclusive(async (state) => {
+      const removed = deleteProxy(state, name, confirmation, ctx.platform.clock.nowIso());
+      await ctx.store.save(removed.state);
+      await ctx.render.apply(removed.state, {
+        reloadPlan: removed.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+      return removed;
+    });
+    ui.success(`Removed reverse proxy ${name}`);
+  } catch (err) {
+    handleError(ui, err);
+  }
+  await ui.pause();
 }
 
 async function wizardProxyTls(ui: WizardUI, ctx: CliContext, name: string): Promise<void> {

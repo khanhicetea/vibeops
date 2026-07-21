@@ -30,7 +30,12 @@ import {
 } from "../schemas/validators.ts";
 import type { Platform } from "../platform/mod.ts";
 import { containerAppHome } from "../platform/paths.ts";
-import { type ReloadPlan, reloadPlanForPoolChange } from "../domain/reload.ts";
+import {
+  mergeReloadPlans,
+  type ReloadPlan,
+  reloadPlanForPoolChange,
+  reloadPlanForRunnerChange,
+} from "../domain/reload.ts";
 import { applyAppPermissionPolicy } from "./permissions.ts";
 import { applyAppMysqlGrants, isMysqlReachable, tryBestEffortMysqlAccount } from "./mysql.ts";
 import { tryApplyAppRedisAcl } from "./redis.ts";
@@ -194,6 +199,7 @@ export function provisionApp(
 
   const app: AppState = {
     slug: asAppSlug(slug),
+    enabled: existing?.enabled ?? true,
     uid,
     gid,
     home: asAbsoluteAppPath(homeContainer),
@@ -444,21 +450,81 @@ export function getAppOrThrow(state: DesiredState, slug: string): AppState {
   return app;
 }
 
-/**
- * First-class app teardown is an explicit non-goal (product §8 / Phase G).
- * Homes, credentials, and domains must not be destroyed through the control plane.
- */
-export function deleteApp(_state: DesiredState, _slug: string): never {
-  throw safetyError(
-    "automatic app teardown is unsupported",
-    "First-class app deletion is outside the product contract. Remove durable data only with an explicit, operator-owned procedure outside Bento.",
+export type AppLifecycleResult = {
+  state: DesiredState;
+  app: AppState;
+  reloadPlan: ReloadPlan;
+};
+
+function appLifecycleReloadPlan(app: AppState): ReloadPlan {
+  return mergeReloadPlans(
+    reloadPlanForPoolChange(app.phpService),
+    reloadPlanForRunnerChange(`${app.phpService}-runner`),
   );
+}
+
+/** Disable or enable runtime config while retaining the app and all durable data. */
+export function setAppEnabled(
+  state: DesiredState,
+  slug: string,
+  enabled: boolean,
+  now: string,
+): AppLifecycleResult {
+  const current = getAppOrThrow(state, slug);
+  const app = { ...current, enabled, updatedAt: now };
+  return {
+    state: {
+      ...state,
+      apps: { ...state.apps, [slug]: app },
+      updatedAt: now,
+    },
+    app,
+    reloadPlan: appLifecycleReloadPlan(current),
+  };
+}
+
+/**
+ * Remove an app from Bento's desired state after an exact typed confirmation.
+ * Durable home and database data are intentionally left for operator-owned cleanup.
+ */
+export function deleteApp(
+  state: DesiredState,
+  slug: string,
+  confirmation?: string,
+  now: string = new Date().toISOString(),
+): AppLifecycleResult {
+  const app = getAppOrThrow(state, slug);
+  const expected = `delete ${slug}`;
+  if (confirmation !== expected) {
+    throw safetyError(
+      `refusing to remove app ${slug}: confirmation must be exactly '${expected}'`,
+      `Retry with --confirm '${expected}'. Durable home and database data will be retained.`,
+    );
+  }
+  const apps = { ...state.apps };
+  delete apps[slug];
+  const domains = { ...state.domains };
+  for (const [domain, owner] of Object.entries(domains)) {
+    if (owner.kind === "app" && owner.slug === slug) delete domains[domain];
+  }
+  return {
+    state: {
+      ...state,
+      apps,
+      domains,
+      cronJobs: state.cronJobs.filter((job) => job.app !== slug),
+      workers: state.workers.filter((worker) => worker.app !== slug),
+      updatedAt: now,
+    },
+    app,
+    reloadPlan: appLifecycleReloadPlan(app),
+  };
 }
 
 export function capacityWarnings(state: DesiredState): string[] {
   const warnings: string[] = [];
   for (const v of state.phpVersions) {
-    const apps = Object.values(state.apps).filter((a) => a.phpVersion === v.version);
+    const apps = Object.values(state.apps).filter((a) => a.enabled && a.phpVersion === v.version);
     let sum = 0;
     for (const a of apps) {
       const p = FPM_PROFILES[a.fpmProfile] ?? FPM_PROFILES[DEFAULT_FPM_PROFILE]!;

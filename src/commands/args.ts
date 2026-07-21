@@ -7,6 +7,7 @@ type StringArgName =
   | "bin"
   | "cert"
   | "cmd"
+  | "confirm"
   | "database"
   | "docroot"
   | "domain"

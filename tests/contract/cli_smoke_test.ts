@@ -68,6 +68,15 @@ Deno.test("cli init render status app create", async () => {
     assertEquals(text.includes("demo.test"), true);
     assertEquals(text.includes("index.php"), true); // front-controller routes via index.php
 
+    // Disable removes all runtime config but preserves app state/data; enable restores it.
+    assertEquals(await runCli([...base, "app", "disable", "demo", "--no-apply"]), 0);
+    assertEquals(await runCli([...base, "render"]), 0);
+    assertEquals(await fileExists(vhost), false);
+    assertEquals(await fileExists(join(stack, "homes/demo/code/public/index.php")), true);
+    assertEquals(await runCli([...base, "app", "enable", "demo", "--no-apply"]), 0);
+    assertEquals(await runCli([...base, "render"]), 0);
+    assertEquals(await fileExists(vhost), true);
+
     // domain collision
     const code = await runCli([
       ...base,
@@ -90,7 +99,7 @@ Deno.test("cli init render status app create", async () => {
     // mysql remove blocked
     assertEquals((await runCli([...base, "mysql", "remove", "8.4"])) !== 0, true);
 
-    // Phase G: app/proxy teardown blocked
+    // App/proxy removal fails closed without exact typed confirmation
     assertEquals((await runCli([...base, "app", "delete", "demo"])) !== 0, true);
     assertEquals((await runCli([...base, "app", "remove", "demo"])) !== 0, true);
 
@@ -119,8 +128,22 @@ Deno.test("cli init render status app create", async () => {
     assertEquals(proxyVhost.includes("keepalive 5;"), true);
     assertEquals((await runCli([...base, "proxy", "delete", "api"])) !== 0, true);
     assertEquals((await runCli([...base, "proxy", "remove", "api"])) !== 0, true);
-    // proxy still listed after blocked delete
+    // proxy still listed after unconfirmed delete, then exact confirmation removes it
     assertEquals(await runCli([...base, "proxy", "list"]), 0);
+    assertEquals(
+      await runCli([
+        ...base,
+        "proxy",
+        "delete",
+        "api",
+        "--confirm",
+        "delete api",
+        "--no-apply",
+      ]),
+      0,
+    );
+    const afterProxyDelete = JSON.parse(await Deno.readTextFile(join(stack, "state.json")));
+    assertEquals(afterProxyDelete.proxies.api, undefined);
 
     // cron + worker
     assertEquals(
@@ -331,6 +354,23 @@ Deno.test("cli init render status app create", async () => {
       0,
     );
     assertEquals(await runCli([...base, "apply", "--render-only", "--skip-validate"]), 0);
+
+    // Exact typed confirmation removes desired state/config but retains durable home data.
+    assertEquals(
+      await runCli([
+        ...base,
+        "app",
+        "delete",
+        "demo",
+        "--confirm",
+        "delete demo",
+        "--no-apply",
+      ]),
+      0,
+    );
+    const afterDelete = JSON.parse(await Deno.readTextFile(join(stack, "state.json")));
+    assertEquals(afterDelete.apps.demo, undefined);
+    assertEquals(await fileExists(join(stack, "homes/demo/code/public/index.php")), true);
 
     // future state rejection
     const badState = JSON.parse(await Deno.readTextFile(join(stack, "state.json")));

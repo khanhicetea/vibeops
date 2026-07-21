@@ -82,6 +82,8 @@ export type AppDatabase = {
 
 export type AppState = {
   slug: AppSlug;
+  /** Disabled apps retain desired state and durable data but emit no runtime config. */
+  enabled: boolean;
   uid: Uid;
   gid: Gid;
   home: AbsoluteAppPath;

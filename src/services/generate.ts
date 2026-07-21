@@ -120,7 +120,7 @@ index index.php index.html;
   });
 
   for (const app of Object.values(state.apps)) {
-    files.push(...await generateAppVhost(platform, state, app, http3));
+    if (app.enabled) files.push(...await generateAppVhost(platform, state, app, http3));
   }
   for (const proxy of Object.values(state.proxies)) {
     files.push(...await generateProxyVhost(platform, proxy, http3));
@@ -248,6 +248,7 @@ async function generatePhpPools(
 ): Promise<GeneratedFile[]> {
   const files: GeneratedFile[] = [];
   for (const app of Object.values(state.apps)) {
+    if (!app.enabled) continue;
     let tpl: string;
     if (app.poolTemplate.kind === "custom") {
       try {
@@ -310,7 +311,9 @@ async function generatePhpPools(
 function generateRunnerConfig(state: DesiredState): GeneratedFile[] {
   const files: GeneratedFile[] = [];
   for (const v of state.phpVersions) {
-    const appsOnVersion = Object.values(state.apps).filter((a) => a.phpVersion === v.version);
+    const appsOnVersion = Object.values(state.apps).filter((a) =>
+      a.enabled && a.phpVersion === v.version
+    );
     const jobs = state.cronJobs.filter((j) =>
       appsOnVersion.some((a) => a.slug === j.app) && j.enabled
     );

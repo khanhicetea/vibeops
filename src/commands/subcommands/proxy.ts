@@ -41,17 +41,17 @@ export function registerProxyCommands(parser: YargsBuilder, state: RunState): Ya
         )
         .command(
           "delete <name>",
-          "Blocked: automatic proxy teardown is unavailable",
-          (y2: YargsBuilder) => y2.positional("name", { type: "string", demandOption: true }),
+          "Remove a reverse-proxy site",
+          proxyDeleteOptions,
           bind(state, cmdProxyDelete),
         )
         .command(
           "remove <name>",
-          "Blocked: automatic proxy teardown is unavailable",
-          (y2: YargsBuilder) => y2.positional("name", { type: "string", demandOption: true }),
+          "Alias for proxy delete",
+          proxyDeleteOptions,
           bind(state, cmdProxyDelete),
         )
-        .demandCommand(1, "Specify a proxy subcommand: create|list")
+        .demandCommand(1, "Specify a proxy subcommand: create|list|delete")
         .recommendCommands());
 }
 
@@ -97,7 +97,38 @@ async function cmdProxyCreate(
   return 0;
 }
 
+function proxyDeleteOptions(y: YargsBuilder): YargsBuilder {
+  return noApplyOption(
+    y
+      .positional("name", { type: "string", demandOption: true })
+      .option("confirm", {
+        type: "string",
+        describe: "Exact confirmation text: delete <name>",
+      }),
+  );
+}
+
 async function cmdProxyDelete(argv: ArgsWith<"name">, ctx: CliContext): Promise<number> {
-  deleteProxy(await ctx.store.load(), argv.name);
-  return 10;
+  const noApply = wantsNoApply(argv);
+  const result = await ctx.store.withExclusive(async (state) => {
+    const removed = deleteProxy(
+      state,
+      argv.name,
+      argv.confirm,
+      ctx.platform.clock.nowIso(),
+    );
+    await ctx.store.save(removed.state);
+    if (!noApply) {
+      await ctx.render.apply(removed.state, {
+        reloadPlan: removed.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+    }
+    return removed;
+  });
+  ctx.log.info(
+    `removed proxy ${result.proxy.name}${noApply ? " (state only; run bento apply)" : ""}`,
+  );
+  return 0;
 }

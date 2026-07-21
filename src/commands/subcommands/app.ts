@@ -1,15 +1,18 @@
+import { safetyError } from "../../domain/errors.ts";
 import {
   applyAppDataPlane,
   capacityWarnings,
   deleteApp,
   materializeAppHome,
   provisionApp,
+  setAppEnabled,
 } from "../../services/app.ts";
 import { loadRedisPassword } from "../../services/stack_env.ts";
+import { executeAppPrune, planAppPrune, writeAppPruneManifest } from "../../services/app_prune.ts";
 import { printTable } from "../../ui/output.ts";
 import type { CliContext } from "../context.ts";
 import type { ArgsWith, CliArgs } from "../args.ts";
-import { bind, type RunState, wantsNoApply, type YargsBuilder } from "../shared.ts";
+import { bind, noApplyOption, type RunState, wantsNoApply, type YargsBuilder } from "../shared.ts";
 import { runCliExec } from "./exec.ts";
 
 export function registerAppCommands(parser: YargsBuilder, state: RunState): YargsBuilder {
@@ -105,16 +108,36 @@ export function registerAppCommands(parser: YargsBuilder, state: RunState): Yarg
           bind(state, cmdAppCreate),
         )
         .command(
+          "enable <slug>",
+          "Enable an application and its runtime configuration",
+          (y2: YargsBuilder) =>
+            noApplyOption(y2.positional("slug", { type: "string", demandOption: true })),
+          bind(state, cmdAppEnable),
+        )
+        .command(
+          "disable <slug>",
+          "Disable runtime configuration while retaining app data",
+          (y2: YargsBuilder) =>
+            noApplyOption(y2.positional("slug", { type: "string", demandOption: true })),
+          bind(state, cmdAppDisable),
+        )
+        .command(
           "delete <slug>",
-          "Blocked: automatic app teardown is unavailable",
-          (y2: YargsBuilder) => y2.positional("slug", { type: "string", demandOption: true }),
+          "Remove an application from Bento (durable data is retained)",
+          appDeleteOptions,
           bind(state, cmdAppDelete),
         )
         .command(
           "remove <slug>",
-          "Blocked: automatic app teardown is unavailable",
-          (y2: YargsBuilder) => y2.positional("slug", { type: "string", demandOption: true }),
+          "Alias for app delete",
+          appDeleteOptions,
           bind(state, cmdAppDelete),
+        )
+        .command(
+          "prune <slug>",
+          "Permanently delete data retained after app removal",
+          (y2: YargsBuilder) => y2.positional("slug", { type: "string", demandOption: true }),
+          bind(state, cmdAppPrune),
         )
         .command(
           "shell <slug>",
@@ -137,7 +160,10 @@ export function registerAppCommands(parser: YargsBuilder, state: RunState): Yarg
               }),
           bind(state, cmdAppShell),
         )
-        .demandCommand(1, "Specify an app subcommand: create|list|show|update|shell")
+        .demandCommand(
+          1,
+          "Specify an app subcommand: create|list|show|update|enable|disable|delete|prune|shell",
+        )
         .recommendCommands());
 }
 
@@ -147,6 +173,7 @@ async function cmdAppList(_argv: CliArgs, ctx: CliContext): Promise<number> {
     .sort((a, b) => a.slug.localeCompare(b.slug))
     .map((a) => [
       a.slug,
+      a.enabled ? "enabled" : "disabled",
       String(a.uid),
       a.mainDomain,
       a.phpVersion,
@@ -156,7 +183,7 @@ async function cmdAppList(_argv: CliArgs, ctx: CliContext): Promise<number> {
     ]);
   ctx.log.out(
     printTable(
-      ["slug", "uid", "domain", "php", "fpm", "tls", "mysql"],
+      ["slug", "status", "uid", "domain", "php", "fpm", "tls", "mysql"],
       rows,
     ),
   );
@@ -244,9 +271,110 @@ async function cmdAppCreate(
   return 0;
 }
 
+function appDeleteOptions(y: YargsBuilder): YargsBuilder {
+  return noApplyOption(
+    y
+      .positional("slug", { type: "string", demandOption: true })
+      .option("confirm", {
+        type: "string",
+        describe: "Exact confirmation text: delete <slug>",
+      }),
+  );
+}
+
+async function mutateAppEnabled(
+  argv: ArgsWith<"slug">,
+  ctx: CliContext,
+  enabled: boolean,
+): Promise<number> {
+  const noApply = wantsNoApply(argv);
+  const result = await ctx.store.withExclusive(async (state) => {
+    const changed = setAppEnabled(state, argv.slug, enabled, ctx.platform.clock.nowIso());
+    await ctx.store.save(changed.state);
+    if (!noApply) {
+      await ctx.render.apply(changed.state, {
+        reloadPlan: changed.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+    }
+    return changed;
+  });
+  ctx.log.info(
+    `${result.app.enabled ? "enabled" : "disabled"} app ${argv.slug}${
+      noApply ? " (state only; run bento apply)" : ""
+    }`,
+  );
+  return 0;
+}
+
+async function cmdAppEnable(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
+  return await mutateAppEnabled(argv, ctx, true);
+}
+
+async function cmdAppDisable(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
+  return await mutateAppEnabled(argv, ctx, false);
+}
+
 async function cmdAppDelete(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
-  deleteApp(await ctx.store.load(), argv.slug);
-  return 10;
+  const noApply = wantsNoApply(argv);
+  const result = await ctx.store.withExclusive(async (state) => {
+    const removed = deleteApp(
+      state,
+      argv.slug,
+      argv.confirm,
+      ctx.platform.clock.nowIso(),
+    );
+    await writeAppPruneManifest(ctx.platform, removed.app);
+    await ctx.store.save(removed.state);
+    if (!noApply) {
+      await ctx.render.apply(removed.state, {
+        reloadPlan: removed.reloadPlan,
+        skipValidate: false,
+        alreadyLocked: true,
+      });
+    }
+    return removed;
+  });
+  ctx.log.info(
+    `removed app ${result.app.slug}; durable home and database data retained${
+      noApply ? " (state only; run bento apply)" : ""
+    }`,
+  );
+  return 0;
+}
+
+async function cmdAppPrune(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
+  const state = await ctx.store.load();
+  const plan = await planAppPrune(ctx.platform, state, argv.slug);
+
+  ctx.log.out(`The following retained data for app ${plan.slug} will be permanently deleted:`);
+  for (const database of plan.databases) {
+    ctx.log.out(`  - MySQL database: ${database} (${plan.mysqlService})`);
+  }
+  if (plan.manifestFound) {
+    ctx.log.out(`  - MySQL account: ${plan.mysqlUser}@% (${plan.mysqlService})`);
+  } else {
+    ctx.log.warn(
+      "cleanup metadata is unavailable; database data cannot be identified and will not be deleted",
+    );
+  }
+  ctx.log.out(`  - App home: ${plan.home}`);
+  ctx.log.out("");
+
+  const confirmation = globalThis.prompt("Type 'delete' to permanently clean these parts:");
+  const result = await ctx.store.withExclusive(async (current) => {
+    const checked = await planAppPrune(ctx.platform, current, argv.slug);
+    if (JSON.stringify(checked) !== JSON.stringify(plan)) {
+      throw safetyError(
+        `retained data for ${plan.slug} changed while awaiting confirmation`,
+        "Review the cleanup list and retry.",
+      );
+    }
+    return await executeAppPrune(ctx.platform, checked, confirmation);
+  });
+  for (const part of result.cleaned) ctx.log.info(`cleaned ${part}`);
+  return 0;
 }
 
 async function cmdAppShell(argv: ArgsWith<"slug">, ctx: CliContext): Promise<number> {
