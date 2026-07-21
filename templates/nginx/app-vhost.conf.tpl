@@ -14,7 +14,7 @@ server {
   include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
-  access_log {{accessLogPath}} bento_timed;
+  access_log {{accessLogPath}} bento_access_log;
   {{/accessLog}}
 
   {{#deployEnabled}}
@@ -46,7 +46,7 @@ server {
     # Cache successful FastCGI responses for one day.
     # fastcgi_cache app_cache;
     # fastcgi_cache_valid 200 1d;
-    
+
     fastcgi_pass unix:{{socketPath}};
   }
   {{/frontController}}
@@ -62,7 +62,7 @@ server {
     # Cache successful FastCGI responses for one day.
     # fastcgi_cache app_cache;
     # fastcgi_cache_valid 200 1d;
-    
+
     fastcgi_pass unix:{{socketPath}};
   }
   {{/legacy}}
@@ -92,7 +92,7 @@ server {
   include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
-  access_log {{accessLogPath}} bento_timed;
+  access_log {{accessLogPath}} bento_access_log;
   {{/accessLog}}
 
   {{#deployEnabled}}
@@ -124,7 +124,7 @@ server {
     # Cache successful FastCGI responses for one day.
     # fastcgi_cache app_cache;
     # fastcgi_cache_valid 200 1d;
-    
+
     fastcgi_pass unix:{{socketPath}};
   }
   {{/frontController}}
@@ -140,7 +140,7 @@ server {
     # Cache successful FastCGI responses for one day.
     # fastcgi_cache app_cache;
     # fastcgi_cache_valid 200 1d;
-    
+
     fastcgi_pass unix:{{socketPath}};
   }
   {{/legacy}}

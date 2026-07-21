@@ -668,7 +668,7 @@ server {
   include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
-  access_log {{accessLogPath}} bento_timed;
+  access_log {{accessLogPath}} bento_access_log;
   {{/accessLog}}
 
   {{#deployEnabled}}
@@ -742,7 +742,7 @@ server {
   include /etc/nginx/snippets/app-common.conf;
 
   {{#accessLog}}
-  access_log {{accessLogPath}} bento_timed;
+  access_log {{accessLogPath}} bento_access_log;
   {{/accessLog}}
 
   {{#deployEnabled}}
@@ -812,7 +812,7 @@ server {
   {{/redirectHttps}}
   {{^redirectHttps}}
   {{#accessLog}}
-  access_log {{accessLogPath}} bento_timed;
+  access_log {{accessLogPath}} bento_access_log;
   {{/accessLog}}
   location ~* \\.(?:css|js|mjs|jpg|jpeg|gif|png|svg|ico|webp|avif|woff|woff2|ttf|eot)$ {
     expires 30d;
@@ -858,7 +858,7 @@ server {
   add_header Alt-Svc 'h3=":443"; ma=86400' always;
   {{/http3}}
   {{#accessLog}}
-  access_log {{accessLogPath}} bento_timed;
+  access_log {{accessLogPath}} bento_access_log;
   {{/accessLog}}
   location ~* \\.(?:css|js|mjs|jpg|jpeg|gif|png|svg|ico|webp|avif|woff|woff2|ttf|eot)$ {
     expires 30d;

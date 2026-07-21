@@ -177,7 +177,7 @@ export function buildGoAccessReportPlan(
   const dryRun = opts?.dryRun ?? false;
   const attach = opts?.attach ?? false;
 
-  // Log format matches bento_timed in nginx.conf.tpl. The final fields preserve
+  // Log format matches bento_access_log in nginx.conf.tpl. The final fields preserve
   // request/upstream timing while remaining compatible with GoAccess parsing.
   const goAccessArgs = [
     `/var/log/nginx/${slug}.access.log`,
