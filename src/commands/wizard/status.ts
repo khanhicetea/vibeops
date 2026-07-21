@@ -1,4 +1,5 @@
 import { capacityWarnings } from "../../services/app.ts";
+import { formatDoctor, runDoctor } from "../../services/doctor.ts";
 import { listMysqlVersions } from "../../services/mysql.ts";
 import { listPhpVersions } from "../../services/php.ts";
 import { buildStatus, formatStatus } from "../../services/status.ts";
@@ -12,6 +13,7 @@ export async function sectionStatus(ui: WizardUI, ctx: CliContext): Promise<void
 
   const action = await ui.menu("Status", [
     { label: "Full stack status", value: "full" },
+    { label: "Run doctor", value: "doctor" },
     { label: "List applications", value: "apps" },
     { label: "List PHP versions", value: "php" },
     { label: "List MySQL versions", value: "mysql" },
@@ -25,6 +27,10 @@ export async function sectionStatus(ui: WizardUI, ctx: CliContext): Promise<void
     const report = await buildStatus(ctx.platform, state);
     ui.blank();
     ui.message(formatStatus(report));
+  } else if (action === "doctor") {
+    const report = await runDoctor(ctx.platform, state);
+    ui.blank();
+    ui.message(formatDoctor(report));
   } else if (action === "apps") {
     const rows = Object.values(state.apps)
       .sort((a, b) => a.slug.localeCompare(b.slug))

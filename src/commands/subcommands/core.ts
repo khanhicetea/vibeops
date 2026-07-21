@@ -1,5 +1,6 @@
 import { describeReloadPlan } from "../../domain/reload.ts";
 import { detectTemplateDrift, formatDriftWarnings } from "../../services/customization.ts";
+import { createSupportBundle, formatDoctor, runDoctor } from "../../services/doctor.ts";
 import { buildStatus, formatStatus, statusToJson } from "../../services/status.ts";
 import {
   DEFAULT_SCHEDULE_WAIT_SEC,
@@ -74,6 +75,22 @@ export function registerCoreCommands(parser: YargsBuilder, state: RunState): Yar
       "Show stack/app/runtime status",
       () => {},
       bind(state, cmdStatus),
+    )
+    .command(
+      "doctor",
+      "Validate host, network, storage, TLS, services, and stack safety",
+      () => {},
+      bind(state, cmdDoctor),
+    )
+    .command(
+      "support-bundle [output]",
+      "Create a redacted diagnostic .tar.gz archive",
+      (y: YargsBuilder) =>
+        y.positional("output", {
+          type: "string",
+          describe: "Archive path (default: under the stack root)",
+        }),
+      bind(state, cmdSupportBundle),
     )
     .command(
       "test-stack [name]",
@@ -190,6 +207,21 @@ async function cmdStatus(_argv: CliArgs, ctx: CliContext): Promise<number> {
   const report = await buildStatus(ctx.platform, state);
   if (ctx.json) ctx.log.out(statusToJson(report));
   else ctx.log.out(formatStatus(report));
+  return 0;
+}
+
+async function cmdDoctor(_argv: CliArgs, ctx: CliContext): Promise<number> {
+  const report = await runDoctor(ctx.platform, await ctx.store.load());
+  ctx.log.out(ctx.json ? JSON.stringify(report, null, 2) + "\n" : formatDoctor(report));
+  return report.ok ? 0 : 1;
+}
+
+async function cmdSupportBundle(argv: CliArgs, ctx: CliContext): Promise<number> {
+  const stamp = ctx.platform.clock.nowIso().replace(/[:.]/g, "-");
+  const output = argv.output ?? `${ctx.stackRoot}/bento-support-${stamp}.tar.gz`;
+  const path = await createSupportBundle(ctx.platform, await ctx.store.load(), output);
+  if (ctx.json) ctx.log.out(JSON.stringify({ archive: path, redacted: true }, null, 2));
+  else ctx.log.out(`Redacted support bundle: ${path}\n`);
   return 0;
 }
 
