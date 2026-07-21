@@ -1,12 +1,14 @@
 import {
   detectTemplateDrift,
   formatDriftWarnings,
+  prepareCustomTemplate,
   returnToUpstreamTemplate,
   selectCustomTemplate,
   type TemplateKind,
 } from "../../services/customization.ts";
 import { WizardUI } from "../../ui/tui.ts";
 import type { CliContext } from "../context.ts";
+import { openEditor } from "../editor.ts";
 import { handleError } from "./shared.ts";
 
 export async function sectionTemplate(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
@@ -14,7 +16,7 @@ export async function sectionTemplate(ui: WizardUI, ctx: CliContext, slug: strin
 
   while (true) {
     const action = await ui.menu("Templates", [
-      { label: "Select custom template", value: "select" },
+      { label: "Create / edit custom template", value: "select", hint: "opens your editor" },
       { label: "Return to upstream", value: "return" },
       { label: "Check upstream drift", value: "drift" },
     ]);
@@ -49,15 +51,25 @@ export async function sectionTemplate(ui: WizardUI, ctx: CliContext, slug: strin
       if (!kind) continue;
 
       if (action === "select") {
-        const source = await ui.prompt("Path to custom template source", {
-          required: true,
-        });
-        if (!source) continue;
+        const prepared = await prepareCustomTemplate(
+          ctx.platform,
+          await ctx.store.load(),
+          slug,
+          kind,
+        );
+        ui.info(
+          prepared.created
+            ? `Created from upstream: ${prepared.path}`
+            : `Editing: ${prepared.path}`,
+        );
+        await openEditor(prepared.path);
+
         const result = await ctx.store.withExclusive(async (state) => {
           const selected = await selectCustomTemplate(ctx.platform, state, {
             slug,
             kind,
-            sourcePath: source,
+            sourcePath: prepared.path,
+            copy: false,
           });
           await ctx.store.save(selected.state);
           await ctx.render.apply(selected.state, {

@@ -32,6 +32,7 @@ import {
 import {
   detectTemplateDrift,
   digestText,
+  prepareCustomTemplate,
   returnToUpstreamTemplate,
   selectCustomTemplate,
   upstreamTemplateDigest,
@@ -311,6 +312,25 @@ Deno.test("goaccess terminal plan attaches the one-shot container", async () => 
 });
 
 // --- B4 Template customization + drift --------------------------------------
+
+Deno.test("prepare custom template copies upstream once and preserves edits", async () => {
+  await withRoot(async (_root, platform) => {
+    let state = createEmptyState();
+    state = provisionApp(platform, state, {
+      slug: "demo",
+      domain: "demo.test",
+    }).state;
+
+    const prepared = await prepareCustomTemplate(platform, state, "demo", "vhost");
+    assertEquals(prepared.created, true);
+    assertEquals((await platform.fs.readText(prepared.path)).includes("{{serverNames}}"), true);
+
+    await platform.fs.writeText(prepared.path, "# operator edit\n", 0o644);
+    const reopened = await prepareCustomTemplate(platform, state, "demo", "vhost");
+    assertEquals(reopened, { path: prepared.path, created: false });
+    assertEquals(await platform.fs.readText(reopened.path), "# operator edit\n");
+  });
+});
 
 Deno.test("custom template provenance round-trip and return preserves file", async () => {
   await withRoot(async (root, platform) => {

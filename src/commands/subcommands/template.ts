@@ -1,12 +1,14 @@
 import {
   detectTemplateDrift,
   formatDriftWarnings,
+  prepareCustomTemplate,
   returnToUpstreamTemplate,
   selectCustomTemplate,
 } from "../../services/customization.ts";
 import { printTable } from "../../ui/output.ts";
 import type { CliContext } from "../context.ts";
 import type { ArgsWith, CliArgs } from "../args.ts";
+import { openEditor } from "../editor.ts";
 import { bind, noApplyOption, type RunState, wantsNoApply, type YargsBuilder } from "../shared.ts";
 
 export function registerTemplateCommands(parser: YargsBuilder, state: RunState): YargsBuilder {
@@ -15,7 +17,7 @@ export function registerTemplateCommands(parser: YargsBuilder, state: RunState):
       y
         .command(
           "select",
-          "Activate a custom vhost or pool template",
+          "Create or edit a custom vhost or pool template",
           (y2: YargsBuilder) =>
             noApplyOption(
               y2
@@ -27,8 +29,7 @@ export function registerTemplateCommands(parser: YargsBuilder, state: RunState):
                 })
                 .option("source", {
                   type: "string",
-                  demandOption: true,
-                  describe: "Path to operator-owned template source",
+                  describe: "Import an existing template instead of opening an editor",
                 })
                 .option("no-copy", {
                   type: "boolean",
@@ -66,17 +67,30 @@ export function registerTemplateCommands(parser: YargsBuilder, state: RunState):
 // --- templates (F-24) --------------------------------------------------------
 
 async function cmdTemplateSelect(
-  argv: ArgsWith<"app" | "kind" | "source">,
+  argv: ArgsWith<"app" | "kind">,
   ctx: CliContext,
 ): Promise<number> {
-  const { app: slug, kind, source } = argv;
+  const { app: slug, kind } = argv;
   const noApply = wantsNoApply(argv);
+
+  let source = argv.source;
+  let copy = argv.noCopy !== true;
+  if (!source) {
+    const prepared = await prepareCustomTemplate(ctx.platform, await ctx.store.load(), slug, kind);
+    source = prepared.path;
+    copy = false;
+    ctx.log.info(
+      `${prepared.created ? "created" : "opening"} custom ${kind} template: ${source}`,
+    );
+    await openEditor(source);
+  }
+
   const result = await ctx.store.withExclusive(async (state) => {
     const selected = await selectCustomTemplate(ctx.platform, state, {
       slug,
       kind,
       sourcePath: source,
-      copy: argv.noCopy !== true,
+      copy,
     });
     await ctx.store.save(selected.state);
     if (!noApply) {

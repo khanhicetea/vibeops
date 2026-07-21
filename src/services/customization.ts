@@ -18,6 +18,42 @@ const UPSTREAM_ASSET: Record<TemplateKind, string> = {
   pool: "php/pool.conf.tpl",
 };
 
+export type PreparedCustomTemplate = {
+  path: string;
+  created: boolean;
+};
+
+/**
+ * Return an editable custom source for an app, seeding it from upstream once.
+ * Existing custom files are never overwritten.
+ */
+export async function prepareCustomTemplate(
+  platform: Platform,
+  state: DesiredState,
+  slug: string,
+  kind: TemplateKind,
+): Promise<PreparedCustomTemplate> {
+  const app = state.apps[slug];
+  if (!app) throw notFoundError(`app not found: ${slug}`);
+
+  const current = kind === "vhost" ? app.vhostTemplate : app.poolTemplate;
+  if (current.kind === "custom") {
+    if (!(await platform.fs.exists(current.sourcePath))) {
+      throw validationError(`template source not found: ${current.sourcePath}`);
+    }
+    return { path: current.sourcePath, created: false };
+  }
+
+  const destDir = join(platform.paths.paths.customDir, "apps", slug, kind);
+  const path = join(destDir, kind === "vhost" ? "vhost.conf.tpl" : "pool.conf.tpl");
+  if (await platform.fs.exists(path)) return { path, created: false };
+
+  const content = await platform.assets.readText(UPSTREAM_ASSET[kind]);
+  await platform.fs.mkdirp(destDir, 0o755);
+  await platform.fs.writeText(path, content, 0o644);
+  return { path, created: true };
+}
+
 export type SelectTemplateInput = {
   slug: string;
   kind: TemplateKind;
