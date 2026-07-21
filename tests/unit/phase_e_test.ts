@@ -1,5 +1,5 @@
 /**
- * Phase E: TLS, PHP routing, deploy surface, permissions, status, migrations, compose inspect.
+ * Phase E: TLS, PHP routing, deploy surface, permissions, status, schema, compose inspect.
  */
 import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
@@ -29,12 +29,6 @@ import {
   resolveSslForSite,
   validateExternalTlsPaths,
 } from "../../src/services/tls.ts";
-import {
-  migrateStateDocument,
-  migrateV1toV2,
-  migrateV2toV3,
-  migrationBackupName,
-} from "../../src/schemas/migrations.ts";
 import { loadStateFromJson, parseDesiredState, stateToJson } from "../../src/schemas/state.ts";
 import { StateStore } from "../../src/services/state_store.ts";
 import { createFixedClock } from "../../src/platform/clock.ts";
@@ -665,9 +659,9 @@ Deno.test("E5 status covers roles, domains, TLS, capacity, redacts secrets", asy
   }
 });
 
-// --- E6 Schema migrations ---------------------------------------------------
+// --- E6 State schema --------------------------------------------------------
 
-Deno.test("E6 future schemaVersion rejected; load does not rewrite", async () => {
+Deno.test("E6 only current schemaVersion is accepted; load does not rewrite", async () => {
   const root = await Deno.makeTempDir({ prefix: "bento-e6-" });
   try {
     const platform = testPlatform(root);
@@ -680,45 +674,13 @@ Deno.test("E6 future schemaVersion rejected; load does not rewrite", async () =>
     await store.load();
     assertEquals(await platform.fs.readText(path), original);
 
-    const future = JSON.parse(original);
-    future.schemaVersion = 999;
-    const result = parseDesiredState(future);
-    assertEquals(result.ok, false);
+    for (const unsupportedVersion of [0, 2, 999]) {
+      const unsupported = JSON.parse(original);
+      unsupported.schemaVersion = unsupportedVersion;
+      assertEquals(parseDesiredState(unsupported).ok, false);
+    }
 
-    // migrateV1toV2 converts legacy proxy targets without mutating apps.
-    const v2 = migrateV1toV2({
-      schemaVersion: 1,
-      apps: {},
-      proxies: { edge: { upstream: "http://127.0.0.1:3000" } },
-    });
-    assertEquals(v2.schemaVersion, 2);
-    assertEquals(
-      (v2.proxies as Record<string, { upstreams: string[] }>).edge!.upstreams,
-      ["http://127.0.0.1:3000"],
-    );
-
-    const v3 = migrateV2toV3({
-      schemaVersion: 2,
-      apps: { alpha: { tls: { kind: "boot" } } },
-      proxies: { edge: { tls: { kind: "boot" } } },
-    });
-    assertEquals(
-      (v3.apps as Record<string, { tls: { kind: string } }>).alpha!.tls.kind,
-      "shared",
-    );
-    assertEquals(
-      (v3.proxies as Record<string, { tls: { kind: string } }>).edge!.tls.kind,
-      "shared",
-    );
-
-    // migrateStateDocument no-op at current version
-    const m = migrateStateDocument(JSON.parse(original));
-    assertEquals(m.migrated, false);
-    assertEquals(m.fromVersion, STATE_SCHEMA_VERSION);
-
-    assertEquals(migrationBackupName(1, "2026-07-17T12:00:00.000Z").includes("v1"), true);
-
-    // empty state round-trip preserves schema
+    // empty state round-trip preserves the single schema version
     const loaded = loadStateFromJson(stateToJson(createEmptyState()));
     assertEquals(loaded.schemaVersion, STATE_SCHEMA_VERSION);
   } finally {

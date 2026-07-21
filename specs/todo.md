@@ -206,11 +206,11 @@ Code exists in `RenderService`; close proof and edge gaps.
 - [x] Redact secrets in human and `--json` output.
 - [x] Stopped services: config ready message, not fake reload success.
 
-### E6. Schema migrations framework  **P2** · F-31
+### E6. State schema boundary  **P2** · F-31
 
-- [x] Keep rejecting future `schemaVersion` without write.
-- [x] When schema bumps: typed `migrateV1toV2` chain, atomic save, backup before migrate.
-- [x] No silent rewrite on no-op read (key order / defaults).
+- [x] Use one clean MVP `schemaVersion` with the complete current shape.
+- [x] Reject every other `schemaVersion` without writing.
+- [x] No silent rewrite on read (key order / defaults).
 
 ### E7. Interactive wizard gaps  **P1**
 
@@ -333,7 +333,7 @@ Do in this order unless blocked:
 | Redis | `src/services/redis.ts` |
 | Deploy | `src/services/deploy.ts`, `templates/helpers/*` |
 | TLS | `src/services/tls.ts`, nginx vhost templates, `certs/` |
-| Schema migrations | `src/schemas/migrations.ts`, `state_store.ts` |
+| State schema | `src/schemas/state.ts`, `state_store.ts` |
 | Cron/worker | `src/services/cron.ts`, `worker.ts` |
 | Access logs | `src/services/access_log.ts` |
 | Customization | `src/services/customization.ts` |
@@ -356,7 +356,7 @@ Do in this order unless blocked:
 | 2026-07-17 | phase B | Finished operator commands B1–B6: mysql shell/size/processlist (stdin-staged cnf, no host argv secrets); worker start/stop/restart/inspect (scoped supervisorctl); access logs enable/disable/rotate/report (nginx-only + reopen + GoAccess one-shot); template select/return/drift (provenance + preserve custom source); host maintenance run + crontab merge; uniform `--no-apply` + `apply --preview`. New modules `access_log.ts`, `customization.ts`, `maintenance.ts`; tests in `phase_b_test.ts` + cli smoke. 78 tests green. Dropped global `--root` alias for `--stack` so `mysql shell --root` works. Residual: interactive shell needs live docker; host cron register needs real crontab perms; GoAccess report needs image pull. |
 | 2026-07-17 | phase C | Closed R-01–R-10 proof + C1 compose transactional safety. Added `candidateFactory`/`afterPromoteFile` test hooks; compose `config -q` validator (soft-skip when Docker down, fail-closed on real errors); fixed memory-lock TOCTOU so concurrent exclusive acquirers serialize. New `tests/unit/phase_c_test.ts` (17 cases). 95 unit/contract tests green. Residual: integration suite still empty; file-lock under real multi-process stress not in CI. |
 | 2026-07-17 | phase D | Distribution parity F-28/F-29/F-30. Digest-addressed asset cache (`.asset-cache/<digest>/` → publish `docker/`+`helpers/`); asset resolver notes for compile `--include=templates`; version banner kept accurate; `deno task test:parity` + `smoke:compiled`; contract suite `tests/contract/parity_test.ts` (source smoke always; binary smoke/parity when `BENTO_BIN`/`dist/bento`). README CI/release notes. Residual: cross-arch binary execution still release-host only (compile:amd64/arm64 produce artifacts). |
-| 2026-07-17 | phase E | Closed thin product edges E1–E8 (except optional live nginx integration). TLS: native Nginx ACME issuers + per-site ssl snippets, external path/mode validation, boot redirect-off proof, and DNS requirements in README. PHP routing fixture for front-controller vs legacy. Deploy routes match helpers; disabled absent; interrupt reclaim + log prune. Permissions lstat walk never follows symlinks; check/dry-run/shallow/recursive documented. Status: roles, DB health soft-probe, compose files, config-ready notes, secret-redacted JSON. Schema migration chain + `loadAndMigrate` backup; no-op load does not rewrite. Compose `files` command + lexicographic overlay test. Module `tls.ts`, `schemas/migrations.ts`; tests `phase_e_test.ts` (11). 111 tests green. Residual: Phase F integration suite + system scenarios still open. |
+| 2026-07-17 | phase E | Closed thin product edges E1–E8 (except optional live nginx integration). TLS: native Nginx ACME issuers + per-site ssl snippets, external path/mode validation, boot redirect-off proof, and DNS requirements in README. PHP routing fixture for front-controller vs legacy. Deploy routes match helpers; disabled absent; interrupt reclaim + log prune. Permissions lstat walk never follows symlinks; check/dry-run/shallow/recursive documented. Status: roles, DB health soft-probe, compose files, config-ready notes, secret-redacted JSON. State schema validation and no-op reads do not rewrite. Compose `files` command + lexicographic overlay test. Module `tls.ts`; tests `phase_e_test.ts` (11). 111 tests green. Residual: Phase F integration suite + system scenarios still open. |
 | 2026-07-17 | phase F | Closed acceptance proof F1–F4. F1: `phase_f_test.ts` (env/CLI tokens, docroot/legacy, MySQL/Redis matrix, cron/worker plans, deploy prune/interrupt, backup empty/restore namespace) + CLI smoke tls/permissions/backup-restore/legacy. F2: `tests/integration/` helpers + 14 stack tests (bootstrap/compose, two-app isolation, PHP move, routing+proxy, TLS external, MySQL password stability, Redis materialize, cron/worker, deploy surface, render restore, access logs, custom templates, corrupt boundaries, compose files). F3: `scripts/system-scenarios.md` maps 14 host scenarios to automated proxies; host-run boxes residual. F4: `.github/workflows/ci.yml` (fmt/lint/check/frozen lockfile/test/integration/compile/parity/cross-compile), README Deno 2.9.3 pin + no `-A`, `deno task ci`/`test:all`. 126 unit/contract + 14 integration green. Residual: live data-plane host scenarios 1–14 checkboxes; cross-arch binary execution on matching hosts. |
 | 2026-07-17 | phase G | Locked explicit non-goals (product §8). MySQL service/volume removal remains blocked and compose down -v is refused. Later lifecycle support permits guarded app/proxy desired-state removal while retaining durable data; CLI-only app prune provides listed, literal-`delete` cleanup. |
 | 2026-07-17 | live test-stack | Added real Docker harness `bento test-stack [name]` / `--test-stack` (default `testbento`): compose up, app+db, PHP version, MySQL/Redis from PHP, HTTP boot TLS, isolation. Fixed PHP entrypoint RO crash, Redis protected-mode (private net), project-scoped networks, entrypoint bind-mount, default REDIS_PASSWORD. ACME intentionally not tested. `deno task test:stack`. 139 unit/contract green; live run PASS. |

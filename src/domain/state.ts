@@ -1,6 +1,6 @@
 /**
  * Domain model for Bento desired state.
- * This is the authoritative in-memory representation after schema validation/migration.
+ * This is the authoritative in-memory representation after schema validation.
  */
 
 import type {

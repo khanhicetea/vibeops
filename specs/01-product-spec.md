@@ -261,7 +261,7 @@ The host control plane must target Deno 2.9 and use strict TypeScript as an arch
 - persisted state, environment input, template data, JSON from subprocesses, and CLI values are runtime-validated before use;
 - core concepts such as app slug, domain, UID/GID, PHP/MySQL version, service name, absolute app path, TLS mode, queue policy, deploy status, and reload target have explicit types rather than being passed around as unstructured strings or dictionaries;
 - state variants and operational outcomes use discriminated unions with exhaustive handling;
-- state schema versions have typed migrations and reject unknown future versions without changing files;
+- persisted state uses the single MVP schema version and rejects every other version without changing files;
 - exported domain and platform APIs avoid `any`; unavoidable unsafe package boundaries are isolated in adapters and immediately validated.
 
 The project is not restricted to the Deno standard library. Maintained JSR or npm packages should be used where they materially improve CLI parsing/help, runtime schema validation, semantic-version handling, templating, terminal presentation, testing, or other non-product plumbing. Package choice must remain auditable, lockfile-pinned, compatible with direct Deno execution and `deno compile`, and free of an undeclared production install step.

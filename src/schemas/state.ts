@@ -1,6 +1,6 @@
 /**
  * Runtime schema for desired state JSON (Zod).
- * bytes -> JSON unknown -> version discriminator -> validation -> migration -> DesiredState
+ * bytes -> JSON unknown -> version discriminator -> validation -> DesiredState
  */
 
 import { z } from "zod";
@@ -41,7 +41,6 @@ import {
 } from "../domain/types.ts";
 import { STATE_SCHEMA_VERSION } from "../version.ts";
 import { stateError, validationError } from "../domain/errors.ts";
-import { migrateStateDocument } from "./migrations.ts";
 import {
   absolutePathSchema,
   appSlugSchema,
@@ -201,7 +200,7 @@ const managedMysqlSchema = z.object({
 });
 
 const desiredStateRawSchema = z.object({
-  schemaVersion: z.number().int(),
+  schemaVersion: z.literal(STATE_SCHEMA_VERSION),
   defaults: defaultsSchema,
   phpVersions: z.array(managedPhpSchema).min(1, "must not be empty"),
   mysqlVersions: z.array(managedMysqlSchema).min(1, "must not be empty"),
@@ -359,25 +358,13 @@ export function parseDesiredState(value: unknown): ParseResult<DesiredState> {
   if (typeof schemaVersion !== "number" || !Number.isInteger(schemaVersion)) {
     return err("schemaVersion must be an integer");
   }
-  if (schemaVersion > STATE_SCHEMA_VERSION) {
+  if (schemaVersion !== STATE_SCHEMA_VERSION) {
     return err(
-      `state schemaVersion ${schemaVersion} is newer than supported ${STATE_SCHEMA_VERSION}; upgrade Bento`,
+      `unsupported state schemaVersion ${schemaVersion}; expected ${STATE_SCHEMA_VERSION}`,
     );
   }
-  if (schemaVersion < 1) {
-    return err(`unsupported schemaVersion ${schemaVersion}`);
-  }
 
-  // Deterministic migration chain (pure; persistence/backup is the caller's job).
-  let migratedValue: unknown = value;
-  try {
-    const migrated = migrateStateDocument(value);
-    migratedValue = migrated.value;
-  } catch (e) {
-    return err(e instanceof Error ? e.message : String(e));
-  }
-
-  const parsed = fromZod(desiredStateRawSchema.safeParse(migratedValue));
+  const parsed = fromZod(desiredStateRawSchema.safeParse(value));
   if (!parsed.ok) return parsed;
   const raw = parsed.value;
 

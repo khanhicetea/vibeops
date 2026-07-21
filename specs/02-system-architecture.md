@@ -84,7 +84,7 @@ The TypeScript implementation must preserve one-way dependencies even though exa
 |---|---|
 | Entrypoint and command adapters | Parse scripted/interactive intent, select records, coordinate use cases, map typed errors to exit codes, and format operator output |
 | Domain/application services | State transitions, rendering plans, Compose assembly, Nginx/PHP/MySQL/Redis behavior, runtime versions, runners, deployment, and access logs |
-| Schemas and migrations | Runtime validation, schema-version dispatch, defaults, upgrades, and conversion from `unknown` into domain values |
+| Schemas | Runtime validation, current schema-version enforcement, defaults, and conversion from `unknown` into domain values |
 | Platform adapters | Atomic filesystem primitives, locks, clocks, randomness, subprocess/Docker execution, terminal access, and host inspection |
 | Shared UI/policy | Paths, environment/default policy, templating, prompts, tables, and stable operator diagnostics |
 | Immutable runtime assets | Base Compose topology, Nginx/PHP/MySQL templates, Docker build contexts, and in-container helper programs |
@@ -98,7 +98,7 @@ TypeScript compile-time types do not make JSON, environment values, CLI tokens, 
 
 Use opaque/branded value types for frequently confused primitives such as `AppSlug`, `DomainName`, `Uid`, `Gid`, `PhpVersion`, `MysqlService`, `AbsoluteAppPath`, and `UnixSocketPath`. Use discriminated unions for TLS modes, reload targets, queue policies, deploy states, command results, and recovery outcomes. Exhaustive switches must fail type checking when a new variant is not handled.
 
-Persisted state has an explicit schema version. Loading follows `bytes -> JSON unknown -> version discriminator -> schema validation -> typed migration -> current State`. Invalid or future state is reported without writing defaults over the source. Saving follows a validated domain state and an atomic writer; callers cannot write arbitrary records.
+Persisted state has one explicit MVP schema version. Loading follows `bytes -> JSON unknown -> exact version check -> schema validation -> current State`. Any other version is rejected without writing over the source; pre-MVP state is intentionally unsupported. Saving follows a validated domain state and an atomic writer; callers cannot write arbitrary records.
 
 Package APIs that return weakly typed data are isolated behind adapters. Production source must not spread `any` through the domain layer, use unchecked type assertions to accept external data, or index arbitrary state objects without validation.
 

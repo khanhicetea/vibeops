@@ -180,7 +180,7 @@ Migrating an existing stack requires one planned runner recreation. First run `b
 | `acme`     | Nginx's native `ngx_http_acme_module` automatically obtains and renews certificates using one shared `bento_acme` issuer. Configure `ACME_EMAIL` and `ACME_URL` in the stack `.env` (`ACME_URL` defaults to Let's Encrypt production). State persists under `certs/acme-state/`; no Certbot command is needed. HTTPS redirect is enabled. **DNS A/AAAA for every site domain must point at this host and public port 80 must be reachable before issuance.** |
 | `external` | Operator-managed cert+key under stack `certs/` (paths validated; private key must not be world-readable, mode `0600`). HTTPS redirect on.                                                                                                                                                                                                                                                                                                                    |
 
-TLS changes reload **Nginx only** (PHP/runners stay up). Existing `boot` state migrates to `shared` automatically.
+TLS changes reload **Nginx only** (PHP/runners stay up).
 
 Export and install the private CA's **public certificate** (never copy `ca.key`):
 
@@ -240,7 +240,7 @@ See [`specs/01-product-spec.md`](specs/01-product-spec.md) §8 and `tests/unit/p
 src/
   main.ts                 # entrypoint
   domain/                 # branded types, state model, errors, reload plans
-  schemas/                # runtime validation + migrations boundary
+  schemas/                # current-state runtime validation boundary
   platform/               # Deno adapters (fs, lock, process, assets, paths)
   services/               # app, php, mysql, render, deploy, …
   commands/               # CLI router
