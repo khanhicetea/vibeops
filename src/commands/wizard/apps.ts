@@ -285,24 +285,29 @@ async function sectionAppDatabases(
   slug: string,
 ): Promise<void> {
   while (true) {
+    const app = (await ctx.store.load()).apps[slug];
+    if (!app) return;
+
     ui.clear();
-    ui.header(`Databases: ${slug}`);
-    const action = await ui.menu("Databases", [
-      { label: "List databases", value: "list" },
+    ui.header(
+      `Databases: ${slug}`,
+      `${app.mysqlService} · ${app.databases.length} database${
+        app.databases.length === 1 ? "" : "s"
+      }`,
+    );
+    ui.table(
+      ["database", "created"],
+      app.databases.map((db) => [db.name, db.createdAt]),
+    );
+    ui.blank();
+    const action = await ui.menu("Database actions", [
       { label: "Create database", value: "create" },
       { label: "Open MySQL shell", value: "shell", hint: `as app ${slug}` },
     ]);
     if (!action) return;
 
     try {
-      if (action === "list") {
-        const app = (await ctx.store.load()).apps[slug];
-        if (!app) throw new Error(`app not found: ${slug}`);
-        ui.table(
-          ["database", "created"],
-          app.databases.map((db) => [db.name, db.createdAt]),
-        );
-      } else if (action === "create") {
+      if (action === "create") {
         const dbName = await ui.prompt("Database name", {
           required: true,
           default: slug,
@@ -355,21 +360,16 @@ async function sectionAppDomains(
     if (!app) return;
     ui.clear();
     ui.header(`Domains: ${slug}`, `${app.mainDomain} · TLS ${app.tls.kind}`);
-    const action = await ui.menu("Domains", [
-      { label: "Show domains", value: "show" },
+    ui.table(
+      ["kind", "domain"],
+      [["primary", app.mainDomain], ...app.aliases.map((alias) => ["alias", alias])],
+    );
+    ui.blank();
+    const action = await ui.menu("Domain actions", [
       { label: "Update primary domain / aliases", value: "update" },
       { label: "Configure TLS", value: "tls" },
     ]);
     if (!action) return;
-
-    if (action === "show") {
-      ui.table(
-        ["kind", "domain"],
-        [["primary", app.mainDomain], ...app.aliases.map((alias) => ["alias", alias])],
-      );
-      await ui.pause();
-      continue;
-    }
 
     try {
       if (action === "update") {

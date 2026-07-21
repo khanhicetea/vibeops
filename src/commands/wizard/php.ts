@@ -8,9 +8,32 @@ export async function sectionPhp(ui: WizardUI, ctx: CliContext): Promise<void> {
   if (!(await ensureState(ui, ctx))) return;
 
   while (true) {
-    const action = await ui.menu("PHP", [
+    const state = await ctx.store.load();
+    const versions = listPhpVersions(state);
+
+    ui.clear();
+    ui.header(
+      "Manage PHP",
+      `${versions.length} managed version${versions.length === 1 ? "" : "s"}`,
+    );
+    ui.table(
+      ["version", "FPM service", "image", "process cap"],
+      versions.map((version) => [
+        version.version,
+        version.service,
+        version.image,
+        String(version.processCap),
+      ]),
+    );
+    ui.blank();
+    const action = await ui.menu("PHP actions", [
       { label: "Add version", value: "add", hint: "creates FPM + runner + CLI" },
-      { label: "Reload FPM", value: "reload", hint: "select a managed version" },
+      {
+        label: "Reload FPM",
+        value: "reload",
+        hint: "select a managed version",
+        disabled: versions.length === 0,
+      },
     ]);
     if (!action) return;
 
@@ -29,10 +52,9 @@ export async function sectionPhp(ui: WizardUI, ctx: CliContext): Promise<void> {
         handleError(ui, err);
       }
     } else {
-      const state = await ctx.store.load();
       const selected = await ui.menu(
         "PHP version to reload",
-        listPhpVersions(state).map((version) => ({
+        versions.map((version) => ({
           label: version.version,
           value: version.service,
           hint: `${version.service} · ${version.image}`,

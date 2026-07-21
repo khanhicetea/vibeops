@@ -119,6 +119,18 @@ index index.php index.html;
     managed: true,
   });
 
+  const defaultVhostTpl = await readOrDefault(
+    platform,
+    "nginx/default-vhost.conf.tpl",
+    DEFAULT_VHOST,
+  );
+  files.push({
+    relPath: "nginx/sites/00-default.conf",
+    content: withManagedMarker(renderTemplate(defaultVhostTpl, { http3 })),
+    mode: 0o644,
+    managed: true,
+  });
+
   for (const app of Object.values(state.apps)) {
     if (app.enabled) files.push(...await generateAppVhost(platform, state, app, http3));
   }
@@ -613,6 +625,31 @@ http {
 const DEFAULT_BOOT_SSL = `ssl_certificate     /etc/nginx/certs/boot.crt;
 ssl_certificate_key /etc/nginx/certs/boot.key;
 include /etc/nginx/snippets/ssl-common.conf;
+`;
+
+const DEFAULT_VHOST = `# Reject requests whose Host/SNI does not match a configured site.
+server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  server_name _;
+
+  return 404;
+}
+
+server {
+  listen 443 ssl default_server;
+  listen [::]:443 ssl default_server;
+  {{#http3}}
+  listen 443 quic default_server;
+  listen [::]:443 quic default_server;
+  {{/http3}}
+  http2 on;
+  server_name _;
+
+  include /etc/nginx/snippets/boot-ssl.conf;
+
+  return 404;
+}
 `;
 
 const DEFAULT_APP_VHOST = `# app {{slug}}

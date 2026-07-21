@@ -4,28 +4,33 @@ import type { CliContext } from "../context.ts";
 import { handleError } from "./shared.ts";
 
 export async function sectionCron(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
-  ui.header(`Cron jobs: ${slug}`);
-
   while (true) {
-    const action = await ui.menu("Cron", [
-      { label: "List jobs", value: "list" },
+    const state = await ctx.store.load();
+    const jobs = listCronJobs(state, slug);
+
+    ui.clear();
+    ui.header(
+      `Cron jobs: ${slug}`,
+      `${jobs.length} job${jobs.length === 1 ? "" : "s"}`,
+    );
+    ui.table(
+      ["name", "schedule", "command", "enabled"],
+      jobs.map((job) => [
+        job.name,
+        job.schedule,
+        job.command.join(" "),
+        job.enabled ? "yes" : "no",
+      ]),
+    );
+    ui.blank();
+    const action = await ui.menu("Cron actions", [
       { label: "Add job", value: "add" },
-      { label: "Edit job", value: "edit" },
-      { label: "Remove job", value: "remove" },
+      { label: "Edit job", value: "edit", disabled: jobs.length === 0 },
+      { label: "Remove job", value: "remove", disabled: jobs.length === 0 },
     ]);
     if (!action) return;
 
-    if (action === "list") {
-      const state = await ctx.store.load();
-      const rows = listCronJobs(state, slug).map((j) => [
-        j.name,
-        j.schedule,
-        j.command.join(" "),
-        j.enabled ? "yes" : "no",
-      ]);
-      ui.table(["name", "schedule", "command", "enabled"], rows);
-      await ui.pause();
-    } else if (action === "add") {
+    if (action === "add") {
       const name = await ui.prompt("Job name", { required: true });
       if (!name) continue;
       const schedule = await ui.prompt("Cron schedule", {
@@ -64,13 +69,6 @@ export async function sectionCron(ui: WizardUI, ctx: CliContext, slug: string): 
       }
       await ui.pause();
     } else if (action === "edit") {
-      const state = await ctx.store.load();
-      const jobs = listCronJobs(state, slug);
-      if (jobs.length === 0) {
-        ui.info("No cron jobs");
-        await ui.pause();
-        continue;
-      }
       const picked = await ui.menu(
         "Edit cron job",
         jobs.map((j) => ({
@@ -127,13 +125,6 @@ export async function sectionCron(ui: WizardUI, ctx: CliContext, slug: string): 
       }
       await ui.pause();
     } else if (action === "remove") {
-      const state = await ctx.store.load();
-      const jobs = listCronJobs(state, slug);
-      if (jobs.length === 0) {
-        ui.info("No cron jobs");
-        await ui.pause();
-        continue;
-      }
       const picked = await ui.menu(
         "Remove cron job",
         jobs.map((j) => ({

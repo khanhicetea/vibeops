@@ -49,6 +49,12 @@ Deno.test("init + render produces startable topology files", async () => {
     assertEquals(nginxMain.includes("keys_zone=app_cache:10m max_size=1g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_assets:20m max_size=2g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_cache:10m max_size=1g"), true);
+    const defaultVhost = await platform.fs.readText(
+      join(root, "generated/nginx/sites/00-default.conf"),
+    );
+    assertEquals(defaultVhost.includes("listen 80 default_server;"), true);
+    assertEquals(defaultVhost.includes("listen 443 ssl default_server;"), true);
+    assertEquals(defaultVhost.match(/return 404;/g)?.length, 2);
     // PHP and MySQL fragments
     assertEquals(
       await platform.fs.exists(join(root, "generated/compose/docker-compose.php-php85.yml")),

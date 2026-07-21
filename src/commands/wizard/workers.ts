@@ -13,31 +13,37 @@ import type { CliContext } from "../context.ts";
 import { handleError } from "./shared.ts";
 
 export async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string): Promise<void> {
-  ui.header(`Workers: ${slug}`);
-
   while (true) {
-    const action = await ui.menu("Workers", [
-      { label: "List workers", value: "list" },
+    const state = await ctx.store.load();
+    const workers = listWorkers(state, slug);
+    const noWorkers = workers.length === 0;
+
+    ui.clear();
+    ui.header(
+      `Workers: ${slug}`,
+      `${workers.length} worker${workers.length === 1 ? "" : "s"}`,
+    );
+    ui.table(
+      ["name", "command", "enabled"],
+      workers.map((worker) => [
+        worker.name,
+        worker.command.join(" "),
+        worker.enabled ? "yes" : "no",
+      ]),
+    );
+    ui.blank();
+    const action = await ui.menu("Worker actions", [
       { label: "Add worker", value: "add" },
-      { label: "Remove worker", value: "remove" },
-      { label: "Start worker", value: "start" },
-      { label: "Stop worker", value: "stop" },
-      { label: "Restart worker", value: "restart" },
-      { label: "Signal worker", value: "signal" },
-      { label: "Inspect worker", value: "inspect" },
+      { label: "Remove worker", value: "remove", disabled: noWorkers },
+      { label: "Start worker", value: "start", disabled: noWorkers },
+      { label: "Stop worker", value: "stop", disabled: noWorkers },
+      { label: "Restart worker", value: "restart", disabled: noWorkers },
+      { label: "Signal worker", value: "signal", disabled: noWorkers },
+      { label: "Inspect worker", value: "inspect", disabled: noWorkers },
     ]);
     if (!action) return;
 
-    if (action === "list") {
-      const state = await ctx.store.load();
-      const rows = listWorkers(state, slug).map((w) => [
-        w.name,
-        w.command.join(" "),
-        w.enabled ? "yes" : "no",
-      ]);
-      ui.table(["name", "command", "enabled"], rows);
-      await ui.pause();
-    } else if (action === "add") {
+    if (action === "add") {
       const name = await ui.prompt("Worker name", { required: true });
       if (!name) continue;
       const cmdRaw = await ui.prompt("Command (space-separated argv)", {
@@ -63,13 +69,6 @@ export async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string)
       }
       await ui.pause();
     } else if (action === "remove") {
-      const state = await ctx.store.load();
-      const workers = listWorkers(state, slug);
-      if (workers.length === 0) {
-        ui.info(`No workers for ${slug}`);
-        await ui.pause();
-        continue;
-      }
       const picked = await ui.menu(
         "Remove worker",
         workers.map((w) => ({
@@ -100,13 +99,6 @@ export async function sectionWorker(ui: WizardUI, ctx: CliContext, slug: string)
       action === "start" || action === "stop" || action === "restart" ||
       action === "signal" || action === "inspect"
     ) {
-      const state = await ctx.store.load();
-      const workers = listWorkers(state, slug);
-      if (workers.length === 0) {
-        ui.info(`No workers for ${slug}`);
-        await ui.pause();
-        continue;
-      }
       const picked = await ui.menu(
         `${action} worker`,
         workers.map((w) => ({

@@ -2,6 +2,7 @@ import { basename } from "@std/path";
 import {
   addMysqlVersion,
   buildMysqlShellPlan,
+  listMysqlVersions,
   listRecentBackupFiles,
   queryDatabaseSizes,
   resolveMysqlServices,
@@ -18,17 +19,29 @@ export async function sectionMysql(ui: WizardUI, ctx: CliContext): Promise<void>
   if (!(await ensureState(ui, ctx))) return;
 
   while (true) {
-    const action = await ui.menu("MySQL", [
-      { label: "Open shell", value: "shell", hint: "root shell" },
+    const state = await ctx.store.load();
+    const versions = listMysqlVersions(state);
+
+    ui.clear();
+    ui.header(
+      "Manage MySQL",
+      `${versions.length} managed version${versions.length === 1 ? "" : "s"}`,
+    );
+    ui.table(
+      ["version", "service", "image"],
+      versions.map((version) => [version.version, version.service, version.image]),
+    );
+    ui.blank();
+    const action = await ui.menu("MySQL actions", [
+      { label: "Open shell", value: "shell", hint: "root shell", disabled: versions.length === 0 },
       { label: "Add version", value: "add", hint: "new MySQL service" },
-      { label: "Database sizes", value: "size" },
+      { label: "Database sizes", value: "size", disabled: versions.length === 0 },
       { label: "Backup", value: "backup", hint: "database · app · all" },
       { label: "Restore", value: "restore", hint: "recent backup or file" },
     ]);
     if (!action) return;
 
     try {
-      const state = await ctx.store.load();
       if (action === "add") {
         const version = await ui.prompt("MySQL version (e.g. 8.4)", { required: true });
         if (!version) continue;
