@@ -366,7 +366,10 @@ Deno.test("E2 front-controller rejects non-index PHP; legacy allows scripts", as
     const legacy = textContent(files.find((f) => f.relPath === "nginx/sites/legacy.conf")!.content);
 
     // Front-controller: only index.php is executable; other .php return 404
-    assertEquals(front.includes("if ($uri !~ ^/index\\.php$) { return 404; }"), true);
+    assertEquals(
+      front.includes("\n    if ($uri !~ ^/index\\.php$) {\n      return 404;\n    }\n\n"),
+      true,
+    );
     assertEquals(front.includes("try_files $uri $uri/ /index.php?$query_string;"), true);
     // Must not use try_files $uri =404 for php (that would allow direct scripts)
     assertEquals(front.includes("try_files $uri =404;"), false);

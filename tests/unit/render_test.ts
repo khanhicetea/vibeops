@@ -49,6 +49,25 @@ Deno.test("init + render produces startable topology files", async () => {
     assertEquals(nginxMain.includes("keys_zone=app_cache:10m max_size=1g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_assets:20m max_size=2g"), true);
     assertEquals(nginxMain.includes("keys_zone=proxy_cache:10m max_size=1g"), true);
+    assertEquals(nginxMain.includes("include /etc/nginx/custom/global.conf;"), true);
+    assertEquals(
+      nginxMain.indexOf("include /etc/nginx/custom/http-before-sites.conf;") <
+        nginxMain.indexOf("include /etc/nginx/sites/*.conf;"),
+      true,
+    );
+    assertEquals(
+      nginxMain.indexOf("include /etc/nginx/sites/*.conf;") <
+        nginxMain.indexOf("include /etc/nginx/custom/http-after-sites.conf;"),
+      true,
+    );
+    for (const name of ["global.conf", "http-before-sites.conf", "http-after-sites.conf"]) {
+      assertEquals(await platform.fs.readText(join(root, "custom/nginx", name)), "");
+    }
+    const composeBase = await platform.fs.readText(base);
+    assertEquals(composeBase.includes("./custom/nginx:/etc/nginx/custom:ro"), true);
+    assertEquals(composeBase.includes("nofile:"), true);
+    assertEquals(composeBase.includes("soft: 65535"), true);
+    assertEquals(composeBase.includes("hard: 65535"), true);
     const defaultVhost = await platform.fs.readText(
       join(root, "generated/nginx/sites/00-default.conf"),
     );
@@ -64,6 +83,12 @@ Deno.test("init + render produces startable topology files", async () => {
       await platform.fs.exists(join(root, "generated/compose/docker-compose.mysql84.yml")),
       true,
     );
+
+    const userGlobal = join(root, "custom/nginx/global.conf");
+    await platform.fs.writeText(userGlobal, "worker_rlimit_nofile 8192;\n", 0o640);
+    await render.apply(state, { renderOnly: true, skipValidate: true });
+    assertEquals(await platform.fs.readText(userGlobal), "worker_rlimit_nofile 8192;\n");
+    assertEquals((await platform.fs.stat(userGlobal)).mode & 0o777, 0o640);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

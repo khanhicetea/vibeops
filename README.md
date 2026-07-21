@@ -255,6 +255,16 @@ specs/                    # product specifications
 .github/workflows/ci.yml  # release gates
 ```
 
+## Nginx sideload configuration
+
+On the first render, Bento creates three empty operator-owned files and does not modify them on later renders:
+
+- `custom/nginx/global.conf` — Nginx global/main context;
+- `custom/nginx/http-before-sites.conf` — inside `http`, before generated sites;
+- `custom/nginx/http-after-sites.conf` — inside `http`, after generated sites.
+
+Edit these files directly, then run `bento apply` to validate and reload Nginx. They are mounted read-only into the container; directives must be valid in the context where each file is included.
+
 ## Security notes
 
 - Only Nginx is public in the base topology.

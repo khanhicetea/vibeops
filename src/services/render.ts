@@ -93,6 +93,12 @@ type RenderJournal = {
 const MANAGED_MARKER_HASH = "# bento-managed: true\n";
 const MANAGED_MARKER_SEMI = "; bento-managed: true\n";
 
+const NGINX_SIDELOAD_FILES = [
+  "global.conf",
+  "http-before-sites.conf",
+  "http-after-sites.conf",
+] as const;
+
 export type ManagedMarkerStyle = "hash" | "semicolon" | "none";
 
 export function withManagedMarker(
@@ -151,6 +157,10 @@ export class RenderService {
       for (const app of Object.values(state.apps)) {
         await ensureAppLogDirs(this.platform, app);
       }
+      // These files belong to the operator: create them once, then never render,
+      // replace, or remove them during reconciliation.
+      await ensureNginxSideloadFiles(this.platform);
+
       // Materialize docker build contexts + helpers for Compose (outside generated/)
       await materializeDockerAssets(
         this.platform,
@@ -482,6 +492,17 @@ export class RenderService {
 
     await walk(liveRoot, "");
     return result.sort();
+  }
+}
+
+async function ensureNginxSideloadFiles(platform: Platform): Promise<void> {
+  const dir = join(platform.paths.paths.root, "custom", "nginx");
+  await platform.fs.mkdirp(dir, 0o755);
+  for (const name of NGINX_SIDELOAD_FILES) {
+    const path = join(dir, name);
+    if (!(await platform.fs.exists(path))) {
+      await platform.fs.atomicWriteText(path, "", 0o644);
+    }
   }
 }
 

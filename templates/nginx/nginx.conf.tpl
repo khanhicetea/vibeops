@@ -4,6 +4,9 @@ worker_processes auto;
 error_log /var/log/nginx/error.log warn;
 pid /var/run/nginx.pid;
 
+# Operator-managed directives in the global (main) context.
+include /etc/nginx/custom/global.conf;
+
 events {
   worker_connections {{workerConnections}};
   multi_accept on;
@@ -40,5 +43,11 @@ http {
   # zstd enabled when modules present in image
   # zstd on;
 
+  # Operator-managed HTTP directives loaded before generated sites.
+  include /etc/nginx/custom/http-before-sites.conf;
+
   include /etc/nginx/sites/*.conf;
+
+  # Operator-managed HTTP directives loaded after generated sites.
+  include /etc/nginx/custom/http-after-sites.conf;
 }

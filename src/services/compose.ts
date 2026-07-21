@@ -175,8 +175,15 @@ function renderBaseCompose(): string {
         },
         network_mode: "host",
         restart: "unless-stopped",
+        ulimits: {
+          nofile: {
+            soft: 65535,
+            hard: 65535,
+          },
+        },
         volumes: [
           "./generated/nginx/nginx.conf:/etc/nginx/nginx.conf:ro",
+          "./custom/nginx:/etc/nginx/custom:ro",
           "./generated/nginx/sites:/etc/nginx/sites:ro",
           // Generated snippets fully replace image defaults (boot-ssl, app-common, per-site ssl).
           "./generated/nginx/snippets:/etc/nginx/snippets:ro",

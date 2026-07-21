@@ -9,6 +9,10 @@ services:
     image: bento/nginx:latest
     network_mode: host
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
   redis:
     image: redis:7-alpine
     restart: unless-stopped

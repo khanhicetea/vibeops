@@ -590,6 +590,9 @@ worker_processes auto;
 error_log /var/log/nginx/error.log warn;
 pid /var/run/nginx.pid;
 
+# Operator-managed directives in the global (main) context.
+include /etc/nginx/custom/global.conf;
+
 events {
   worker_connections {{workerConnections}};
   multi_accept on;
@@ -618,7 +621,13 @@ http {
   gzip on;
   gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
 
+  # Operator-managed HTTP directives loaded before generated sites.
+  include /etc/nginx/custom/http-before-sites.conf;
+
   include /etc/nginx/sites/*.conf;
+
+  # Operator-managed HTTP directives loaded after generated sites.
+  include /etc/nginx/custom/http-after-sites.conf;
 }
 `;
 
@@ -693,7 +702,11 @@ server {
     try_files $uri $uri/ /index.php?$query_string;
   }
   location ~ \\.php$ {
-    if ($uri !~ ^/index\\.php$) { return 404; }
+
+    if ($uri !~ ^/index\\.php$) {
+      return 404;
+    }
+
     include fastcgi_params;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     # Cache successful FastCGI responses for one day.
@@ -767,7 +780,11 @@ server {
     try_files $uri $uri/ /index.php?$query_string;
   }
   location ~ \\.php$ {
-    if ($uri !~ ^/index\\.php$) { return 404; }
+
+    if ($uri !~ ^/index\\.php$) {
+      return 404;
+    }
+
     include fastcgi_params;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     # Cache successful FastCGI responses for one day.
