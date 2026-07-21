@@ -155,10 +155,32 @@ export async function composeArgs(
   return args;
 }
 
+type ComposeLogging = {
+  driver: "local";
+  options: {
+    "max-size": string;
+    "max-file": string;
+  };
+};
+
+function composeLogging(): ComposeLogging {
+  return {
+    driver: "local",
+    options: {
+      "max-size": "10m",
+      "max-file": "3",
+    },
+  };
+}
+
 function renderBaseCompose(): string {
+  // Keep the extension and its aliases in the same document: YAML anchors do not
+  // cross Compose's -f file boundaries, so each generated fragment declares it.
+  const logging = composeLogging();
   // Project name + private network are scoped via COMPOSE_PROJECT_NAME (stack .env)
   // so a disposable test stack (e.g. testbento) does not collide with production.
   const doc = {
+    "x-log-common": logging,
     name: "${COMPOSE_PROJECT_NAME:-bento}",
     networks: {
       private: {
@@ -175,6 +197,7 @@ function renderBaseCompose(): string {
         },
         network_mode: "host",
         restart: "unless-stopped",
+        logging,
         ulimits: {
           nofile: {
             soft: 65535,
@@ -198,6 +221,7 @@ function renderBaseCompose(): string {
       redis: {
         image: "redis:7-alpine",
         restart: "unless-stopped",
+        logging,
         networks: ["private"],
         env_file: [".env"],
         // Private network only (no published ports). When REDIS_PASSWORD is set, require it;
@@ -219,6 +243,7 @@ function renderBaseCompose(): string {
 }
 
 function renderPhpFragment(service: string, image: string, version: string): string {
+  const logging = composeLogging();
   const build = {
     context: "./docker/php",
     dockerfile: "Dockerfile",
@@ -227,11 +252,13 @@ function renderPhpFragment(service: string, image: string, version: string): str
     },
   };
   const doc = {
+    "x-log-common": logging,
     services: {
       [service]: {
         image,
         build,
         restart: "unless-stopped",
+        logging,
         networks: ["private"],
         user: "root",
         // FPM's slowlog implementation ptraces a slow worker to capture its PHP backtrace.
@@ -256,6 +283,7 @@ function renderPhpFragment(service: string, image: string, version: string): str
         image,
         // same image as FPM; do not rebuild twice — compose build reuses image tag
         restart: "unless-stopped",
+        logging,
         networks: ["private"],
         user: "root",
         // s6-overlay's /init is PID 1; its supervised CMD owns the dynamic app
@@ -286,6 +314,7 @@ function renderPhpFragment(service: string, image: string, version: string): str
       [`${service}-cli`]: {
         image,
         profiles: ["cli"],
+        logging,
         networks: ["private"],
         user: "root",
         entrypoint: ["bento-php-entrypoint"],
@@ -307,11 +336,14 @@ function renderPhpFragment(service: string, image: string, version: string): str
 }
 
 function renderMysqlFragment(service: string, image: string, volume: string): string {
+  const logging = composeLogging();
   const doc = {
+    "x-log-common": logging,
     services: {
       [service]: {
         image,
         restart: "unless-stopped",
+        logging,
         networks: ["private"],
         // Password comes from stack .env (MYSQL_ROOT_PASSWORD); never on host argv.
         environment: {

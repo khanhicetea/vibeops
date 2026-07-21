@@ -158,7 +158,7 @@ Export verifies the named volumes, stops only running MySQL/Redis services for a
 
 Runner containers use **s6-overlay 3.2.3.2** as PID 1. Applying cron or worker changes reconciles generated service directories into the live s6 scan tree; adding/removing a scheduler or worker does not restart the runner container or sibling services. Crontab-only changes send USR2 only to `scheduler-<app>`.
 
-Each PHP runner also has an s6-supervised root maintenance scheduler. Supercronic runs per-app logrotate entries hourly, rotates app and captured worker logs at 10 MiB, and keeps two rotations. This is separate from each app's unprivileged crontab because PHP-FPM slow logs and captured worker logs can be root-owned. Rotation uses `copytruncate`, so Supercronic, PHP-FPM, workers, and application processes do not need reopen signals or restarts (with the usual small copy/truncate race window).
+Every Compose service uses Docker's `local` logging driver with a shared 10 MiB / 3-file rotation policy. Each PHP runner also has an s6-supervised root maintenance scheduler. Supercronic runs per-app logrotate entries hourly, rotates app and captured worker logs at 10 MiB, and keeps two rotations. This is separate from each app's unprivileged crontab because PHP-FPM slow logs and captured worker logs can be root-owned. Rotation uses `copytruncate`, so Supercronic, PHP-FPM, workers, and application processes do not need reopen signals or restarts (with the usual small copy/truncate race window).
 
 Scoped controls are available through `worker start|stop|restart|signal|inspect`. For diagnostics, the same service can be addressed inside its runner, for example:
 

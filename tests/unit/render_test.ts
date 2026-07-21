@@ -68,6 +68,11 @@ Deno.test("init + render produces startable topology files", async () => {
     assertEquals(composeBase.includes("nofile:"), true);
     assertEquals(composeBase.includes("soft: 65535"), true);
     assertEquals(composeBase.includes("hard: 65535"), true);
+    assertEquals(composeBase.includes("x-log-common:"), true);
+    assertEquals(composeBase.includes("driver: local"), true);
+    assertEquals(composeBase.includes("max-size: 10m"), true);
+    assertEquals(composeBase.includes("max-file: '3'"), true);
+    assertEquals(composeBase.match(/logging: \*/g)?.length, 2);
     const defaultVhost = await platform.fs.readText(
       join(root, "generated/nginx/sites/00-default.conf"),
     );
@@ -83,6 +88,16 @@ Deno.test("init + render produces startable topology files", async () => {
       await platform.fs.exists(join(root, "generated/compose/docker-compose.mysql84.yml")),
       true,
     );
+    const phpCompose = await platform.fs.readText(
+      join(root, "generated/compose/docker-compose.php-php85.yml"),
+    );
+    const mysqlCompose = await platform.fs.readText(
+      join(root, "generated/compose/docker-compose.mysql84.yml"),
+    );
+    assertEquals(phpCompose.includes("x-log-common:"), true);
+    assertEquals(phpCompose.match(/logging: \*/g)?.length, 3);
+    assertEquals(mysqlCompose.includes("x-log-common:"), true);
+    assertEquals(mysqlCompose.match(/logging: \*/g)?.length, 1);
 
     const userGlobal = join(root, "custom/nginx/global.conf");
     await platform.fs.writeText(userGlobal, "worker_rlimit_nofile 8192;\n", 0o640);

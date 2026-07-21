@@ -1,4 +1,9 @@
 # Reference base topology (generated from state at render time)
+x-log-common: &log-common
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
 name: bento
 networks:
   private:
@@ -9,6 +14,7 @@ services:
     image: bento/nginx:latest
     network_mode: host
     restart: unless-stopped
+    logging: *log-common
     ulimits:
       nofile:
         soft: 65535
@@ -16,6 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *log-common
     networks: [private]
     volumes:
       - redis-data:/data
