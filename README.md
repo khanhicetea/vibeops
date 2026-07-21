@@ -131,7 +131,27 @@ Apps share containers by PHP version and isolate through UID/GID, pools, filesys
 | Access logs  | `logs access enable\|disable\|rotate\|report --app <app>`; add `--attach` for the interactive GoAccess terminal (TUI: Applications → Access logs)                                                                                                              |
 | Exec / shell | `app shell <app>`, `exec <app> [-- <cmd>]` — ephemeral PHP CLI as app UID (TUI: Applications → Open CLI shell)                                                                                                                                                 |
 | Compose      | `compose files`, `compose -- <args>` (refuses `down -v`)                                                                                                                                                                                                       |
+| Portability  | `stack export <directory>`, `stack import <directory>` — CLI-only full stack + raw MySQL/Redis volume transfer                                                                                                                                                 |
 | Safety       | `permissions check\|repair [--shallow\|--recursive] [--dry-run]`, `backup`, `restore`                                                                                                                                                                          |
+
+### Full stack export and import
+
+The stack transfer commands are intentionally CLI-only. The stack identity comes from the global `--stack` path and `COMPOSE_PROJECT_NAME` in the stack `.env`; there is no separate stack-name positional argument.
+
+```bash
+# Source host: destination must be empty and outside the stack root.
+bento --stack /var/lib/bento stack export /srv/exports/bento-2026-07-21
+
+# Produces exactly:
+#   stack.tar.gz   (state, homes, credentials, certificates, config, logs, backups)
+#   mysql.tar.gz   (all managed raw MySQL volumes)
+#   redis.tar.gz   (the raw Redis volume)
+
+# Destination host: --stack must be an empty/nonexistent destination root.
+bento --stack /var/lib/bento stack import /srv/exports/bento-2026-07-21
+```
+
+Export verifies the named volumes, stops only running MySQL/Redis services for a consistent raw copy, and restarts those services afterward. Ephemeral `runtime/`, `locks/`, and `.asset-cache/` are omitted. Import rejects existing destination volumes, validates and restores the archives, re-renders configuration, and runs Compose with `up -d --build`. Use matching CPU architecture and database image versions. The archives contain secrets and private keys; encrypt and protect them when moving off-host.
 
 ### Runner service supervision
 

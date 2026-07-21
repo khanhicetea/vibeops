@@ -9,6 +9,7 @@ type StringArgName =
   | "cmd"
   | "confirm"
   | "database"
+  | "directory"
   | "docroot"
   | "domain"
   | "file"

@@ -25,6 +25,7 @@ import { registerMysqlCommands } from "./subcommands/mysql.ts";
 import { registerPermissionsCommands } from "./subcommands/permissions.ts";
 import { registerPhpCommands } from "./subcommands/php.ts";
 import { registerProxyCommands } from "./subcommands/proxy.ts";
+import { registerStackCommands } from "./subcommands/stack.ts";
 import { registerTemplateCommands } from "./subcommands/template.ts";
 import { registerTlsCommands } from "./subcommands/tls.ts";
 import { registerWorkerCommands } from "./subcommands/worker.ts";
@@ -94,6 +95,7 @@ function buildParser(state: RunState) {
   parser = registerComposeCommand(parser, state);
   parser = registerPermissionsCommands(parser, state);
   parser = registerBackupCommands(parser, state);
+  parser = registerStackCommands(parser, state);
   parser = registerTlsCommands(parser, state);
   parser = registerLogCommands(parser, state);
   parser = registerTemplateCommands(parser, state);
