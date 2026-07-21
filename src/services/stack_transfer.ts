@@ -6,8 +6,7 @@ import { composeArgs } from "./compose.ts";
 import { loadStackEnv } from "./stack_env.ts";
 
 export const STACK_ARCHIVE = "stack.tar.gz";
-export const MYSQL_ARCHIVE = "mysql.tar.gz";
-export const REDIS_ARCHIVE = "redis.tar.gz";
+export const REDIS_ARCHIVE = "redis-data.tar.gz";
 const VOLUME_HELPER_IMAGE = "ubuntu:24.04";
 
 export type StackExportResult = {
@@ -26,6 +25,13 @@ export function composeProjectName(env: Record<string, string>): string {
     throw validationError(`invalid COMPOSE_PROJECT_NAME for volume transfer: ${project}`);
   }
   return project;
+}
+
+export function volumeArchiveName(logicalVolume: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(logicalVolume)) {
+    throw validationError(`invalid Docker volume name for transfer: ${logicalVolume}`);
+  }
+  return `${logicalVolume}.tar.gz`;
 }
 
 export function stackVolumeNames(
@@ -47,8 +53,8 @@ export function stackVolumeNames(
 
 /**
  * Export the bind-mounted stack and raw, cleanly-stopped database volumes.
- * The destination must be outside the stack and empty so the result is exactly
- * the three documented archives.
+ * The destination must be outside the stack and empty. Each durable volume gets
+ * its own archive named after its logical Compose volume.
  */
 export async function exportStack(
   platform: Platform,
@@ -78,17 +84,23 @@ export async function exportStack(
   const ps = await runCompose(platform, state, ["ps", "--services", "--filter", "status=running"]);
   const running = new Set(ps.stdout.split(/\r?\n/).map((v) => v.trim()).filter(Boolean));
   const restart = dataServices.filter((service) => running.has(service));
-  const partials = [STACK_ARCHIVE, MYSQL_ARCHIVE, REDIS_ARCHIVE].map((name) =>
-    join(output, `.${name}.partial`)
-  );
+  const archiveNames = [
+    STACK_ARCHIVE,
+    ...volumes.mysql.map((volume) => volumeArchiveName(volume.logical)),
+    REDIS_ARCHIVE,
+  ];
+  const partials = archiveNames.map((name) => join(output, `.${name}.partial`));
 
   let primaryError: unknown;
   let restartFailure: unknown;
   try {
     if (restart.length > 0) await runCompose(platform, state, ["stop", ...restart]);
 
-    await archiveVolumes(platform, output, `.${MYSQL_ARCHIVE}.partial`, volumes.mysql);
-    await archiveVolumes(platform, output, `.${REDIS_ARCHIVE}.partial`, [volumes.redis]);
+    for (const volume of volumes.mysql) {
+      const archive = volumeArchiveName(volume.logical);
+      await archiveVolume(platform, output, `.${archive}.partial`, volume);
+    }
+    await archiveVolume(platform, output, `.${REDIS_ARCHIVE}.partial`, volumes.redis);
     await requireCommand(
       platform,
       [
@@ -108,23 +120,15 @@ export async function exportStack(
       "failed to archive stack directory",
     );
 
-    for (
-      const [partial, finalName] of [
-        [partials[0]!, STACK_ARCHIVE],
-        [partials[1]!, MYSQL_ARCHIVE],
-        [partials[2]!, REDIS_ARCHIVE],
-      ] as const
-    ) {
-      await platform.fs.rename(partial, join(output, finalName));
+    for (const [index, finalName] of archiveNames.entries()) {
+      await platform.fs.rename(partials[index]!, join(output, finalName));
     }
   } catch (err) {
     primaryError = err;
     for (
       const name of [
         ...partials,
-        join(output, STACK_ARCHIVE),
-        join(output, MYSQL_ARCHIVE),
-        join(output, REDIS_ARCHIVE),
+        ...archiveNames.map((archive) => join(output, archive)),
       ]
     ) {
       if (await platform.fs.exists(name)) await platform.fs.remove(name);
@@ -143,7 +147,7 @@ export async function exportStack(
 
   return {
     directory: output,
-    files: [STACK_ARCHIVE, MYSQL_ARCHIVE, REDIS_ARCHIVE].map((name) => join(output, name)),
+    files: archiveNames.map((name) => join(output, name)),
   };
 }
 
@@ -156,13 +160,9 @@ export async function importStack(
   const root = resolve(platform.paths.paths.root);
   assertSeparatePath(root, input, "import directory must be outside the destination stack root");
 
-  for (const name of [STACK_ARCHIVE, MYSQL_ARCHIVE, REDIS_ARCHIVE]) {
-    const path = join(input, name);
-    if (!(await platform.fs.exists(path)) || !(await platform.fs.stat(path)).isFile) {
-      throw validationError(`import archive is missing: ${path}`);
-    }
-    await validateTarArchive(platform, path);
-  }
+  const stackArchive = join(input, STACK_ARCHIVE);
+  await requireArchiveFile(platform, stackArchive);
+  await validateTarArchive(platform, stackArchive);
   await ensureEmptyDirectory(platform, root);
   await requireCommand(platform, ["docker", "info"], "Docker is unavailable");
 
@@ -174,7 +174,7 @@ export async function importStack(
       "--acls",
       "--numeric-owner",
       "-xzpf",
-      join(input, STACK_ARCHIVE),
+      stackArchive,
       "-C",
       root,
     ],
@@ -187,8 +187,21 @@ export async function importStack(
   const project = composeProjectName(await loadStackEnv(platform));
   const volumes = stackVolumeNames(state, project);
   const allVolumes = [...volumes.mysql, volumes.redis];
-  const created: string[] = [];
+  const volumeArchives = allVolumes.map((volume) => ({
+    volume,
+    archive: volumeArchiveName(volume.logical),
+  }));
+  // Redis has a stable explicit filename; this assertion protects format drift.
+  if (volumeArchiveName(volumes.redis.logical) !== REDIS_ARCHIVE) {
+    throw validationError("Redis volume archive naming is inconsistent");
+  }
+  for (const entry of volumeArchives) {
+    const archive = join(input, entry.archive);
+    await requireArchiveFile(platform, archive);
+    await validateTarArchive(platform, archive);
+  }
 
+  const created: string[] = [];
   try {
     for (const volume of allVolumes) {
       const inspect = await platform.process.run(["docker", "volume", "inspect", volume.docker]);
@@ -206,8 +219,9 @@ export async function importStack(
       created.push(volume.docker);
     }
 
-    await restoreVolumes(platform, input, MYSQL_ARCHIVE, volumes.mysql);
-    await restoreVolumes(platform, input, REDIS_ARCHIVE, [volumes.redis]);
+    for (const entry of volumeArchives) {
+      await restoreVolume(platform, input, entry.archive, entry.volume);
+    }
 
     // Regenerate with the importing Bento version, then build/start the complete chain.
     const { RenderService } = await import("./render.ts");
@@ -224,17 +238,18 @@ export async function importStack(
   return { directory: root, volumes: allVolumes.map((v) => v.docker) };
 }
 
-async function archiveVolumes(
+async function archiveVolume(
   platform: Platform,
   output: string,
   filename: string,
-  volumes: Array<{ logical: string; docker: string }>,
+  volume: { logical: string; docker: string },
 ): Promise<void> {
-  const command = ["docker", "run", "--rm"];
-  for (const volume of volumes) {
-    command.push("-v", `${volume.docker}:/volumes/${volume.logical}:ro`);
-  }
-  command.push(
+  const command = [
+    "docker",
+    "run",
+    "--rm",
+    "-v",
+    `${volume.docker}:/volume:ro`,
     "-v",
     `${output}:/backup`,
     VOLUME_HELPER_IMAGE,
@@ -245,21 +260,24 @@ async function archiveVolumes(
     "-czpf",
     `/backup/${filename}`,
     "-C",
-    "/volumes",
+    "/volume",
     ".",
-  );
-  await requireCommand(platform, command, `failed to archive Docker volumes into ${filename}`);
+  ];
+  await requireCommand(platform, command, `failed to archive Docker volume ${volume.docker}`);
 }
 
-async function restoreVolumes(
+async function restoreVolume(
   platform: Platform,
   input: string,
   filename: string,
-  volumes: Array<{ logical: string; docker: string }>,
+  volume: { logical: string; docker: string },
 ): Promise<void> {
-  const command = ["docker", "run", "--rm"];
-  for (const volume of volumes) command.push("-v", `${volume.docker}:/volumes/${volume.logical}`);
-  command.push(
+  const command = [
+    "docker",
+    "run",
+    "--rm",
+    "-v",
+    `${volume.docker}:/volume`,
     "-v",
     `${input}:/backup:ro`,
     VOLUME_HELPER_IMAGE,
@@ -270,9 +288,15 @@ async function restoreVolumes(
     "-xzpf",
     `/backup/${filename}`,
     "-C",
-    "/volumes",
-  );
-  await requireCommand(platform, command, `failed to restore Docker volumes from ${filename}`);
+    "/volume",
+  ];
+  await requireCommand(platform, command, `failed to restore Docker volume ${volume.docker}`);
+}
+
+async function requireArchiveFile(platform: Platform, path: string): Promise<void> {
+  if (!(await platform.fs.exists(path)) || !(await platform.fs.stat(path)).isFile) {
+    throw validationError(`import archive is missing: ${path}`);
+  }
 }
 
 async function validateTarArchive(platform: Platform, path: string): Promise<void> {

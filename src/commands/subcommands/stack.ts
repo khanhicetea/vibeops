@@ -11,7 +11,7 @@ export function registerStackCommands(parser: YargsBuilder, state: RunState): Ya
       y
         .command(
           "export <directory>",
-          "Export stack.tar.gz, mysql.tar.gz, and redis.tar.gz",
+          "Export stack.tar.gz and one archive per MySQL/Redis volume",
           (y2: YargsBuilder) =>
             y2.positional("directory", {
               type: "string",
@@ -22,12 +22,12 @@ export function registerStackCommands(parser: YargsBuilder, state: RunState): Ya
         )
         .command(
           "import <directory>",
-          "Import the three archives into an empty stack root and start it",
+          "Import stack and volume archives into an empty stack root and start it",
           (y2: YargsBuilder) =>
             y2.positional("directory", {
               type: "string",
               demandOption: true,
-              describe: "Directory containing stack.tar.gz, mysql.tar.gz, and redis.tar.gz",
+              describe: "Directory containing stack.tar.gz and volume-named archives",
             }),
           bind(state, cmdStackImport),
         )

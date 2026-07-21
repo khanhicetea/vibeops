@@ -3,18 +3,18 @@ import { createEmptyState } from "../../src/domain/state.ts";
 import { isBentoError } from "../../src/domain/errors.ts";
 import {
   composeProjectName,
-  MYSQL_ARCHIVE,
   REDIS_ARCHIVE,
   STACK_ARCHIVE,
   stackVolumeNames,
+  volumeArchiveName,
 } from "../../src/services/stack_transfer.ts";
 
-Deno.test("stack transfer has exactly three stable archive names", () => {
-  assertEquals([STACK_ARCHIVE, MYSQL_ARCHIVE, REDIS_ARCHIVE], [
-    "stack.tar.gz",
-    "mysql.tar.gz",
-    "redis.tar.gz",
-  ]);
+Deno.test("stack transfer names every archive after its logical volume", () => {
+  assertEquals(STACK_ARCHIVE, "stack.tar.gz");
+  assertEquals(volumeArchiveName("mysql84-data"), "mysql84-data.tar.gz");
+  assertEquals(volumeArchiveName("mysql80-data"), "mysql80-data.tar.gz");
+  assertEquals(volumeArchiveName("redis-data"), REDIS_ARCHIVE);
+  assertThrows(() => volumeArchiveName("../escape"), Error, "invalid Docker volume name");
 });
 
 Deno.test("stack transfer derives Docker volume names from imported project and state", () => {

@@ -142,16 +142,17 @@ The stack transfer commands are intentionally CLI-only. The stack identity comes
 # Source host: destination must be empty and outside the stack root.
 bento --stack /var/lib/bento stack export /srv/exports/bento-2026-07-21
 
-# Produces exactly:
-#   stack.tar.gz   (state, homes, credentials, certificates, config, logs, backups)
-#   mysql.tar.gz   (all managed raw MySQL volumes)
-#   redis.tar.gz   (the raw Redis volume)
+# Produces:
+#   stack.tar.gz          (state, homes, credentials, certificates, config, logs, backups)
+#   mysql84-data.tar.gz   (one archive per managed MySQL volume)
+#   mysql80-data.tar.gz   (example when another MySQL version is configured)
+#   redis-data.tar.gz     (the Redis volume)
 
 # Destination host: --stack must be an empty/nonexistent destination root.
 bento --stack /var/lib/bento stack import /srv/exports/bento-2026-07-21
 ```
 
-Export verifies the named volumes, stops only running MySQL/Redis services for a consistent raw copy, and restarts those services afterward. Ephemeral `runtime/`, `locks/`, and `.asset-cache/` are omitted. Import rejects existing destination volumes, validates and restores the archives, re-renders configuration, and runs Compose with `up -d --build`. Use matching CPU architecture and database image versions. The archives contain secrets and private keys; encrypt and protect them when moving off-host.
+Export verifies the named volumes, stops only running MySQL/Redis services for a consistent raw copy, and restarts those services afterward. Every volume archive uses its logical Compose volume name, and import maps it back using imported `state.json`. Ephemeral `runtime/`, `locks/`, and `.asset-cache/` are omitted. Import rejects existing destination volumes, validates and restores the archives, re-renders configuration, and runs Compose with `up -d --build`. Use matching CPU architecture and database image versions. The archives contain secrets and private keys; encrypt and protect them when moving off-host.
 
 ### Runner service supervision
 
